@@ -514,6 +514,35 @@ int main() {
             ++drops;
         }
         REQUIRE(drops >= 3);
+        const auto first_zeros = ir.find(" = zeros ");
+        REQUIRE(first_zeros != std::string::npos);
+        const auto second_zeros = ir.find(" = zeros ", first_zeros + 1);
+        REQUIRE(second_zeros != std::string::npos);
+        const auto first_drop = ir.find("drop ");
+        REQUIRE(first_drop != std::string::npos);
+        REQUIRE(first_drop > second_zeros);
+    }
+
+    {
+        const auto module = ir_from(
+            "record Profile:\n"
+            "    name: string\n"
+            "    scores: list\n"
+            "\n"
+            "create main:\n"
+            "    p = Profile(\"ann\", zeros(2))\n"
+            "    p.scores = zeros(count(p.scores))\n"
+            "    say count(p.scores)\n");
+        std::ostringstream printed;
+        yukt::print_ir(module, printed);
+        const std::string ir = printed.str();
+        const auto first_zeros = ir.find(" = zeros ");
+        REQUIRE(first_zeros != std::string::npos);
+        const auto second_zeros = ir.find(" = zeros ", first_zeros + 1);
+        REQUIRE(second_zeros != std::string::npos);
+        const auto first_drop = ir.find("drop ");
+        REQUIRE(first_drop != std::string::npos);
+        REQUIRE(first_drop > second_zeros);
     }
 
     return yukt::test::summary("ir");

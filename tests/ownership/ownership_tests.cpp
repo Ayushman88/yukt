@@ -340,6 +340,34 @@ int main() {
         REQUIRE(!result.diagnostics->has_errors());
     }
 
+    // Field overwrite evaluates the RHS first, so the old field is still readable.
+    {
+        const auto result = check(
+            "record Profile:\n"
+            "    name: string\n"
+            "    scores: list\n"
+            "\n"
+            "create main:\n"
+            "    p = Profile(\"ann\", zeros(2))\n"
+            "    p.scores = zeros(count(p.scores))\n"
+            "    say count(p.scores)\n");
+        REQUIRE(!result.diagnostics->has_errors());
+    }
+
+    // Whole-record move of a heap record; using only the destination is valid.
+    {
+        const auto result = check(
+            "record Profile:\n"
+            "    name: string\n"
+            "    scores: list\n"
+            "\n"
+            "create main:\n"
+            "    p = Profile(\"ann\", zeros(2))\n"
+            "    q = p\n"
+            "    say q.name\n");
+        REQUIRE(!result.diagnostics->has_errors());
+    }
+
     // Binding a heap field out of a record is not a steal.
     {
         const auto result = check(

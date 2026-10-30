@@ -1111,15 +1111,13 @@ void Lowerer::write_place(const Expr* expr, const IrValue& value) {
 }
 
 void Lowerer::lower_field_assign(const FieldAssignStmt& stmt) {
+    const IrValue value = lower_expression(stmt.value.get());
     const IrValue parent = read_place(stmt.object.get());
     const IrType field_type = field_ir_type(parent.type.record_id, stmt.field);
     const bool heap_field = owns_heap(field_type);
     if (heap_field) {
-        emit_drop(emit_field_get(parent, stmt.field, field_type));
-    }
-    const IrValue value = lower_expression(stmt.value.get());
-    if (heap_field) {
         consume_heap_expr(stmt.value.get());
+        emit_drop(emit_field_get(parent, stmt.field, field_type));
     }
     write_place(stmt.object.get(), emit_field_set(parent, stmt.field, value));
 }

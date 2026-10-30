@@ -54,20 +54,6 @@ yukt::CompileOutput emit_llvm_source(const std::string& source) {
     return yukt::compile_program(frontend, request, *frontend.diagnostics);
 }
 
-bool call_between(const std::string& body, const std::string& first, const std::string& middle,
-                  const std::string& second) {
-    const auto a = body.find(first);
-    if (a == std::string::npos) {
-        return false;
-    }
-    const auto b = body.find(second, a + first.size());
-    if (b == std::string::npos) {
-        return false;
-    }
-    const auto m = body.find(middle, a);
-    return m != std::string::npos && m < b;
-}
-
 std::size_t count_direct_calls(const std::string& llvm_ir, const std::string& callee) {
     std::size_t count = 0;
     const std::string needle = "@" + callee;
@@ -494,7 +480,35 @@ int main() {
         REQUIRE_MSG(llvm.ok, llvm.llvm_ir);
         const auto main_body = llvm_function_body(llvm.llvm_ir, "yukt_main");
         REQUIRE_MSG(!main_body.empty(), llvm.llvm_ir);
-        REQUIRE_MSG(call_between(main_body, "yukt_list_zeros", "yukt_release", "yukt_list_zeros"), main_body);
+        REQUIRE_MSG(count_direct_calls(main_body, "yukt_release") >= 1, main_body);
+        REQUIRE_MSG(count_direct_calls(main_body, "yukt_runtime_release") == 1, main_body);
+    }
+
+    {
+        const auto result = run_file("tests/ownership/profile_count_overwrite.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "2\n");
+        REQUIRE(result.exit_code == 0);
+
+        const auto llvm = emit_llvm_file("tests/ownership/profile_count_overwrite.yukt");
+        REQUIRE_MSG(llvm.ok, llvm.llvm_ir);
+        const auto main_body = llvm_function_body(llvm.llvm_ir, "yukt_main");
+        REQUIRE_MSG(!main_body.empty(), llvm.llvm_ir);
+        REQUIRE_MSG(count_direct_calls(main_body, "yukt_release") >= 1, main_body);
+        REQUIRE_MSG(count_direct_calls(main_body, "yukt_runtime_release") == 1, main_body);
+    }
+
+    {
+        const auto result = run_file("tests/ownership/profile_move_ok.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "ann\n");
+        REQUIRE(result.exit_code == 0);
+
+        const auto llvm = emit_llvm_file("tests/ownership/profile_move_ok.yukt");
+        REQUIRE_MSG(llvm.ok, llvm.llvm_ir);
+        const auto main_body = llvm_function_body(llvm.llvm_ir, "yukt_main");
+        REQUIRE_MSG(!main_body.empty(), llvm.llvm_ir);
+        REQUIRE_MSG(count_direct_calls(main_body, "yukt_release") == 2, main_body);
         REQUIRE_MSG(count_direct_calls(main_body, "yukt_runtime_release") == 1, main_body);
     }
 
