@@ -242,5 +242,21 @@ int main() {
         REQUIRE(result.diagnostics->has_errors());
     }
 
+    {
+        const auto result = parse(
+            "share create repeat(s, n):\n"
+            "    give s\n"
+            "\n"
+            "create main:\n"
+            "    say str.repeat(\"ab\", 3)\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* fn = function_named(*result.program, "repeat");
+        REQUIRE(fn != nullptr && fn->shared);
+        const auto* main = function_named(*result.program, "main");
+        const auto* say = main != nullptr && !main->body.empty() ? as<yukt::SayStmt>(main->body[0].get()) : nullptr;
+        const auto* call = say != nullptr ? as<yukt::CallExpr>(say->value.get()) : nullptr;
+        REQUIRE(call != nullptr && call->qualifier == "str" && call->callee == "repeat");
+    }
+
     return yukt::test::summary("parser");
 }

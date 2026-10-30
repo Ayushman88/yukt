@@ -1,0 +1,4 @@
+use std/stat
+
+create main:
+    say stat.min_i(zeros(0))

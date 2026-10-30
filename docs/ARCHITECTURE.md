@@ -159,7 +159,9 @@ CTest runs frontend, IR, and native suites:
 - `yukt_ir_tests`
 - `yukt_module_tests`
 - `yukt_native_tests`
+- `yukt_stdlib_tests`
 - `yukt --tokens`, `--ast`, `--types`, `--emit-ir`, `--explain`, type-check, and `run` of `examples/hello.yukt`
 - `yukt run` of `tests/modules/ok/app.yukt` and nested imports
+- `yukt run` of `tests/stdlib/str_basic.yukt` and `tests/stdlib/all_modules.yukt`
 
 Native tests execute compiled binaries and compare stdout.

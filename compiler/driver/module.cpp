@@ -214,6 +214,15 @@ std::string default_stdlib_root() {
     return (exe.parent_path().parent_path() / "share" / "yukt" / "std").string();
 }
 
+bool is_stdlib_runtime_ir(const std::string& ir_name) {
+    if (ir_name.rfind("std$str$", 0) == 0 || ir_name.rfind("std$list$", 0) == 0 ||
+        ir_name.rfind("std$sort$", 0) == 0 || ir_name.rfind("std$math$", 0) == 0) {
+        return true;
+    }
+    return ir_name == "std$stat$min_i" || ir_name == "std$stat$max_i" || ir_name == "std$stat$min_f" ||
+           ir_name == "std$stat$max_f" || ir_name == "std$stat$mean_f";
+}
+
 std::string mangle_function(const std::string& prefix, const std::string& name, bool entry_main, bool single_file) {
     if (entry_main && name == "main") {
         return "main";

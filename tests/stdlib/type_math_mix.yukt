@@ -1,0 +1,4 @@
+use std/math
+
+create main:
+    say math.abs_i(1.5)

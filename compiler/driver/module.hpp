@@ -30,6 +30,7 @@ struct ModuleGraph {
 };
 
 std::string default_stdlib_root();
+bool is_stdlib_runtime_ir(const std::string& ir_name);
 std::string mangle_function(const std::string& prefix, const std::string& name, bool entry_main, bool single_file);
 std::string module_prefix_for_path(const std::string& canonical_path, const std::string& entry_dir,
                                    const std::string& stdlib_root, bool is_std);

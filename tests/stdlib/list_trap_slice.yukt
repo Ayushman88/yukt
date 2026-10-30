@@ -1,0 +1,5 @@
+use std/list
+
+create main:
+    items = [1, 2, 3]
+    say list.slice(items, 2, 1)

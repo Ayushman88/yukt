@@ -1,0 +1,16 @@
+use std/str
+use std/list
+use std/sort
+use std/math
+use std/stat
+
+create main:
+    text = str.repeat("a", 3)
+    say str.len(text)
+    items = [3, 1, 2]
+    list.reverse(items)
+    sort.asc(items)
+    say items
+    say sort.search(items, 2)
+    say math.max_i(stat.sum_i(items), 0)
+    say math.floor(stat.mean_f([2.0, 4.0]))

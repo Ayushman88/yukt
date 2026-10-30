@@ -1,4 +1,5 @@
 #include "backend/llvm_backend.hpp"
+#include "driver/module.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -155,6 +156,7 @@ private:
     void emit_function(const IrFunction& function);
     llvm::Value* materialize(const IrValue& value);
     llvm::Value* emit_inst(const IrInst& inst);
+    llvm::Value* emit_stdlib_call(const IrInst& inst);
     llvm::FunctionCallee runtime(const std::string& name) const;
     llvm::StructType* list_struct_type();
     llvm::Value* list_data_pointer(llvm::Value* list);
@@ -328,6 +330,48 @@ void LlvmEmitter::declare_runtime() {
     runtime_["yukt_reduce_i64"] = module_.getOrInsertFunction("yukt_reduce_i64", void_ty, ptr, i64, i64);
     runtime_["yukt_reduce_f64"] = module_.getOrInsertFunction("yukt_reduce_f64", void_ty, ptr, f64, i64);
     runtime_["yukt_runtime_release"] = module_.getOrInsertFunction("yukt_runtime_release", void_ty);
+    runtime_["yukt_str_len"] = module_.getOrInsertFunction("yukt_str_len", i64, ptr);
+    runtime_["yukt_str_at"] = module_.getOrInsertFunction("yukt_str_at", i64, ptr, i64);
+    runtime_["yukt_str_slice"] = module_.getOrInsertFunction("yukt_str_slice", ptr, ptr, i64, i64);
+    runtime_["yukt_str_find"] = module_.getOrInsertFunction("yukt_str_find", i64, ptr, ptr);
+    runtime_["yukt_str_contains"] = module_.getOrInsertFunction("yukt_str_contains", i8, ptr, ptr);
+    runtime_["yukt_str_starts"] = module_.getOrInsertFunction("yukt_str_starts", i8, ptr, ptr);
+    runtime_["yukt_str_ends"] = module_.getOrInsertFunction("yukt_str_ends", i8, ptr, ptr);
+    runtime_["yukt_str_repeat"] = module_.getOrInsertFunction("yukt_str_repeat", ptr, ptr, i64);
+    runtime_["yukt_str_join"] = module_.getOrInsertFunction("yukt_str_join", ptr, ptr, ptr);
+    runtime_["yukt_str_split"] = module_.getOrInsertFunction("yukt_str_split", ptr, ptr, ptr);
+    runtime_["yukt_list_copy"] = module_.getOrInsertFunction("yukt_list_copy", ptr, ptr);
+    runtime_["yukt_list_fill_i64"] = module_.getOrInsertFunction("yukt_list_fill_i64", void_ty, ptr, i64);
+    runtime_["yukt_list_fill_f64"] = module_.getOrInsertFunction("yukt_list_fill_f64", void_ty, ptr, f64);
+    runtime_["yukt_list_fill_bool"] = module_.getOrInsertFunction("yukt_list_fill_bool", void_ty, ptr, i8);
+    runtime_["yukt_list_fill_cstr"] = module_.getOrInsertFunction("yukt_list_fill_cstr", void_ty, ptr, ptr);
+    runtime_["yukt_list_fill_list"] = module_.getOrInsertFunction("yukt_list_fill_list", void_ty, ptr, ptr);
+    runtime_["yukt_list_reverse"] = module_.getOrInsertFunction("yukt_list_reverse", void_ty, ptr);
+    runtime_["yukt_list_slice"] = module_.getOrInsertFunction("yukt_list_slice", ptr, ptr, i64, i64);
+    runtime_["yukt_list_sort_asc"] = module_.getOrInsertFunction("yukt_list_sort_asc", void_ty, ptr);
+    runtime_["yukt_list_sort_desc"] = module_.getOrInsertFunction("yukt_list_sort_desc", void_ty, ptr);
+    runtime_["yukt_list_sorted"] = module_.getOrInsertFunction("yukt_list_sorted", ptr, ptr);
+    runtime_["yukt_list_search"] = module_.getOrInsertFunction("yukt_list_search", i64, ptr, i64, f64);
+    runtime_["yukt_math_abs_i"] = module_.getOrInsertFunction("yukt_math_abs_i", i64, i64);
+    runtime_["yukt_math_abs_f"] = module_.getOrInsertFunction("yukt_math_abs_f", f64, f64);
+    runtime_["yukt_math_min_i"] = module_.getOrInsertFunction("yukt_math_min_i", i64, i64, i64);
+    runtime_["yukt_math_max_i"] = module_.getOrInsertFunction("yukt_math_max_i", i64, i64, i64);
+    runtime_["yukt_math_min_f"] = module_.getOrInsertFunction("yukt_math_min_f", f64, f64, f64);
+    runtime_["yukt_math_max_f"] = module_.getOrInsertFunction("yukt_math_max_f", f64, f64, f64);
+    runtime_["yukt_math_floor"] = module_.getOrInsertFunction("yukt_math_floor", f64, f64);
+    runtime_["yukt_math_ceil"] = module_.getOrInsertFunction("yukt_math_ceil", f64, f64);
+    runtime_["yukt_math_sqrt"] = module_.getOrInsertFunction("yukt_math_sqrt", f64, f64);
+    runtime_["yukt_math_pow"] = module_.getOrInsertFunction("yukt_math_pow", f64, f64, f64);
+    runtime_["yukt_math_sin"] = module_.getOrInsertFunction("yukt_math_sin", f64, f64);
+    runtime_["yukt_math_cos"] = module_.getOrInsertFunction("yukt_math_cos", f64, f64);
+    runtime_["yukt_math_tan"] = module_.getOrInsertFunction("yukt_math_tan", f64, f64);
+    runtime_["yukt_math_exp"] = module_.getOrInsertFunction("yukt_math_exp", f64, f64);
+    runtime_["yukt_math_log"] = module_.getOrInsertFunction("yukt_math_log", f64, f64);
+    runtime_["yukt_stat_min_i"] = module_.getOrInsertFunction("yukt_stat_min_i", i64, ptr);
+    runtime_["yukt_stat_max_i"] = module_.getOrInsertFunction("yukt_stat_max_i", i64, ptr);
+    runtime_["yukt_stat_min_f"] = module_.getOrInsertFunction("yukt_stat_min_f", f64, ptr);
+    runtime_["yukt_stat_max_f"] = module_.getOrInsertFunction("yukt_stat_max_f", f64, ptr);
+    runtime_["yukt_stat_mean_f"] = module_.getOrInsertFunction("yukt_stat_mean_f", f64, ptr);
     if (auto* zeros = module_.getFunction("yukt_list_zeros")) {
         zeros->addRetAttr(llvm::Attribute::NoAlias);
     }
@@ -513,6 +557,9 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
             break;
         }
         case IrOp::Call: {
+            if (is_stdlib_runtime_ir(inst.name)) {
+                return emit_stdlib_call(inst);
+            }
             auto* callee = functions_.at(inst.name);
             std::vector<llvm::Value*> args;
             args.reserve(inst.args.size());
@@ -660,6 +707,166 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
     return nullptr;
 }
 
+llvm::Value* LlvmEmitter::emit_stdlib_call(const IrInst& inst) {
+    std::vector<llvm::Value*> args;
+    args.reserve(inst.args.size());
+    for (const auto& arg : inst.args) {
+        args.push_back(materialize(arg));
+    }
+
+    auto call_runtime = [&](const std::string& name, const std::vector<llvm::Value*>& call_args) -> llvm::Value* {
+        llvm::Value* call = builder_.CreateCall(runtime(name), call_args);
+        if (inst.dest.type.kind == IrTypeKind::Void) {
+            return nullptr;
+        }
+        if (inst.dest.type.kind == IrTypeKind::Bool) {
+            return builder_.CreateTrunc(call, llvm::Type::getInt1Ty(context_));
+        }
+        return call;
+    };
+
+    const std::string& name = inst.name;
+    if (name == "std$str$len") {
+        return call_runtime("yukt_str_len", {args.at(0)});
+    }
+    if (name == "std$str$at") {
+        return call_runtime("yukt_str_at", {args.at(0), args.at(1)});
+    }
+    if (name == "std$str$slice") {
+        return call_runtime("yukt_str_slice", {args.at(0), args.at(1), args.at(2)});
+    }
+    if (name == "std$str$find") {
+        return call_runtime("yukt_str_find", {args.at(0), args.at(1)});
+    }
+    if (name == "std$str$contains") {
+        return call_runtime("yukt_str_contains", {args.at(0), args.at(1)});
+    }
+    if (name == "std$str$starts") {
+        return call_runtime("yukt_str_starts", {args.at(0), args.at(1)});
+    }
+    if (name == "std$str$ends") {
+        return call_runtime("yukt_str_ends", {args.at(0), args.at(1)});
+    }
+    if (name == "std$str$repeat") {
+        return call_runtime("yukt_str_repeat", {args.at(0), args.at(1)});
+    }
+    if (name == "std$str$join") {
+        return call_runtime("yukt_str_join", {args.at(0), args.at(1)});
+    }
+    if (name == "std$str$split") {
+        return call_runtime("yukt_str_split", {args.at(0), args.at(1)});
+    }
+    if (name == "std$list$len") {
+        return call_runtime("yukt_list_len", {args.at(0)});
+    }
+    if (name == "std$list$copy") {
+        return call_runtime("yukt_list_copy", {args.at(0)});
+    }
+    if (name == "std$list$fill") {
+        const IrType value_type = inst.args.size() > 1 ? inst.args[1].type : ir_i64();
+        if (value_type.kind == IrTypeKind::F64) {
+            return call_runtime("yukt_list_fill_f64", {args.at(0), args.at(1)});
+        }
+        if (value_type.kind == IrTypeKind::Bool) {
+            llvm::Value* packed = builder_.CreateZExt(args.at(1), llvm::Type::getInt8Ty(context_));
+            return call_runtime("yukt_list_fill_bool", {args.at(0), packed});
+        }
+        if (value_type.kind == IrTypeKind::String) {
+            return call_runtime("yukt_list_fill_cstr", {args.at(0), args.at(1)});
+        }
+        if (value_type.kind == IrTypeKind::List) {
+            return call_runtime("yukt_list_fill_list", {args.at(0), args.at(1)});
+        }
+        return call_runtime("yukt_list_fill_i64", {args.at(0), args.at(1)});
+    }
+    if (name == "std$list$reverse") {
+        return call_runtime("yukt_list_reverse", {args.at(0)});
+    }
+    if (name == "std$list$slice") {
+        return call_runtime("yukt_list_slice", {args.at(0), args.at(1), args.at(2)});
+    }
+    if (name == "std$sort$asc") {
+        return call_runtime("yukt_list_sort_asc", {args.at(0)});
+    }
+    if (name == "std$sort$desc") {
+        return call_runtime("yukt_list_sort_desc", {args.at(0)});
+    }
+    if (name == "std$sort$sorted") {
+        return call_runtime("yukt_list_sorted", {args.at(0)});
+    }
+    if (name == "std$sort$search") {
+        llvm::Value* ivalue = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context_), 0, true);
+        llvm::Value* fvalue = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context_), 0.0);
+        if (inst.args.size() > 1 && inst.args[1].type.kind == IrTypeKind::F64) {
+            fvalue = args.at(1);
+        } else if (inst.args.size() > 1) {
+            ivalue = args.at(1);
+        }
+        return call_runtime("yukt_list_search", {args.at(0), ivalue, fvalue});
+    }
+    if (name == "std$math$abs_i") {
+        return call_runtime("yukt_math_abs_i", {args.at(0)});
+    }
+    if (name == "std$math$abs_f") {
+        return call_runtime("yukt_math_abs_f", {args.at(0)});
+    }
+    if (name == "std$math$min_i") {
+        return call_runtime("yukt_math_min_i", {args.at(0), args.at(1)});
+    }
+    if (name == "std$math$max_i") {
+        return call_runtime("yukt_math_max_i", {args.at(0), args.at(1)});
+    }
+    if (name == "std$math$min_f") {
+        return call_runtime("yukt_math_min_f", {args.at(0), args.at(1)});
+    }
+    if (name == "std$math$max_f") {
+        return call_runtime("yukt_math_max_f", {args.at(0), args.at(1)});
+    }
+    if (name == "std$math$floor") {
+        return call_runtime("yukt_math_floor", {args.at(0)});
+    }
+    if (name == "std$math$ceil") {
+        return call_runtime("yukt_math_ceil", {args.at(0)});
+    }
+    if (name == "std$math$sqrt") {
+        return call_runtime("yukt_math_sqrt", {args.at(0)});
+    }
+    if (name == "std$math$pow") {
+        return call_runtime("yukt_math_pow", {args.at(0), args.at(1)});
+    }
+    if (name == "std$math$sin") {
+        return call_runtime("yukt_math_sin", {args.at(0)});
+    }
+    if (name == "std$math$cos") {
+        return call_runtime("yukt_math_cos", {args.at(0)});
+    }
+    if (name == "std$math$tan") {
+        return call_runtime("yukt_math_tan", {args.at(0)});
+    }
+    if (name == "std$math$exp") {
+        return call_runtime("yukt_math_exp", {args.at(0)});
+    }
+    if (name == "std$math$log") {
+        return call_runtime("yukt_math_log", {args.at(0)});
+    }
+    if (name == "std$stat$min_i") {
+        return call_runtime("yukt_stat_min_i", {args.at(0)});
+    }
+    if (name == "std$stat$max_i") {
+        return call_runtime("yukt_stat_max_i", {args.at(0)});
+    }
+    if (name == "std$stat$min_f") {
+        return call_runtime("yukt_stat_min_f", {args.at(0)});
+    }
+    if (name == "std$stat$max_f") {
+        return call_runtime("yukt_stat_max_f", {args.at(0)});
+    }
+    if (name == "std$stat$mean_f") {
+        return call_runtime("yukt_stat_mean_f", {args.at(0)});
+    }
+    return llvm::PoisonValue::get(llvm_type(context_, inst.dest.type));
+}
+
 llvm::FunctionCallee LlvmEmitter::runtime(const std::string& name) const {
     return runtime_.at(name);
 }
@@ -718,6 +925,7 @@ bool link_executable(const std::string& object_path, const std::string& output_p
 #if !defined(__APPLE__)
     command += " -pthread";
 #endif
+    command += " -lm";
     const int status = std::system(command.c_str());
     if (status != 0) {
         error = "linker failed: " + command;

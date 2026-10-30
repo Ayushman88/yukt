@@ -1,6 +1,7 @@
 #include "yukt_runtime.h"
 
 #include <inttypes.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -88,6 +89,8 @@ static size_t yukt_pad16(size_t bytes) {
     }
     return (bytes + align - 1) & ~(align - 1);
 }
+
+static int yukt_size_mul(size_t a, size_t b, size_t* out);
 
 void yukt_reduce_i64(int64_t* acc, int64_t partial, int64_t op) {
     if (acc == NULL) {
@@ -280,7 +283,11 @@ YuktList* yukt_list_new(int64_t length, int64_t kind) {
     list->kind = kind;
     size_t payload = 0;
     if (length > 0) {
-        payload = yukt_alloc_size(yukt_pad16((size_t)length * element_size(kind)));
+        size_t nbytes = 0;
+        if (yukt_size_mul((size_t)length, element_size(kind), &nbytes) != 0) {
+            die("out of memory");
+        }
+        payload = yukt_alloc_size(yukt_pad16(nbytes));
         list->data = yukt_alloc_aligned_zero(payload);
     }
     yukt_track(YUKT_ALLOC_LIST, list, payload);
@@ -555,3 +562,524 @@ void yukt_parallel_for(int64_t start, int64_t end, yukt_par_fn fn, void* context
     pthread_mutex_unlock(&yukt_par_mu);
 }
 #endif
+
+static const char* yukt_cstr(const char* s) {
+    return s != NULL ? s : "";
+}
+
+static int yukt_size_mul(size_t a, size_t b, size_t* out) {
+    if (b != 0 && a > SIZE_MAX / b) {
+        return -1;
+    }
+    *out = a * b;
+    return 0;
+}
+
+static char* yukt_str_alloc(size_t need) {
+    if (need == 0) {
+        need = 1;
+    }
+    const size_t bytes = yukt_alloc_size(need);
+    char* out = (char*)yukt_cache_take(yukt_str_bins, bytes);
+    if (out == NULL) {
+        out = (char*)malloc(bytes);
+        if (out == NULL) {
+            die("out of memory");
+        }
+    }
+    yukt_track(YUKT_ALLOC_STR, out, bytes);
+    return out;
+}
+
+static char* yukt_str_from_bytes(const char* data, size_t len) {
+    char* out = yukt_str_alloc(len + 1);
+    if (len > 0 && data != NULL) {
+        memcpy(out, data, len);
+    }
+    out[len] = '\0';
+    return out;
+}
+
+int64_t yukt_str_len(const char* s) {
+    return (int64_t)strlen(yukt_cstr(s));
+}
+
+int64_t yukt_str_at(const char* s, int64_t index) {
+    s = yukt_cstr(s);
+    const int64_t n = (int64_t)strlen(s);
+    if (index < 0 || index >= n) {
+        die("string index out of range");
+    }
+    return (unsigned char)s[index];
+}
+
+char* yukt_str_slice(const char* s, int64_t start, int64_t end) {
+    s = yukt_cstr(s);
+    const int64_t n = (int64_t)strlen(s);
+    if (start < 0 || end < start || end > n) {
+        die("invalid string slice");
+    }
+    return yukt_str_from_bytes(s + start, (size_t)(end - start));
+}
+
+int64_t yukt_str_find(const char* s, const char* sub) {
+    s = yukt_cstr(s);
+    sub = yukt_cstr(sub);
+    if (sub[0] == '\0') {
+        return 0;
+    }
+    const char* found = strstr(s, sub);
+    if (found == NULL) {
+        return -1;
+    }
+    return (int64_t)(found - s);
+}
+
+int8_t yukt_str_contains(const char* s, const char* sub) {
+    return yukt_str_find(s, sub) != -1 ? 1 : 0;
+}
+
+int8_t yukt_str_starts(const char* s, const char* sub) {
+    s = yukt_cstr(s);
+    sub = yukt_cstr(sub);
+    const size_t n = strlen(sub);
+    return strncmp(s, sub, n) == 0 ? 1 : 0;
+}
+
+int8_t yukt_str_ends(const char* s, const char* sub) {
+    s = yukt_cstr(s);
+    sub = yukt_cstr(sub);
+    const size_t n = strlen(s);
+    const size_t m = strlen(sub);
+    if (m > n) {
+        return 0;
+    }
+    return memcmp(s + (n - m), sub, m) == 0 ? 1 : 0;
+}
+
+char* yukt_str_repeat(const char* s, int64_t n) {
+    if (n < 0) {
+        die("negative repeat count");
+    }
+    s = yukt_cstr(s);
+    const size_t len = strlen(s);
+    if (n == 0 || len == 0) {
+        return yukt_str_from_bytes("", 0);
+    }
+    if ((uint64_t)n > SIZE_MAX / len) {
+        die("out of memory");
+    }
+    size_t total = 0;
+    if (yukt_size_mul(len, (size_t)n, &total) != 0 || total > SIZE_MAX - 1) {
+        die("out of memory");
+    }
+    char* out = yukt_str_alloc(total + 1);
+    for (int64_t i = 0; i < n; ++i) {
+        memcpy(out + (size_t)i * len, s, len);
+    }
+    out[total] = '\0';
+    return out;
+}
+
+char* yukt_str_join(const YuktList* parts, const char* sep) {
+    sep = yukt_cstr(sep);
+    if (parts == NULL) {
+        return yukt_str_from_bytes("", 0);
+    }
+    if (parts->kind != 3) {
+        die("join expects a list of strings");
+    }
+    const int64_t n = parts->length;
+    if (n <= 0) {
+        return yukt_str_from_bytes("", 0);
+    }
+    const char** data = (const char**)parts->data;
+    const size_t sep_len = strlen(sep);
+    size_t total = 0;
+    for (int64_t i = 0; i < n; ++i) {
+        const size_t piece = strlen(yukt_cstr(data[i]));
+        if (total > SIZE_MAX - piece) {
+            die("out of memory");
+        }
+        total += piece;
+        if (i + 1 < n) {
+            if (total > SIZE_MAX - sep_len) {
+                die("out of memory");
+            }
+            total += sep_len;
+        }
+    }
+    if (total > SIZE_MAX - 1) {
+        die("out of memory");
+    }
+    char* out = yukt_str_alloc(total + 1);
+    size_t off = 0;
+    for (int64_t i = 0; i < n; ++i) {
+        const char* piece = yukt_cstr(data[i]);
+        const size_t piece_len = strlen(piece);
+        memcpy(out + off, piece, piece_len);
+        off += piece_len;
+        if (i + 1 < n && sep_len > 0) {
+            memcpy(out + off, sep, sep_len);
+            off += sep_len;
+        }
+    }
+    out[total] = '\0';
+    return out;
+}
+
+YuktList* yukt_str_split(const char* s, const char* sep) {
+    s = yukt_cstr(s);
+    sep = yukt_cstr(sep);
+    const size_t sep_len = strlen(sep);
+    if (sep_len == 0) {
+        die("empty split separator");
+    }
+    const size_t n = strlen(s);
+    int64_t parts = 1;
+    for (size_t i = 0; i + sep_len <= n;) {
+        if (memcmp(s + i, sep, sep_len) == 0) {
+            ++parts;
+            i += sep_len;
+        } else {
+            ++i;
+        }
+    }
+    YuktList* list = yukt_list_new(parts, 3);
+    const char** data = (const char**)list->data;
+    int64_t slot = 0;
+    size_t start = 0;
+    for (size_t i = 0; i + sep_len <= n;) {
+        if (memcmp(s + i, sep, sep_len) == 0) {
+            data[slot++] = yukt_str_from_bytes(s + start, i - start);
+            i += sep_len;
+            start = i;
+        } else {
+            ++i;
+        }
+    }
+    data[slot] = yukt_str_from_bytes(s + start, n - start);
+    return list;
+}
+
+static YuktList* yukt_list_clone_range(const YuktList* src, int64_t start, int64_t length) {
+    if (src == NULL) {
+        return yukt_list_new(0, 0);
+    }
+    YuktList* dest = yukt_list_new(length, src->kind);
+    if (length > 0 && src->data != NULL && dest->data != NULL) {
+        const size_t esz = element_size(src->kind);
+        size_t bytes = 0;
+        if (yukt_size_mul((size_t)length, esz, &bytes) != 0) {
+            die("out of memory");
+        }
+        memcpy(dest->data, (const char*)src->data + (size_t)start * esz, bytes);
+    }
+    return dest;
+}
+
+YuktList* yukt_list_copy(const YuktList* src) {
+    if (src == NULL) {
+        return yukt_list_new(0, 0);
+    }
+    return yukt_list_clone_range(src, 0, src->length);
+}
+
+static void yukt_require_kind(const YuktList* dest, int64_t kind, const char* what) {
+    if (dest == NULL || dest->kind != kind) {
+        die(what);
+    }
+}
+
+void yukt_list_fill_i64(YuktList* dest, int64_t value) {
+    yukt_require_kind(dest, 0, "list fill type mismatch");
+    for (int64_t i = 0; i < dest->length; ++i) {
+        ((int64_t*)dest->data)[i] = value;
+    }
+}
+
+void yukt_list_fill_f64(YuktList* dest, double value) {
+    yukt_require_kind(dest, 1, "list fill type mismatch");
+    for (int64_t i = 0; i < dest->length; ++i) {
+        ((double*)dest->data)[i] = value;
+    }
+}
+
+void yukt_list_fill_bool(YuktList* dest, int8_t value) {
+    yukt_require_kind(dest, 2, "list fill type mismatch");
+    for (int64_t i = 0; i < dest->length; ++i) {
+        ((int8_t*)dest->data)[i] = value;
+    }
+}
+
+void yukt_list_fill_cstr(YuktList* dest, const char* value) {
+    yukt_require_kind(dest, 3, "list fill type mismatch");
+    value = yukt_cstr(value);
+    for (int64_t i = 0; i < dest->length; ++i) {
+        ((const char**)dest->data)[i] = value;
+    }
+}
+
+void yukt_list_fill_list(YuktList* dest, YuktList* value) {
+    yukt_require_kind(dest, 4, "list fill type mismatch");
+    for (int64_t i = 0; i < dest->length; ++i) {
+        ((YuktList**)dest->data)[i] = value;
+    }
+}
+
+void yukt_list_reverse(YuktList* dest) {
+    if (dest == NULL || dest->length <= 1 || dest->data == NULL) {
+        return;
+    }
+    const size_t esz = element_size(dest->kind);
+    char tmp[sizeof(void*)];
+    char* data = (char*)dest->data;
+    for (int64_t i = 0, j = dest->length - 1; i < j; ++i, --j) {
+        memcpy(tmp, data + (size_t)i * esz, esz);
+        memcpy(data + (size_t)i * esz, data + (size_t)j * esz, esz);
+        memcpy(data + (size_t)j * esz, tmp, esz);
+    }
+}
+
+YuktList* yukt_list_slice(const YuktList* src, int64_t start, int64_t end) {
+    const int64_t n = src == NULL ? 0 : src->length;
+    if (start < 0 || end < start || end > n) {
+        die("invalid list slice");
+    }
+    if (src == NULL) {
+        return yukt_list_new(0, 0);
+    }
+    return yukt_list_clone_range(src, start, end - start);
+}
+
+static void yukt_sort_i64(int64_t* data, int64_t n, int descending) {
+    for (int64_t i = 0; i < n; ++i) {
+        int64_t best = i;
+        for (int64_t j = i + 1; j < n; ++j) {
+            if (descending ? data[j] > data[best] : data[j] < data[best]) {
+                best = j;
+            }
+        }
+        if (best != i) {
+            const int64_t tmp = data[i];
+            data[i] = data[best];
+            data[best] = tmp;
+        }
+    }
+}
+
+static void yukt_sort_f64(double* data, int64_t n, int descending) {
+    for (int64_t i = 0; i < n; ++i) {
+        int64_t best = i;
+        for (int64_t j = i + 1; j < n; ++j) {
+            if (descending ? data[j] > data[best] : data[j] < data[best]) {
+                best = j;
+            }
+        }
+        if (best != i) {
+            const double tmp = data[i];
+            data[i] = data[best];
+            data[best] = tmp;
+        }
+    }
+}
+
+static void yukt_require_numeric_list(const YuktList* items) {
+    if (items == NULL || (items->kind != 0 && items->kind != 1)) {
+        die("sort requires a numeric list");
+    }
+}
+
+void yukt_list_sort_asc(YuktList* items) {
+    yukt_require_numeric_list(items);
+    if (items->length <= 1 || items->data == NULL) {
+        return;
+    }
+    if (items->kind == 0) {
+        yukt_sort_i64((int64_t*)items->data, items->length, 0);
+    } else {
+        yukt_sort_f64((double*)items->data, items->length, 0);
+    }
+}
+
+void yukt_list_sort_desc(YuktList* items) {
+    yukt_require_numeric_list(items);
+    if (items->length <= 1 || items->data == NULL) {
+        return;
+    }
+    if (items->kind == 0) {
+        yukt_sort_i64((int64_t*)items->data, items->length, 1);
+    } else {
+        yukt_sort_f64((double*)items->data, items->length, 1);
+    }
+}
+
+YuktList* yukt_list_sorted(const YuktList* items) {
+    YuktList* copy = yukt_list_copy(items);
+    yukt_list_sort_asc(copy);
+    return copy;
+}
+
+int64_t yukt_list_search(const YuktList* items, int64_t ivalue, double fvalue) {
+    yukt_require_numeric_list(items);
+    int64_t lo = 0;
+    int64_t hi = items->length;
+    if (items->kind == 0) {
+        const int64_t* data = (const int64_t*)items->data;
+        while (lo < hi) {
+            const int64_t mid = lo + (hi - lo) / 2;
+            if (data[mid] < ivalue) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        if (lo < items->length && data[lo] == ivalue) {
+            return lo;
+        }
+        return -1;
+    }
+    const double* data = (const double*)items->data;
+    while (lo < hi) {
+        const int64_t mid = lo + (hi - lo) / 2;
+        if (data[mid] < fvalue) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    if (lo < items->length && data[lo] == fvalue) {
+        return lo;
+    }
+    return -1;
+}
+
+int64_t yukt_math_abs_i(int64_t x) {
+    return x < 0 ? -x : x;
+}
+
+double yukt_math_abs_f(double x) {
+    return fabs(x);
+}
+
+int64_t yukt_math_min_i(int64_t a, int64_t b) {
+    return a <= b ? a : b;
+}
+
+int64_t yukt_math_max_i(int64_t a, int64_t b) {
+    return a >= b ? a : b;
+}
+
+double yukt_math_min_f(double a, double b) {
+    if (isnan(a) || isnan(b)) {
+        return NAN;
+    }
+    return a < b ? a : b;
+}
+
+double yukt_math_max_f(double a, double b) {
+    if (isnan(a) || isnan(b)) {
+        return NAN;
+    }
+    return a > b ? a : b;
+}
+
+double yukt_math_floor(double x) {
+    return floor(x);
+}
+
+double yukt_math_ceil(double x) {
+    return ceil(x);
+}
+
+double yukt_math_sqrt(double x) {
+    return sqrt(x);
+}
+
+double yukt_math_pow(double x, double y) {
+    return pow(x, y);
+}
+
+double yukt_math_sin(double x) {
+    return sin(x);
+}
+
+double yukt_math_cos(double x) {
+    return cos(x);
+}
+
+double yukt_math_tan(double x) {
+    return tan(x);
+}
+
+double yukt_math_exp(double x) {
+    return exp(x);
+}
+
+double yukt_math_log(double x) {
+    return log(x);
+}
+
+static void yukt_require_nonempty(const YuktList* items, int64_t kind) {
+    if (items == NULL || items->kind != kind || items->length <= 0) {
+        die("empty list");
+    }
+}
+
+int64_t yukt_stat_min_i(const YuktList* items) {
+    yukt_require_nonempty(items, 0);
+    const int64_t* data = (const int64_t*)items->data;
+    int64_t best = data[0];
+    for (int64_t i = 1; i < items->length; ++i) {
+        if (data[i] < best) {
+            best = data[i];
+        }
+    }
+    return best;
+}
+
+int64_t yukt_stat_max_i(const YuktList* items) {
+    yukt_require_nonempty(items, 0);
+    const int64_t* data = (const int64_t*)items->data;
+    int64_t best = data[0];
+    for (int64_t i = 1; i < items->length; ++i) {
+        if (data[i] > best) {
+            best = data[i];
+        }
+    }
+    return best;
+}
+
+double yukt_stat_min_f(const YuktList* items) {
+    yukt_require_nonempty(items, 1);
+    const double* data = (const double*)items->data;
+    double best = data[0];
+    for (int64_t i = 1; i < items->length; ++i) {
+        if (isnan(data[i]) || (!(isnan(best)) && data[i] < best) || isnan(best)) {
+            best = data[i];
+        }
+    }
+    return best;
+}
+
+double yukt_stat_max_f(const YuktList* items) {
+    yukt_require_nonempty(items, 1);
+    const double* data = (const double*)items->data;
+    double best = data[0];
+    for (int64_t i = 1; i < items->length; ++i) {
+        if (isnan(data[i]) || (!(isnan(best)) && data[i] > best) || isnan(best)) {
+            best = data[i];
+        }
+    }
+    return best;
+}
+
+double yukt_stat_mean_f(const YuktList* items) {
+    yukt_require_nonempty(items, 1);
+    const double* data = (const double*)items->data;
+    double total = 0.0;
+    for (int64_t i = 0; i < items->length; ++i) {
+        total += data[i];
+    }
+    return total / (double)items->length;
+}

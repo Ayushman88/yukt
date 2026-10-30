@@ -1,5 +1,6 @@
 #include "semantic/analyzer.hpp"
 
+#include "driver/module.hpp"
 #include "lexer/token.hpp"
 
 #include <algorithm>
@@ -39,6 +40,7 @@ enum class ConstraintKind {
     Integer,
     Plus,
     Comparable,
+    NumericList,
 };
 
 struct Constraint {
@@ -89,6 +91,7 @@ private:
     Type analyze_unary(const UnaryExpr& expr);
     Type analyze_binary(const BinaryExpr& expr);
     Type analyze_call(const CallExpr& expr, bool result_used);
+    Type analyze_stdlib_call(FunctionSymbol& function, const CallExpr& expr, bool result_used);
     Type analyze_list(const ListExpr& expr);
 
     bool declare_local(const std::string& name, Type type, SourceLocation location, bool iterator);
@@ -349,6 +352,9 @@ void Analyzer::analyze_functions() {
             if (found == functions_.end() || found->second == nullptr) {
                 continue;
             }
+            if (is_stdlib_runtime_ir(ir_name)) {
+                continue;
+            }
             analyze_function(*found->second);
         }
     }
@@ -421,13 +427,32 @@ void Analyzer::check_constraints() {
                       "Comparisons require integers or floats, not " + types_.to_string(resolved) + ".",
                       "Compare numbers, for example `age > 18`.");
                 break;
+            case ConstraintKind::NumericList: {
+                Type elem = resolved;
+                if (resolved.kind == TypeKind::List && resolved.element != nullptr) {
+                    elem = types_.prune(*resolved.element);
+                }
+                if (elem.kind == TypeKind::Integer || elem.kind == TypeKind::Float) {
+                    break;
+                }
+                if (elem.kind == TypeKind::Variable) {
+                    error(constraint.location, "Cannot infer type",
+                          "This sort or search never received an integer or float list.",
+                          "Pass a list of integers or floats, for example `[3, 1, 2]`.");
+                    break;
+                }
+                error(constraint.location, "Type mismatch",
+                      "`sort` requires a list of integers or floats, not " + types_.to_string(resolved) + ".",
+                      "Pass `list[integer]` or `list[float]`.");
+                break;
+            }
         }
     }
 }
 
 void Analyzer::finalize_functions() {
     for (auto& [name, function] : functions_) {
-        if (function == nullptr) {
+        if (function == nullptr || is_stdlib_runtime_ir(name)) {
             continue;
         }
         if (!types_.is_resolved(function->return_type)) {
@@ -898,6 +923,9 @@ Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
             }
             return types_.fresh_variable();
         }
+        if (is_stdlib_runtime_ir(function->ir_name)) {
+            return analyze_stdlib_call(*function, expr, result_used);
+        }
         call_ir_names_[&expr] = function->ir_name;
         if (expr.arguments.size() != function->parameters.size()) {
             error(expr.callee_location, "Wrong number of arguments",
@@ -1001,12 +1029,236 @@ Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
     }
 
     const Type result = function->return_type;
-    if (result_used) {
-        require_non_void(result, expr.callee_location,
-                         "`" + expr.callee + "` does not give a value, so it cannot be used in an expression.",
-                         "Call `" + expr.callee + "(...)` as a statement, or add a `give` to the function.");
+        if (result_used) {
+            require_non_void(result, expr.callee_location,
+                             "`" + expr.callee + "` does not give a value, so it cannot be used in an expression.",
+                             "Call `" + expr.callee + "(...)` as a statement, or add a `give` to the function.");
+        }
+        return result;
+}
+
+Type Analyzer::analyze_stdlib_call(FunctionSymbol& function, const CallExpr& expr, bool result_used) {
+    call_ir_names_[&expr] = function.ir_name;
+    const std::string& ir = function.ir_name;
+    const std::string display = expr.qualifier.empty() ? expr.callee : expr.qualifier + "." + expr.callee;
+
+    auto arg_location = [&](std::size_t i) -> SourceLocation {
+        if (i < expr.arguments.size() && expr.arguments[i] != nullptr) {
+            return expr.arguments[i]->span.start;
+        }
+        return expr.callee_location;
+    };
+    auto analyze_arg = [&](std::size_t i) -> Type {
+        if (i >= expr.arguments.size()) {
+            return types_.fresh_variable();
+        }
+        return analyze_expression(expr.arguments[i].get());
+    };
+    auto require_arity = [&](std::size_t n) {
+        if (expr.arguments.size() == n) {
+            return true;
+        }
+        error(expr.callee_location, "Wrong number of arguments",
+              "`" + display + "` takes " + std::to_string(n) + " argument" + (n == 1 ? "" : "s") +
+                  ", but this call passes " + std::to_string(expr.arguments.size()) + ".",
+              "Pass exactly " + std::to_string(n) + " argument" + (n == 1 ? "" : "s") + ".");
+        return false;
+    };
+    auto finish = [&](Type result) {
+        if (result_used) {
+            require_non_void(result, expr.callee_location,
+                             "`" + display + "` does not give a value, so it cannot be used in an expression.",
+                             "Call `" + display + "(...)` as a statement, or add a `give` to the function.");
+        }
+        return result;
+    };
+
+    if (ir == "std$str$len") {
+        require_arity(1);
+        expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a string.", "Pass a string.");
+        return finish(integer_type());
     }
-    return result;
+    if (ir == "std$str$at") {
+        require_arity(2);
+        expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a string.", "Pass a string.");
+        expect_type(analyze_arg(1), integer_type(), arg_location(1), "Type mismatch",
+                    "`" + display + "` expects an integer index.", "Pass an integer byte offset.");
+        return finish(integer_type());
+    }
+    if (ir == "std$str$slice") {
+        require_arity(3);
+        expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a string.", "Pass a string.");
+        expect_type(analyze_arg(1), integer_type(), arg_location(1), "Type mismatch",
+                    "`" + display + "` expects an integer start.", "Pass an integer byte offset.");
+        expect_type(analyze_arg(2), integer_type(), arg_location(2), "Type mismatch",
+                    "`" + display + "` expects an integer end.", "Pass an integer byte offset.");
+        return finish(string_type());
+    }
+    if (ir == "std$str$find" || ir == "std$str$contains" || ir == "std$str$starts" || ir == "std$str$ends") {
+        require_arity(2);
+        expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a string.", "Pass a string.");
+        expect_type(analyze_arg(1), string_type(), arg_location(1), "Type mismatch",
+                    "`" + display + "` expects a string substring.", "Pass a string.");
+        return finish(ir == "std$str$find" ? integer_type() : boolean_type());
+    }
+    if (ir == "std$str$repeat") {
+        require_arity(2);
+        expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a string.", "Pass a string.");
+        expect_type(analyze_arg(1), integer_type(), arg_location(1), "Type mismatch",
+                    "`" + display + "` expects an integer count.", "Pass an integer.");
+        return finish(string_type());
+    }
+    if (ir == "std$str$join") {
+        require_arity(2);
+        expect_type(analyze_arg(0), list_type(string_type()), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a list of strings.", "Pass `list[string]`.");
+        expect_type(analyze_arg(1), string_type(), arg_location(1), "Type mismatch",
+                    "`" + display + "` expects a string separator.", "Pass a string.");
+        return finish(string_type());
+    }
+    if (ir == "std$str$split") {
+        require_arity(2);
+        expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a string.", "Pass a string.");
+        expect_type(analyze_arg(1), string_type(), arg_location(1), "Type mismatch",
+                    "`" + display + "` expects a string separator.", "Pass a non-empty string.");
+        return finish(list_type(string_type()));
+    }
+    if (ir == "std$list$len") {
+        require_arity(1);
+        Type elem = types_.fresh_variable();
+        expect_type(analyze_arg(0), list_type(elem), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a list.", "Pass a list.");
+        return finish(integer_type());
+    }
+    if (ir == "std$list$copy") {
+        require_arity(1);
+        Type elem = types_.fresh_variable();
+        expect_type(analyze_arg(0), list_type(elem), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a list.", "Pass a list.");
+        return finish(list_type(elem));
+    }
+    if (ir == "std$list$fill") {
+        require_arity(2);
+        Type elem = types_.fresh_variable();
+        expect_type(analyze_arg(0), list_type(elem), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a list.", "Pass a list.");
+        expect_type(analyze_arg(1), elem, arg_location(1), "Type mismatch",
+                    "`" + display + "` requires a value that matches the list element type.",
+                    "Pass a value of the same type as the list elements.");
+        return finish(void_type());
+    }
+    if (ir == "std$list$reverse") {
+        require_arity(1);
+        Type elem = types_.fresh_variable();
+        expect_type(analyze_arg(0), list_type(elem), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a list.", "Pass a list.");
+        return finish(void_type());
+    }
+    if (ir == "std$list$slice") {
+        require_arity(3);
+        Type elem = types_.fresh_variable();
+        expect_type(analyze_arg(0), list_type(elem), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a list.", "Pass a list.");
+        expect_type(analyze_arg(1), integer_type(), arg_location(1), "Type mismatch",
+                    "`" + display + "` expects an integer start.", "Pass an integer index.");
+        expect_type(analyze_arg(2), integer_type(), arg_location(2), "Type mismatch",
+                    "`" + display + "` expects an integer end.", "Pass an integer index.");
+        return finish(list_type(elem));
+    }
+    if (ir == "std$sort$asc" || ir == "std$sort$desc") {
+        require_arity(1);
+        Type elem = types_.fresh_variable();
+        const Type items = analyze_arg(0);
+        expect_type(items, list_type(elem), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a list.", "Pass a list of integers or floats.");
+        add_constraint(elem, ConstraintKind::NumericList, arg_location(0), display);
+        return finish(void_type());
+    }
+    if (ir == "std$sort$sorted") {
+        require_arity(1);
+        Type elem = types_.fresh_variable();
+        expect_type(analyze_arg(0), list_type(elem), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a list.", "Pass a list of integers or floats.");
+        add_constraint(elem, ConstraintKind::NumericList, arg_location(0), display);
+        return finish(list_type(elem));
+    }
+    if (ir == "std$sort$search") {
+        require_arity(2);
+        Type elem = types_.fresh_variable();
+        expect_type(analyze_arg(0), list_type(elem), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a list.", "Pass a sorted list of integers or floats.");
+        expect_type(analyze_arg(1), elem, arg_location(1), "Type mismatch",
+                    "`" + display + "` requires a value that matches the list element type.",
+                    "Pass an integer or float that matches the list.");
+        add_constraint(elem, ConstraintKind::NumericList, arg_location(0), display);
+        return finish(integer_type());
+    }
+    if (ir == "std$math$abs_i") {
+        require_arity(1);
+        expect_type(analyze_arg(0), integer_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects an integer.", "Use `math.abs_f` for floats.");
+        return finish(integer_type());
+    }
+    if (ir == "std$math$abs_f") {
+        require_arity(1);
+        expect_type(analyze_arg(0), float_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a float.", "Use `math.abs_i` for integers.");
+        return finish(float_type());
+    }
+    if (ir == "std$math$min_i" || ir == "std$math$max_i") {
+        require_arity(2);
+        expect_type(analyze_arg(0), integer_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects an integer.", "Use the `_f` name for floats.");
+        expect_type(analyze_arg(1), integer_type(), arg_location(1), "Type mismatch",
+                    "`" + display + "` expects an integer.", "Use the `_f` name for floats.");
+        return finish(integer_type());
+    }
+    if (ir == "std$math$min_f" || ir == "std$math$max_f") {
+        require_arity(2);
+        expect_type(analyze_arg(0), float_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a float.", "Use the `_i` name for integers.");
+        expect_type(analyze_arg(1), float_type(), arg_location(1), "Type mismatch",
+                    "`" + display + "` expects a float.", "Use the `_i` name for integers.");
+        return finish(float_type());
+    }
+    if (ir == "std$math$floor" || ir == "std$math$ceil" || ir == "std$math$sqrt" || ir == "std$math$sin" ||
+        ir == "std$math$cos" || ir == "std$math$tan" || ir == "std$math$exp" || ir == "std$math$log") {
+        require_arity(1);
+        expect_type(analyze_arg(0), float_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a float.", "Pass a float, for example `2.0`.");
+        return finish(float_type());
+    }
+    if (ir == "std$math$pow") {
+        require_arity(2);
+        expect_type(analyze_arg(0), float_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a float.", "Pass a float.");
+        expect_type(analyze_arg(1), float_type(), arg_location(1), "Type mismatch",
+                    "`" + display + "` expects a float exponent.", "Pass a float.");
+        return finish(float_type());
+    }
+    if (ir == "std$stat$min_i" || ir == "std$stat$max_i") {
+        require_arity(1);
+        expect_type(analyze_arg(0), list_type(integer_type()), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a list of integers.", "Pass `list[integer]`.");
+        return finish(integer_type());
+    }
+    if (ir == "std$stat$min_f" || ir == "std$stat$max_f" || ir == "std$stat$mean_f") {
+        require_arity(1);
+        expect_type(analyze_arg(0), list_type(float_type()), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a list of floats.", "Pass `list[float]`.");
+        return finish(float_type());
+    }
+
+    for (const auto& argument : expr.arguments) {
+        analyze_expression(argument.get());
+    }
+    return finish(types_.fresh_variable());
 }
 
 Type Analyzer::analyze_list(const ListExpr& expr) {

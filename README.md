@@ -2,7 +2,7 @@
 
 YUKT is an English-inspired, statically typed, compiled programming language. This repository contains its compiler, language specification, and tests.
 
-The current release is **0.12**. 0.11 remains tagged `v0.11.0` after the audit in `docs/YUKT_011_AUDIT.md`. `yukt build` and `yukt run` produce **host-native** binaries (Apple Silicon macOS and Linux x86-64) optimized at LLVM O3, including multi-file programs linked through `use`. Independent `repeat` loops and simple `+`/`*` reductions may run in parallel when estimated work is large; the runtime can still sequentialize a call that is not worth dispatching. `yukt --explain` reports those decisions only when they appear in generated LLVM IR. See `docs/YUKT_011_DESIGN.md`, `docs/YUKT_012_DESIGN.md`, `docs/EXECUTION_ENGINE.md`, `docs/RUNTIME.md`, and `docs/STDLIB.md`. Standard-library APIs are not part of 0.12.
+The current release is **0.12.1**. 0.11 remains tagged `v0.11.0`. 0.12.0 is the module-system tag. `yukt build` and `yukt run` produce **host-native** binaries (Apple Silicon macOS and Linux x86-64) optimized at LLVM O3, including multi-file programs linked through `use`. Independent `repeat` loops and simple `+`/`*` reductions may run in parallel when estimated work is large; the runtime can still sequentialize a call that is not worth dispatching. `yukt --explain` reports those decisions only when they appear in generated LLVM IR. See `docs/YUKT_011_DESIGN.md`, `docs/YUKT_012_DESIGN.md`, `docs/EXECUTION_ENGINE.md`, `docs/RUNTIME.md`, and `docs/STDLIB.md`. Shipped library modules: `std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`.
 
 ## Example
 
@@ -53,7 +53,7 @@ YUKT is running!
 | Intelligent execution engine | Implemented (0.10); see `docs/PERFORMANCE_ANALYSIS_0.10.md` |
 | Portability / intelligence | Frozen (0.11); see `docs/YUKT_011_AUDIT.md` |
 | Modules (`use` / `share` / `as`) | Implemented (0.12); see `docs/LANGUAGE_SPEC.md` |
-| Standard library APIs | Not started; `std/` is empty |
+| Standard library APIs | `std/str`, `std/list`, `std/sort`, `std/math`, `std/stat` |
 
 `yukt file.yukt` type-checks. `yukt build` and `yukt run` generate native code through LLVM.
 
@@ -124,7 +124,7 @@ build/yukt run examples/hello.yukt
 ```
 compiler/    Frontend, YUKT IR, and LLVM backend
 runtime/     C runtime linked into generated programs
-std/         Reserved for the standard library
+std/         Standard library modules (`str`, `list`, `sort`, `math`, `stat`)
 tests/       CTest suites
 examples/    Sample YUKT programs
 docs/        Language and compiler documentation
@@ -144,4 +144,6 @@ tools/       Reserved for developer tools
 - [0.12 design](docs/YUKT_012_DESIGN.md)
 - [Execution engine](docs/EXECUTION_ENGINE.md)
 - [Standard library foundations](docs/STDLIB.md)
+- [Standard library API contract](docs/STDLIB_SPEC.md)
+- [Standard library implementation report](docs/STDLIB_IMPLEMENTATION_REPORT.md)
 - [0.10 performance analysis](docs/PERFORMANCE_ANALYSIS_0.10.md)

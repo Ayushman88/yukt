@@ -37,7 +37,7 @@ create  say  if  otherwise  repeat  in  give  true  false
 use  share  as
 ```
 
-These cannot be used as names. `use`, `share`, and `as` are reserved from 0.12.
+These cannot be used as variable names, parameter names, aliases, or `repeat` iterators. They may be used as **function names** after `create` / `share create` and as the callee after `.` in a qualified call, so a library can export `str.repeat(...)`. Statement position is unchanged: `repeat i in 1..5:` is still a loop. `use`, `share`, and `as` are reserved from 0.12.
 
 ## Lexical tokens
 

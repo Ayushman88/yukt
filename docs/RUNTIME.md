@@ -46,3 +46,15 @@ The caches and the allocation tracker are **not locked**. The 0.11 compiler refu
 ## Parallel reductions
 
 `yukt_reduce_i64` / `yukt_reduce_f64` combine chunk partials under a mutex. Signed integer overflow in the combine is undefined (C `int64_t`). Float combines follow the language rule: association and rounding may differ by chunking and CPU count. See `docs/LANGUAGE_SPEC.md` (Numerical semantics).
+
+## Standard-library primitives (0.12.1)
+
+`std/str`, `std/list`, `std/sort`, `std/math`, and empty-list traps in `std/stat` call C helpers in this runtime. They use the same tracker and size-class caches. They do not free during `yukt_main`. Generated programs link `-lm` for libm.
+
+| Prefix | Role |
+| --- | --- |
+| `yukt_str_*` | Byte length, index, slice, find, split/join, repeat |
+| `yukt_list_copy` / `fill_*` / `reverse` / `slice` | Polymorphic fixed-length list ops |
+| `yukt_list_sort_*` / `sorted` / `search` | Unstable numeric sort and binary search |
+| `yukt_math_*` | Integer helpers and libm wrappers |
+| `yukt_stat_min_*` / `max_*` / `mean_f` | Empty-list traps; sums stay in YUKT |

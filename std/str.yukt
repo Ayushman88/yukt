@@ -1,0 +1,42 @@
+# Byte-string helpers. Bodies are not executed; the backend calls yukt_str_*.
+
+share create len(s):
+    n = 0
+    give n
+
+share create at(s, i):
+    n = i + 0
+    give n
+
+share create slice(s, start, end):
+    a = start + 0
+    b = end + 0
+    give s
+
+share create find(s, sub):
+    t = s + sub
+    give 0
+
+share create contains(s, sub):
+    t = s + sub
+    give true
+
+share create starts(s, sub):
+    t = s + sub
+    give true
+
+share create ends(s, sub):
+    t = s + sub
+    give true
+
+share create repeat(s, n):
+    k = n + 0
+    give s
+
+share create join(parts, sep):
+    n = count(parts)
+    give sep
+
+share create split(s, sep):
+    t = s + sep
+    give [t]

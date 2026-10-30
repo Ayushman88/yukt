@@ -43,6 +43,7 @@ private:
 
     bool match(TokenKind kind);
     bool check(TokenKind kind) const;
+    bool check_name() const;
     bool check_next(TokenKind kind) const;
     const Token& peek() const;
     const Token& peek_next() const;

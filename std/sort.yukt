@@ -1,0 +1,15 @@
+# Unstable in-place sort and binary search for integer and float lists.
+
+share create asc(items):
+    n = count(items)
+
+share create desc(items):
+    n = count(items)
+
+share create sorted(items):
+    n = count(items)
+    give items
+
+share create search(items, value):
+    n = count(items)
+    give 0

@@ -1,0 +1,36 @@
+use std/sort
+use std/list
+
+create main:
+    empty = zeros(0)
+    sort.asc(empty)
+    say list.len(empty)
+    say sort.search(empty, 1)
+
+    one = [7]
+    sort.desc(one)
+    say one
+    say sort.search(one, 7)
+    say sort.search(one, 8)
+
+    nums = [3, 1, 2, 1, 4]
+    sort.asc(nums)
+    say nums
+    say sort.search(nums, 1)
+    say sort.search(nums, 4)
+    say sort.search(nums, 5)
+
+    down = [3, 1, 2]
+    sort.desc(down)
+    say down
+
+    source = [9, 1, 8]
+    copied = sort.sorted(source)
+    say source
+    say copied
+
+    floats = [2.5, 1.5, 1.5, 3.0]
+    sort.asc(floats)
+    say floats
+    say sort.search(floats, 1.5)
+    say sort.search(floats, 4.0)

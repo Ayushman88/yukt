@@ -1,0 +1,19 @@
+use std/stat
+use std/list
+
+create main:
+    none = zeros(0)
+    say stat.sum_i(none)
+    emptyf = list.slice([1.0], 0, 0)
+    say stat.sum_f(emptyf)
+    say stat.sum_i([1, 2, 3, 4])
+    say stat.sum_f([1.5, 2.5, 3.0])
+    say stat.min_i([4, 1, 9, 1])
+    say stat.max_i([4, 1, 9, 1])
+    say stat.min_f([4.0, 1.5, 9.0])
+    say stat.max_f([4.0, 1.5, 9.0])
+    say stat.mean_f([1.0, 3.0, 5.0])
+    say stat.sum_i([7])
+    say stat.min_i([7])
+    say stat.max_i([7])
+    say stat.mean_f([8.0])

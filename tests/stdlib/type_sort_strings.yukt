@@ -1,0 +1,5 @@
+use std/sort
+
+create main:
+    words = ["b", "a"]
+    sort.asc(words)

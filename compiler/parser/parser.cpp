@@ -152,7 +152,7 @@ std::unique_ptr<FunctionDecl> Parser::parse_function() {
         return nullptr;
     }
 
-    if (!check(TokenKind::Identifier)) {
+    if (!check_name()) {
         error_at(peek(), "Unexpected token",
                  "Expected a function name after `create`. Found " + token_description(peek()) + ".",
                  "Use an identifier, for example `create greet(name):`.");
@@ -319,7 +319,7 @@ std::unique_ptr<Stmt> Parser::parse_assignment_or_call() {
 
     if (check(TokenKind::Dot)) {
         const Token dot = advance();
-        if (!check(TokenKind::Identifier)) {
+        if (!check_name()) {
             error_at(peek(), "Unexpected token",
                      "Expected a function name after `.`. Found " + token_description(peek()) + ".",
                      "Write a qualified call such as `math.add(1, 2)`.");
@@ -573,7 +573,7 @@ std::unique_ptr<Expr> Parser::parse_primary() {
         }
         if (check(TokenKind::Dot)) {
             const Token dot = advance();
-            if (!check(TokenKind::Identifier)) {
+            if (!check_name()) {
                 error_at(peek(), "Unexpected token",
                          "Expected a function name after `.`. Found " + token_description(peek()) + ".",
                          "Write a qualified call such as `math.add(1, 2)`.");
@@ -673,6 +673,10 @@ bool Parser::match(TokenKind kind) {
     }
     advance();
     return true;
+}
+
+bool Parser::check_name() const {
+    return check(TokenKind::Identifier) || is_keyword(peek().kind);
 }
 
 bool Parser::check(TokenKind kind) const {

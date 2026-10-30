@@ -1,0 +1,5 @@
+use std/str as s
+
+create main:
+    say s.len("hi")
+    say s.find("hi", "i")

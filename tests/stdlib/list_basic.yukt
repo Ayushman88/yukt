@@ -1,0 +1,47 @@
+use std/list
+
+create main:
+    empty = zeros(0)
+    say list.len(empty)
+    copied = list.copy(empty)
+    say list.len(copied)
+
+    nums = [1, 2, 3]
+    say list.len(nums)
+    twin = list.copy(nums)
+    twin[0] = 9
+    say nums
+    say twin
+
+    list.fill(nums, 4)
+    say nums
+
+    floats = [1.5, 2.5, 3.5]
+    more = list.copy(floats)
+    more[1] = 9.5
+    say floats
+    say more
+    list.fill(floats, 0.5)
+    say floats
+
+    flags = [true, false, false]
+    list.reverse(flags)
+    say flags
+    list.fill(flags, false)
+    say flags
+
+    words = ["a", "b", "c"]
+    list.reverse(words)
+    say words
+    list.fill(words, "z")
+    say words
+
+    nested = [[1, 2], [3, 4]]
+    taken = list.copy(nested)
+    say taken
+    say list.slice(nums, 0, 0)
+    ranged = [10, 20, 30, 40]
+    say list.slice(ranged, 1, 3)
+    say list.slice(ranged, 0, 4)
+    none = list.slice(ranged, 2, 2)
+    say list.len(none)

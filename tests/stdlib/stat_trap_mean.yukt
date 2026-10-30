@@ -1,0 +1,6 @@
+use std/stat
+use std/list
+
+create main:
+    empty = list.slice([1.0], 0, 0)
+    say stat.mean_f(empty)

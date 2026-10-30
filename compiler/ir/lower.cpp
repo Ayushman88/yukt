@@ -776,11 +776,14 @@ IrModule Lowerer::run() {
 
 void Lowerer::lower_function(const FunctionDecl& function) {
     current_function_decl_ = &function;
-    IrFunction ir_fn;
     auto ir_name = function.name;
     if (const auto found = semantic_.function_ir_names.find(&function); found != semantic_.function_ir_names.end()) {
         ir_name = found->second;
     }
+    if (is_stdlib_runtime_ir(ir_name)) {
+        return;
+    }
+    IrFunction ir_fn;
     ir_fn.name = ir_name;
     const auto return_found = semantic_.return_types.find(ir_name);
     ir_fn.return_type = return_found != semantic_.return_types.end() ? ir_type_from(return_found->second) : ir_void();

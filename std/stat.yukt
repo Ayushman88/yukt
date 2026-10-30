@@ -1,0 +1,39 @@
+# Numeric list reductions. sum_* are YUKT; min/max/mean trap on empty via runtime.
+
+share create sum_i(items):
+    n = count(items)
+    total = 0
+    if n == 0:
+        give total
+    repeat i in 0..n - 1:
+        total = total + items[i]
+    give total
+
+share create sum_f(items):
+    n = count(items)
+    total = 0.0
+    if n == 0:
+        give total
+    repeat i in 0..n - 1:
+        total = total + items[i]
+    give total
+
+share create min_i(items):
+    n = count(items)
+    give 0
+
+share create max_i(items):
+    n = count(items)
+    give 0
+
+share create min_f(items):
+    n = count(items)
+    give 0.0
+
+share create max_f(items):
+    n = count(items)
+    give 0.0
+
+share create mean_f(items):
+    n = count(items)
+    give 0.0

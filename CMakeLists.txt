@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(yukt VERSION 0.12.0 LANGUAGES C CXX)
+project(yukt VERSION 0.12.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -80,6 +80,7 @@ yukt_set_warnings(yukt_compiler)
 
 add_library(yukt_runtime STATIC runtime/yukt_runtime.c)
 target_include_directories(yukt_runtime PUBLIC ${CMAKE_SOURCE_DIR}/runtime)
+target_link_libraries(yukt_runtime PUBLIC m)
 
 add_library(yukt_backend
     compiler/backend/llvm_backend.cpp
@@ -156,6 +157,23 @@ endif()
 add_test(NAME yukt_native_tests COMMAND yukt_native_tests)
 add_dependencies(yukt_native_tests yukt)
 
+add_executable(yukt_stdlib_tests tests/stdlib/stdlib_tests.cpp)
+target_link_libraries(yukt_stdlib_tests PRIVATE yukt_backend yukt_runtime)
+target_include_directories(yukt_stdlib_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_compile_definitions(yukt_stdlib_tests PRIVATE
+    YUKT_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    YUKT_EXECUTABLE="$<TARGET_FILE:yukt>"
+    YUKT_RUNTIME_LIB="$<TARGET_FILE:yukt_runtime>"
+)
+if(NOT LLVM_ENABLE_RTTI)
+    target_compile_options(yukt_stdlib_tests PRIVATE -fno-rtti)
+endif()
+if(APPLE AND DEFINED LLVM_LIBRARY_DIR)
+    target_link_options(yukt_stdlib_tests PRIVATE "-Wl,-rpath,${LLVM_LIBRARY_DIR}")
+endif()
+add_test(NAME yukt_stdlib_tests COMMAND yukt_stdlib_tests)
+add_dependencies(yukt_stdlib_tests yukt)
+
 add_test(NAME hello_tokens COMMAND yukt --tokens ${CMAKE_SOURCE_DIR}/examples/hello.yukt)
 add_test(NAME hello_ast COMMAND yukt --ast ${CMAKE_SOURCE_DIR}/examples/hello.yukt)
 add_test(NAME hello_types COMMAND yukt --types ${CMAKE_SOURCE_DIR}/examples/hello.yukt)
@@ -166,3 +184,5 @@ add_test(NAME hello_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/examples/hello.yukt
 add_test(NAME index_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/examples/index.yukt)
 add_test(NAME module_ok_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/modules/ok/app.yukt)
 add_test(NAME module_nested_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/modules/nested/a.yukt)
+add_test(NAME stdlib_str_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/stdlib/str_basic.yukt)
+add_test(NAME stdlib_all_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/stdlib/all_modules.yukt)

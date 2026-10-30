@@ -1,0 +1,4 @@
+use std/str
+
+create main:
+    say str.split("a,b", "")

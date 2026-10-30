@@ -1,6 +1,6 @@
 # YUKT 0.12 design — Modules, then a standard library
 
-Status: **module system implemented**. 0.11 remains frozen (`v0.11.0`). Standard-library APIs are not part of this milestone; `std/` stays empty.
+Status: **module system implemented** (`v0.12.0`). 0.11 remains frozen (`v0.11.0`). The now-gated standard library shipped as `v0.12.1`; see `docs/STDLIB_IMPLEMENTATION_REPORT.md`.
 
 ## Order
 

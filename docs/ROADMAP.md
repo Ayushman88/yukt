@@ -127,16 +127,16 @@ This milestone does **not** cross-compile, add modules, or add CUDA.
 
 ## 0.12 — Modules (stdlib APIs later)
 
-**Status: module system implemented.** Standard-library APIs are not part of this milestone.
+**Status: module system implemented** (`v0.12.0`). **Now-gated stdlib implemented** (`v0.12.1`).
 
 - `use` / `share` / `as` / `.` qualification
 - Whole-program DAG: resolve, load, cycle detection, canonical identity
 - Default-private exports; qualified calls only
 - One YUKT IR module, one LLVM module, one host-native executable
-- `std/` reserved and empty of APIs; tests inject a fixture stdlib root
+- `std/str`, `std/list`, `std/sort`, `std/math`, `std/stat` ship as ordinary modules
 - 0.11 tests remain green; `v0.11.0` is not rewritten
 
-Next (still called 0.12 in the original roadmap, now a follow-on): strings and collections; maps and sets; files and JSON; math. Written in YUKT where possible.
+Maps, sets, arrays, files, JSON, and errors wait for 0.13 language types. See `docs/STDLIB_SPEC.md` and `docs/STDLIB_IMPLEMENTATION_REPORT.md`.
 
 Preserve 0.11 benchmarks (`benchmarks/results-0.11.json`). Do not overwrite them in place.
 

@@ -1,0 +1,46 @@
+# Scalar math. Bodies are not executed; the backend calls libm / integer helpers.
+
+share create abs_i(x):
+    give x + 0
+
+share create abs_f(x):
+    give x + 0.0
+
+share create min_i(a, b):
+    give a + b - b
+
+share create max_i(a, b):
+    give a + b - b
+
+share create min_f(a, b):
+    give a + b - b
+
+share create max_f(a, b):
+    give a + b - b
+
+share create floor(x):
+    give x + 0.0
+
+share create ceil(x):
+    give x + 0.0
+
+share create sqrt(x):
+    give x + 0.0
+
+share create pow(x, y):
+    give x + y
+
+share create sin(x):
+    give x + 0.0
+
+share create cos(x):
+    give x + 0.0
+
+share create tan(x):
+    give x + 0.0
+
+share create exp(x):
+    give x + 0.0
+
+share create log(x):
+    give x + 0.0

@@ -1,0 +1,20 @@
+# Fixed-length list helpers. Bodies are not executed; the backend calls yukt_list_*.
+
+share create len(items):
+    give count(items)
+
+share create copy(src):
+    n = count(src)
+    give src
+
+share create fill(dest, value):
+    n = count(dest)
+
+share create reverse(dest):
+    n = count(dest)
+
+share create slice(src, start, end):
+    a = start + 0
+    b = end + 0
+    n = count(src)
+    give src
