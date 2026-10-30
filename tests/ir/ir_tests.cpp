@@ -326,5 +326,50 @@ int main() {
         REQUIRE(printed.str().find("record Point") != std::string::npos);
     }
 
+    {
+        const auto module = ir_from(
+            "create main:\n"
+            "    xs = zeros(2)\n"
+            "    xs = zeros(5)\n"
+            "    say count(xs)\n");
+        std::ostringstream printed;
+        yukt::print_ir(module, printed);
+        const std::string ir = printed.str();
+        REQUIRE(ir.find("drop ") != std::string::npos);
+        std::size_t drops = 0;
+        for (std::size_t pos = 0; (pos = ir.find("drop ", pos)) != std::string::npos; pos += 5) {
+            ++drops;
+        }
+        REQUIRE(drops == 2);
+    }
+
+    {
+        const auto module = ir_from(
+            "create ident(xs):\n"
+            "    give xs\n"
+            "\n"
+            "create main:\n"
+            "    xs = zeros(3)\n"
+            "    ys = ident(xs)\n"
+            "    say count(ys)\n");
+        std::ostringstream printed;
+        yukt::print_ir(module, printed);
+        const std::string ir = printed.str();
+        const auto ident_at = ir.find("function ident");
+        const auto main_at = ir.find("function main");
+        REQUIRE(ident_at != std::string::npos);
+        REQUIRE(main_at != std::string::npos);
+        REQUIRE(ident_at < main_at);
+        const std::string ident_ir = ir.substr(ident_at, main_at - ident_at);
+        const std::string main_ir = ir.substr(main_at);
+        REQUIRE(ident_ir.find("drop ") == std::string::npos);
+        REQUIRE(main_ir.find("drop ") != std::string::npos);
+        std::size_t drops = 0;
+        for (std::size_t pos = 0; (pos = main_ir.find("drop ", pos)) != std::string::npos; pos += 5) {
+            ++drops;
+        }
+        REQUIRE(drops == 1);
+    }
+
     return yukt::test::summary("ir");
 }

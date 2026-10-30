@@ -1,0 +1,7 @@
+create ident(xs):
+    give xs
+
+create main:
+    xs = zeros(3)
+    ys = ident(xs)
+    say count(ys)

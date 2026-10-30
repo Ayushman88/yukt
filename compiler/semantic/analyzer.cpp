@@ -159,6 +159,8 @@ private:
     // False during type inference; true on the second walk, after parameter types
     // have been unified, so heap parameters can enter the ownership map as Owned.
     bool ownership_pass_ = false;
+    std::unordered_map<const Stmt*, std::vector<std::string>> drop_before_;
+    std::unordered_map<const FunctionDecl*, std::vector<std::string>> drop_on_return_;
 };
 
 bool is_numeric(Type type) {
@@ -212,6 +214,8 @@ SemanticInfo Analyzer::run() {
     info.call_ir_names = call_ir_names_;
     info.record_constructors = record_constructors_;
     info.records = records_;
+    info.drop_before = drop_before_;
+    info.drop_on_return = drop_on_return_;
     const int module_count = graph_ == nullptr ? 1 : static_cast<int>(graph_->modules.size());
     for (int module_index = 0; module_index < module_count; ++module_index) {
         const Program* program = module_program(module_index);
@@ -724,6 +728,8 @@ void Analyzer::analyze_functions() {
     // Parameter types are unified only after every call site has been seen.
     // Walk again so heap parameters start Owned and `give xs` can mark Moved.
     ownership_pass_ = true;
+    drop_before_.clear();
+    drop_on_return_.clear();
     walk_functions();
     ownership_pass_ = false;
 }
@@ -973,6 +979,19 @@ void Analyzer::analyze_function(FunctionSymbol& function) {
             analyze_statement(stmt.get());
         }
 
+        if (ownership_pass_) {
+            std::vector<std::string> remaining;
+            for (const auto& [name, own] : own_) {
+                if (own.state == OwnState::Owned) {
+                    remaining.push_back(name);
+                }
+            }
+            std::sort(remaining.begin(), remaining.end());
+            if (!remaining.empty()) {
+                drop_on_return_[function.decl] = std::move(remaining);
+            }
+        }
+
         if (!ownership_pass_ && !scopes_.empty()) {
             for (const auto& [name, symbol] : scopes_.front()) {
                 bool parameter = false;
@@ -1090,8 +1109,12 @@ void Analyzer::analyze_assignment(const AssignStmt& stmt) {
                       "`" + stmt.name + "` was moved, so it cannot be used here.",
                       "This value was moved. Use the new owner, or copy with list.copy before moving.");
             } else {
-                // Overwrite: the previous allocation is dropped in IR (Task 4);
-                // the name stays Owned.
+                // Overwrite: drop the previous allocation, then the name stays Owned.
+                // `xs = xs` is a no-op move, not a drop of the only pointer.
+                if (ownership_pass_ && state != own_.end() && state->second.state == OwnState::Owned &&
+                    moved_from != stmt.name) {
+                    drop_before_[&stmt].push_back(stmt.name);
+                }
                 own_[stmt.name] = OwnName{OwnState::Owned, stmt.name_location};
             }
         }
@@ -1199,7 +1222,28 @@ void Analyzer::analyze_give(const GiveStmt& stmt) {
                   "` already gives " + types_.to_string(current_function_->return_type) + ".",
               "Every `give` in a function must have the same type.");
     }
-    // `give x` transfers ownership of a heap value to the caller: x is moved.
+    // Drop every still-Owned heap name except the identifier being transferred.
+    // `give x` then marks x Moved so the callee does not release it.
+    if (ownership_pass_) {
+        std::string given;
+        if (type_owns_heap(types_, type)) {
+            if (const auto* id = dynamic_cast<const IdentifierExpr*>(stmt.value.get())) {
+                if (lookup_local(id->name) != nullptr && name_is_heap(id->name)) {
+                    given = id->name;
+                }
+            }
+        }
+        std::vector<std::string> remaining;
+        for (const auto& [name, own] : own_) {
+            if (own.state == OwnState::Owned && name != given) {
+                remaining.push_back(name);
+            }
+        }
+        std::sort(remaining.begin(), remaining.end());
+        if (!remaining.empty()) {
+            drop_before_[&stmt] = std::move(remaining);
+        }
+    }
     if (type_owns_heap(types_, type)) {
         if (const auto* id = dynamic_cast<const IdentifierExpr*>(stmt.value.get())) {
             if (lookup_local(id->name) != nullptr && name_is_heap(id->name)) {

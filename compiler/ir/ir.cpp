@@ -271,6 +271,9 @@ void print_ir(const IrModule& module, std::ostream& out) {
                         out << value_text(inst.dest) << " = field_set " << value_text(inst.args[0]) << '.' << inst.name
                             << ", " << value_text(inst.args[1]) << '\n';
                         break;
+                    case IrOp::Drop:
+                        out << "drop " << (inst.args.empty() ? "undef" : value_text(inst.args[0])) << '\n';
+                        break;
                 }
             }
             out << "    ";

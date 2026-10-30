@@ -360,6 +360,8 @@ void LlvmEmitter::declare_runtime() {
     runtime_["yukt_reduce_i64"] = module_.getOrInsertFunction("yukt_reduce_i64", void_ty, ptr, i64, i64);
     runtime_["yukt_reduce_f64"] = module_.getOrInsertFunction("yukt_reduce_f64", void_ty, ptr, f64, i64);
     runtime_["yukt_runtime_release"] = module_.getOrInsertFunction("yukt_runtime_release", void_ty);
+    runtime_["yukt_release"] = module_.getOrInsertFunction("yukt_release", void_ty, ptr);
+    runtime_["yukt_str_from_lit"] = module_.getOrInsertFunction("yukt_str_from_lit", ptr, ptr);
     runtime_["yukt_str_len"] = module_.getOrInsertFunction("yukt_str_len", i64, ptr);
     runtime_["yukt_str_at"] = module_.getOrInsertFunction("yukt_str_at", i64, ptr, i64);
     runtime_["yukt_str_slice"] = module_.getOrInsertFunction("yukt_str_slice", ptr, ptr, i64, i64);
@@ -532,7 +534,8 @@ llvm::Value* LlvmEmitter::materialize(const IrValue& value) {
         case IrValue::Kind::ConstString: {
             llvm::GlobalVariable* text = builder_.CreateGlobalString(value.text);
             llvm::Value* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context_), 0);
-            return builder_.CreateInBoundsGEP(text->getValueType(), text, {zero, zero});
+            llvm::Value* raw = builder_.CreateInBoundsGEP(text->getValueType(), text, {zero, zero});
+            return builder_.CreateCall(runtime("yukt_str_from_lit"), {raw});
         }
         case IrValue::Kind::Undef:
             return llvm::PoisonValue::get(type_of(value.type));
@@ -783,6 +786,9 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
             return builder_.CreateInsertValue(object, stored,
                                               {record_llvm_index(object_type.record_id, inst.field_index)});
         }
+        case IrOp::Drop:
+            builder_.CreateCall(runtime("yukt_release"), {materialize(inst.args[0])});
+            return nullptr;
     }
     return nullptr;
 }

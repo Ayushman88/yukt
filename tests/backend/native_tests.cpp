@@ -35,6 +35,60 @@ yukt::CompileOutput run_source(const std::string& source) {
     return yukt::compile_program(frontend, request, *frontend.diagnostics);
 }
 
+yukt::CompileOutput emit_llvm_file(const std::string& relative) {
+    const auto path = source_path(relative);
+    auto frontend = yukt::analyze_file(path);
+    yukt::analyze_types(frontend);
+    yukt::CompileRequest request;
+    request.action = yukt::CompileAction::EmitLlvm;
+    request.input_path = path;
+    return yukt::compile_program(frontend, request, *frontend.diagnostics);
+}
+
+std::size_t count_direct_calls(const std::string& llvm_ir, const std::string& callee) {
+    std::size_t count = 0;
+    const std::string needle = "@" + callee;
+    std::size_t pos = 0;
+    while ((pos = llvm_ir.find(needle, pos)) != std::string::npos) {
+        const std::size_t line = llvm_ir.rfind('\n', pos);
+        const std::size_t start = line == std::string::npos ? 0 : line + 1;
+        const std::string prefix = llvm_ir.substr(start, pos - start);
+        if (prefix.find("call") != std::string::npos && prefix.find("declare") == std::string::npos) {
+            ++count;
+        }
+        pos += needle.size();
+    }
+    return count;
+}
+
+std::string llvm_function_body(const std::string& llvm_ir, const std::string& mangled) {
+    const std::string marker = "@" + mangled + "(";
+    std::size_t pos = 0;
+    while ((pos = llvm_ir.find(marker, pos)) != std::string::npos) {
+        const std::size_t line = llvm_ir.rfind('\n', pos);
+        const std::size_t start = line == std::string::npos ? 0 : line + 1;
+        if (llvm_ir.compare(start, 7, "define ") == 0) {
+            const std::size_t open = llvm_ir.find('{', pos);
+            if (open == std::string::npos) {
+                return {};
+            }
+            int depth = 1;
+            std::size_t i = open + 1;
+            while (i < llvm_ir.size() && depth > 0) {
+                if (llvm_ir[i] == '{') {
+                    ++depth;
+                } else if (llvm_ir[i] == '}') {
+                    --depth;
+                }
+                ++i;
+            }
+            return llvm_ir.substr(open, i - open);
+        }
+        pos += marker.size();
+    }
+    return {};
+}
+
 }  // namespace
 
 int main() {
@@ -336,6 +390,36 @@ int main() {
         const auto result = run_file("tests/modules/mangle/app.yukt");
         REQUIRE_MSG(result.ok, result.program_output);
         REQUIRE(result.program_output == "1\n2\n");
+    }
+
+    {
+        const auto result = run_file("tests/ownership/overwrite.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "5\n");
+
+        const auto llvm = emit_llvm_file("tests/ownership/overwrite.yukt");
+        REQUIRE_MSG(llvm.ok, llvm.llvm_ir);
+        const auto main_body = llvm_function_body(llvm.llvm_ir, "yukt_main");
+        REQUIRE_MSG(!main_body.empty(), llvm.llvm_ir);
+        REQUIRE_MSG(count_direct_calls(main_body, "yukt_release") == 2, main_body);
+        REQUIRE_MSG(count_direct_calls(main_body, "yukt_runtime_release") == 1, main_body);
+    }
+
+    {
+        const auto result = run_file("tests/ownership/give_live.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "3\n");
+
+        const auto llvm = emit_llvm_file("tests/ownership/give_live.yukt");
+        REQUIRE_MSG(llvm.ok, llvm.llvm_ir);
+        const auto ident_body = llvm_function_body(llvm.llvm_ir, "yukt_ident");
+        if (!ident_body.empty()) {
+            REQUIRE_MSG(count_direct_calls(ident_body, "yukt_release") == 0, ident_body);
+        }
+        const auto main_body = llvm_function_body(llvm.llvm_ir, "yukt_main");
+        REQUIRE_MSG(!main_body.empty(), llvm.llvm_ir);
+        REQUIRE_MSG(count_direct_calls(main_body, "yukt_release") == 1, main_body);
+        REQUIRE_MSG(count_direct_calls(main_body, "yukt_runtime_release") == 1, main_body);
     }
 
     return yukt::test::summary("native");

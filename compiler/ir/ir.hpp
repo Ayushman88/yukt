@@ -113,6 +113,7 @@ enum class IrOp {
     RecordNew,
     FieldGet,
     FieldSet,
+    Drop,
 };
 
 struct IrInst {

@@ -790,6 +790,10 @@ private:
     void emit(IrInst inst);
     IrValue emit_load(const std::string& name);
     void emit_store(const std::string& name, const IrValue& value);
+    void emit_drop(const IrValue& value);
+    void emit_named_drops(const std::vector<std::string>& names);
+    void emit_drops_before(const Stmt* stmt);
+    void emit_drops_on_return();
 
     const Program* program_ = nullptr;
     std::vector<const Program*> programs_;
@@ -906,6 +910,7 @@ void Lowerer::lower_function(const FunctionDecl& function) {
         } else {
             value.kind = IrValue::Kind::Undef;
         }
+        emit_drops_on_return();
         finish_return(value);
     }
 
@@ -963,6 +968,7 @@ void Lowerer::lower_statement(const Stmt* stmt) {
 void Lowerer::lower_assignment(const AssignStmt& stmt) {
     const IrValue value = lower_expression(stmt.value.get());
     ensure_local(stmt.name, value.type);
+    emit_drops_before(&stmt);
     emit_store(stmt.name, value);
 }
 
@@ -1082,7 +1088,9 @@ void Lowerer::lower_say(const SayStmt& stmt) {
 }
 
 void Lowerer::lower_give(const GiveStmt& stmt) {
-    finish_return(lower_expression(stmt.value.get()));
+    const IrValue value = lower_expression(stmt.value.get());
+    emit_drops_before(&stmt);
+    finish_return(value);
 }
 
 void Lowerer::lower_expr_stmt(const ExprStmt& stmt) {
@@ -1850,6 +1858,36 @@ void Lowerer::emit_store(const std::string& name, const IrValue& value) {
     inst.name = rewrite_name(name);
     inst.args.push_back(value);
     emit(std::move(inst));
+}
+
+void Lowerer::emit_drop(const IrValue& value) {
+    IrInst inst;
+    inst.op = IrOp::Drop;
+    inst.args.push_back(value);
+    emit(std::move(inst));
+}
+
+void Lowerer::emit_named_drops(const std::vector<std::string>& names) {
+    for (const auto& name : names) {
+        emit_drop(emit_load(name));
+    }
+}
+
+void Lowerer::emit_drops_before(const Stmt* stmt) {
+    const auto found = semantic_.drop_before.find(stmt);
+    if (found != semantic_.drop_before.end()) {
+        emit_named_drops(found->second);
+    }
+}
+
+void Lowerer::emit_drops_on_return() {
+    if (current_function_decl_ == nullptr) {
+        return;
+    }
+    const auto found = semantic_.drop_on_return.find(current_function_decl_);
+    if (found != semantic_.drop_on_return.end()) {
+        emit_named_drops(found->second);
+    }
 }
 
 }  // namespace
