@@ -3,7 +3,11 @@
 #include "common/source.hpp"
 #include "semantic/type.hpp"
 
+#include <vector>
+
 namespace yukt {
+
+struct RecordInfo;
 
 // Ownership state of a single heap-typed name (0.13.2).
 //
@@ -28,13 +32,12 @@ struct OwnName {
 // use after move.
 OwnState join_own(OwnState a, OwnState b);
 
-// True for heap types: string, list, and (from 0.13.2 Task 5) a record whose
-// fields recursively contain a heap type.
+// True for heap types: string, list, and a record whose fields recursively
+// contain a heap type. Plain records (integer/float/boolean only, including
+// nested plain records) return false and stay out of the ownership machine.
 //
-// Task 3 scope: heap record fields are not allowed yet, so every record is a
-// plain value and returns false. This keeps 0.13.1 Point-style records out of
-// the ownership machine so the record tests stay green. Task 5 will extend the
-// record case once heap fields exist.
-bool type_owns_heap(const TypeContext& types, Type type);
+// Pass the analyzer's record table so Record fields can be walked. Without it,
+// records are treated as plain values.
+bool type_owns_heap(const TypeContext& types, Type type, const std::vector<RecordInfo>* records = nullptr);
 
 }  // namespace yukt

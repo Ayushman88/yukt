@@ -307,5 +307,68 @@ int main() {
         REQUIRE(has_diagnostic(result, "Use after move", "`xs`", move_suggestion));
     }
 
+    const std::string field_move_suggestion = "Move the whole record, or copy with list.copy.";
+
+    // Whole-record move of a heap record; using the source field is Use after move.
+    {
+        const auto result = check(
+            "record Profile:\n"
+            "    name: string\n"
+            "    scores: list\n"
+            "\n"
+            "create main:\n"
+            "    p = Profile(\"ann\", zeros(2))\n"
+            "    say p.name\n"
+            "    q = p\n"
+            "    say q.name\n"
+            "    say p.name\n");
+        REQUIRE(has_title(result, "Use after move"));
+        REQUIRE(has_diagnostic(result, "Use after move", "`p`", move_suggestion));
+    }
+
+    // Overwriting a heap field is valid (drop happens in IR later).
+    {
+        const auto result = check(
+            "record Profile:\n"
+            "    name: string\n"
+            "    scores: list\n"
+            "\n"
+            "create main:\n"
+            "    p = Profile(\"ann\", zeros(2))\n"
+            "    p.scores = zeros(4)\n"
+            "    say count(p.scores)\n");
+        REQUIRE(!result.diagnostics->has_errors());
+    }
+
+    // Binding a heap field out of a record is not a steal.
+    {
+        const auto result = check(
+            "record Profile:\n"
+            "    name: string\n"
+            "    scores: list\n"
+            "\n"
+            "create main:\n"
+            "    p = Profile(\"ann\", zeros(2))\n"
+            "    stolen = p.scores\n"
+            "    say count(stolen)\n");
+        REQUIRE(has_title(result, "Cannot move out of field"));
+        REQUIRE(has_diagnostic(result, "Cannot move out of field", "scores", field_move_suggestion));
+    }
+
+    // Plain Point records stay untracked: copy and use both names.
+    {
+        const auto result = check(
+            "record Point:\n"
+            "    x: integer\n"
+            "    y: integer\n"
+            "\n"
+            "create main:\n"
+            "    p = Point(1, 2)\n"
+            "    q = p\n"
+            "    say p.x\n"
+            "    say q.x\n");
+        REQUIRE(!result.diagnostics->has_errors());
+    }
+
     return yukt::test::summary("ownership");
 }

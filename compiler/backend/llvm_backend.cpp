@@ -787,6 +787,11 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
                                               {record_llvm_index(object_type.record_id, inst.field_index)});
         }
         case IrOp::Drop:
+            if (!inst.args.empty() && inst.args[0].type.kind == IrTypeKind::Record) {
+                // Record bytes are not a tracked allocation. Heap fields are
+                // dropped by IR (FieldGet then Drop of each owned pointer).
+                return nullptr;
+            }
             builder_.CreateCall(runtime("yukt_release"), {materialize(inst.args[0])});
             return nullptr;
     }

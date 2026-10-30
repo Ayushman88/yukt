@@ -414,11 +414,35 @@ int main() {
     {
         const auto result = check(
             "record Bad:\n"
-            "    s: string\n"
+            "    s: ref\n"
             "\n"
             "create main:\n"
             "    say 1\n");
-        REQUIRE(has_title(result, "Invalid record"));
+        REQUIRE(has_title(result, "Unknown name"));
+    }
+
+    {
+        const auto result = check(
+            "record Profile:\n"
+            "    name: string\n"
+            "    scores: list\n"
+            "\n"
+            "create main:\n"
+            "    p = Profile(\"ann\", zeros(2))\n"
+            "    say p.name\n");
+        REQUIRE(!result.diagnostics->has_errors());
+    }
+
+    {
+        const auto result = check(
+            "record Box:\n"
+            "    items: list\n"
+            "\n"
+            "create main:\n"
+            "    a = Box(zeros(1))\n"
+            "    b = Box([\"x\"])\n"
+            "    say count(a.items)\n");
+        REQUIRE(has_title(result, "Type mismatch"));
     }
 
     {

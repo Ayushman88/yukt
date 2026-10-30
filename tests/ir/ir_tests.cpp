@@ -478,5 +478,43 @@ int main() {
         REQUIRE(drop_with_zeros);
     }
 
+    {
+        const auto module = ir_from(
+            "record Point:\n"
+            "    x: integer\n"
+            "    y: integer\n"
+            "\n"
+            "create main:\n"
+            "    p = Point(1, 2)\n"
+            "    q = p\n"
+            "    say p.x\n"
+            "    say q.x\n");
+        std::ostringstream printed;
+        yukt::print_ir(module, printed);
+        REQUIRE(printed.str().find("drop ") == std::string::npos);
+    }
+
+    {
+        const auto module = ir_from(
+            "record Profile:\n"
+            "    name: string\n"
+            "    scores: list\n"
+            "\n"
+            "create main:\n"
+            "    p = Profile(\"ann\", zeros(2))\n"
+            "    p.scores = zeros(4)\n"
+            "    say count(p.scores)\n");
+        std::ostringstream printed;
+        yukt::print_ir(module, printed);
+        const std::string ir = printed.str();
+        REQUIRE(ir.find("drop ") != std::string::npos);
+        REQUIRE(ir.find("field ") != std::string::npos);
+        std::size_t drops = 0;
+        for (std::size_t pos = 0; (pos = ir.find("drop ", pos)) != std::string::npos; pos += 5) {
+            ++drops;
+        }
+        REQUIRE(drops >= 3);
+    }
+
     return yukt::test::summary("ir");
 }

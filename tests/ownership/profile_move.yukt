@@ -1,0 +1,10 @@
+record Profile:
+    name: string
+    scores: list
+
+create main:
+    p = Profile("ann", zeros(2))
+    say p.name
+    q = p
+    say q.name
+    say p.name

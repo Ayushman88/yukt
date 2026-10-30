@@ -125,6 +125,8 @@ private:
     void own_check_read(const std::string& name, SourceLocation location);
     void own_move(const std::string& name, SourceLocation location);
     void own_move_call_args(const CallExpr& expr);
+    void consume_heap_expr(const Expr* expr);
+    void reject_field_move(const Expr* expr, SourceLocation location);
 
     bool expect_type(Type actual, Type expected, SourceLocation location, std::string title, std::string detail,
                      std::string suggestion);
@@ -206,6 +208,11 @@ SemanticInfo Analyzer::run() {
     finalize_functions();
     check_non_void_uses();
     require_main();
+    for (auto& record : records_) {
+        for (auto& field : record.fields) {
+            field.type = types_.prune(field.type);
+        }
+    }
 
     SemanticInfo info;
     info.function_ir_names = function_ir_names_;
@@ -492,17 +499,18 @@ Type Analyzer::resolve_type_name(const TypeName& name, int module_index, bool in
         if (name.name == "boolean") {
             return boolean_type();
         }
-        if (name.name == "string" || name.name == "list") {
-            error(name.name_location, "Invalid record",
-                  "Field type `" + name.name + "` is a heap type and is not allowed on records in 0.13.1.",
-                  "Use `integer`, `float`, `boolean`, or a nested record. Heap fields wait for 0.13.2.");
-            return types_.fresh_variable();
+        if (name.name == "string") {
+            return string_type();
+        }
+        if (name.name == "list") {
+            // One element variable per list field, unified across constructors.
+            return list_type(types_.fresh_variable());
         }
         RecordInfo* record = lookup_record(module_index, name.name);
         if (record == nullptr) {
             error(name.name_location, "Unknown name",
                   "`" + name.name + "` is not a type in this file.",
-                  "Use `integer`, `float`, `boolean`, or a record declared in this file.");
+                  "Use `integer`, `float`, `boolean`, `string`, `list`, or a record declared in this file.");
             return types_.fresh_variable();
         }
         if (in_shared_record && !record->shared) {
@@ -563,6 +571,11 @@ bool Analyzer::field_abi(Type type, std::int64_t& size, std::int64_t& align) {
         case TypeKind::Boolean:
             size = 1;
             align = 1;
+            return true;
+        case TypeKind::String:
+        case TypeKind::List:
+            size = 8;
+            align = 8;
             return true;
         case TypeKind::Record:
             if (type.record_id < 0 || static_cast<std::size_t>(type.record_id) >= records_.size()) {
@@ -964,7 +977,7 @@ void Analyzer::analyze_function(FunctionSymbol& function) {
             }
             seen.emplace(name, function.decl->name_location);
             declare_local(name, function.parameters[i], function.decl->name_location, false);
-            if (ownership_pass_ && type_owns_heap(types_, function.parameters[i])) {
+            if (ownership_pass_ && type_owns_heap(types_, function.parameters[i], &records_)) {
                 own_[name] = OwnName{OwnState::Owned, function.decl->name_location};
             }
         }
@@ -1054,12 +1067,15 @@ void Analyzer::analyze_assignment(const AssignStmt& stmt) {
         return;
     }
 
-    const bool heap = type_owns_heap(types_, value_type);
+    const bool heap = type_owns_heap(types_, value_type, &records_);
     // A direct move is `lhs = rhs` where `rhs` is a bare heap-typed name.
+    // Binding a heap field (`stolen = p.scores`) is not a move.
     std::string moved_from;
     SourceLocation moved_from_location;
     if (heap) {
-        if (const auto* id = dynamic_cast<const IdentifierExpr*>(stmt.value.get())) {
+        if (dynamic_cast<const FieldExpr*>(stmt.value.get()) != nullptr) {
+            reject_field_move(stmt.value.get(), stmt.value != nullptr ? stmt.value->span.start : stmt.name_location);
+        } else if (const auto* id = dynamic_cast<const IdentifierExpr*>(stmt.value.get())) {
             if (lookup_local(id->name) != nullptr && name_is_heap(id->name)) {
                 moved_from = id->name;
                 moved_from_location = id->span.start;
@@ -1182,6 +1198,9 @@ void Analyzer::analyze_field_assign(const FieldAssignStmt& stmt) {
                   ", but this assignment has type " + types_.to_string(value) + ".",
               "Assign a value of type " + types_.to_string(field->type) + ".");
     }
+    if (type_owns_heap(types_, field->type, &records_)) {
+        consume_heap_expr(stmt.value.get());
+    }
 }
 
 void Analyzer::analyze_say(const SayStmt& stmt) {
@@ -1209,12 +1228,8 @@ void Analyzer::analyze_give(const GiveStmt& stmt) {
     }
     // `give x` marks x Moved so the callee does not release it. Remaining
     // Owned names are dropped by IR lowering from the path-local owned set.
-    if (type_owns_heap(types_, type)) {
-        if (const auto* id = dynamic_cast<const IdentifierExpr*>(stmt.value.get())) {
-            if (lookup_local(id->name) != nullptr && name_is_heap(id->name)) {
-                own_move(id->name, id->span.start);
-            }
-        }
+    if (type_owns_heap(types_, type, &records_)) {
+        consume_heap_expr(stmt.value.get());
     }
 }
 
@@ -1590,6 +1605,7 @@ Type Analyzer::analyze_constructor(RecordInfo& record, const CallExpr& expr) {
     for (std::size_t i = count; i < expr.arguments.size(); ++i) {
         analyze_expression(expr.arguments[i].get());
     }
+    own_move_call_args(expr);
     return record_type(record.id, record.name);
 }
 
@@ -2085,7 +2101,7 @@ bool Analyzer::name_is_heap(const std::string& name) {
     if (symbol == nullptr) {
         return false;
     }
-    return type_owns_heap(types_, symbol->type);
+    return type_owns_heap(types_, symbol->type, &records_);
 }
 
 void Analyzer::own_check_read(const std::string& name, SourceLocation location) {
@@ -2114,14 +2130,41 @@ void Analyzer::own_move(const std::string& name, SourceLocation location) {
 
 void Analyzer::own_move_call_args(const CallExpr& expr) {
     for (const auto& argument : expr.arguments) {
-        const auto* id = dynamic_cast<const IdentifierExpr*>(argument.get());
-        if (id == nullptr) {
-            continue;
-        }
+        consume_heap_expr(argument.get());
+    }
+}
+
+void Analyzer::consume_heap_expr(const Expr* expr) {
+    if (expr == nullptr) {
+        return;
+    }
+    if (const auto* id = dynamic_cast<const IdentifierExpr*>(expr)) {
         if (lookup_local(id->name) != nullptr && name_is_heap(id->name)) {
             own_move(id->name, id->span.start);
         }
+        return;
     }
+    reject_field_move(expr, expr->span.start);
+}
+
+void Analyzer::reject_field_move(const Expr* expr, SourceLocation location) {
+    const auto* field = dynamic_cast<const FieldExpr*>(expr);
+    if (field == nullptr) {
+        return;
+    }
+    Type type;
+    const auto found = expr_types_.find(expr);
+    if (found != expr_types_.end()) {
+        type = found->second;
+    } else {
+        type = analyze_field(*field);
+    }
+    if (!type_owns_heap(types_, type, &records_)) {
+        return;
+    }
+    error(location, "Cannot move out of field",
+          "Field `" + field->field + "` cannot be moved out of a record.",
+          "Move the whole record, or copy with list.copy.");
 }
 
 bool Analyzer::expect_type(Type actual, Type expected, SourceLocation location, std::string title, std::string detail,
@@ -2134,7 +2177,8 @@ bool Analyzer::expect_type(Type actual, Type expected, SourceLocation location, 
 }
 
 void Analyzer::error(SourceLocation location, std::string title, std::string detail, std::string suggestion) {
-    const bool ownership_title = title == "Use after move" || title == "Cannot move inside repeat";
+    const bool ownership_title = title == "Use after move" || title == "Cannot move inside repeat" ||
+                                 title == "Cannot move out of field";
     if (ownership_pass_ != ownership_title) {
         return;
     }
@@ -2143,7 +2187,8 @@ void Analyzer::error(SourceLocation location, std::string title, std::string det
 
 void Analyzer::error(SourceLocation location, std::string title, std::string detail, std::string suggestion,
                      std::vector<DiagnosticNote> notes) {
-    const bool ownership_title = title == "Use after move" || title == "Cannot move inside repeat";
+    const bool ownership_title = title == "Use after move" || title == "Cannot move inside repeat" ||
+                                 title == "Cannot move out of field";
     if (ownership_pass_ != ownership_title) {
         return;
     }

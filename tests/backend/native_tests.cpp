@@ -45,6 +45,29 @@ yukt::CompileOutput emit_llvm_file(const std::string& relative) {
     return yukt::compile_program(frontend, request, *frontend.diagnostics);
 }
 
+yukt::CompileOutput emit_llvm_source(const std::string& source) {
+    auto frontend = yukt::analyze_source("<test>", source);
+    yukt::analyze_types(frontend);
+    yukt::CompileRequest request;
+    request.action = yukt::CompileAction::EmitLlvm;
+    request.input_path = "<test>";
+    return yukt::compile_program(frontend, request, *frontend.diagnostics);
+}
+
+bool call_between(const std::string& body, const std::string& first, const std::string& middle,
+                  const std::string& second) {
+    const auto a = body.find(first);
+    if (a == std::string::npos) {
+        return false;
+    }
+    const auto b = body.find(second, a + first.size());
+    if (b == std::string::npos) {
+        return false;
+    }
+    const auto m = body.find(middle, a);
+    return m != std::string::npos && m < b;
+}
+
 std::size_t count_direct_calls(const std::string& llvm_ir, const std::string& callee) {
     std::size_t count = 0;
     const std::string needle = "@" + callee;
@@ -459,6 +482,43 @@ int main() {
     {
         const auto result = run_file("tests/ownership/loop_local_after.yukt");
         REQUIRE(!result.ok);
+    }
+
+    {
+        const auto result = run_file("tests/ownership/profile.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "4\n");
+        REQUIRE(result.exit_code == 0);
+
+        const auto llvm = emit_llvm_file("tests/ownership/profile.yukt");
+        REQUIRE_MSG(llvm.ok, llvm.llvm_ir);
+        const auto main_body = llvm_function_body(llvm.llvm_ir, "yukt_main");
+        REQUIRE_MSG(!main_body.empty(), llvm.llvm_ir);
+        REQUIRE_MSG(call_between(main_body, "yukt_list_zeros", "yukt_release", "yukt_list_zeros"), main_body);
+        REQUIRE_MSG(count_direct_calls(main_body, "yukt_runtime_release") == 1, main_body);
+    }
+
+    {
+        const char* source =
+            "record Point:\n"
+            "    x: integer\n"
+            "    y: integer\n"
+            "\n"
+            "create main:\n"
+            "    p = Point(1, 2)\n"
+            "    q = p\n"
+            "    say p.x\n"
+            "    say q.x\n";
+        const auto result = run_source(source);
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "1\n1\n");
+
+        const auto llvm = emit_llvm_source(source);
+        REQUIRE_MSG(llvm.ok, llvm.llvm_ir);
+        const auto main_body = llvm_function_body(llvm.llvm_ir, "yukt_main");
+        REQUIRE_MSG(!main_body.empty(), llvm.llvm_ir);
+        REQUIRE_MSG(count_direct_calls(main_body, "yukt_release") == 0, main_body);
+        REQUIRE_MSG(count_direct_calls(main_body, "yukt_runtime_release") == 1, main_body);
     }
 
     return yukt::test::summary("native");

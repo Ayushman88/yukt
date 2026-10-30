@@ -93,7 +93,7 @@ bool has_user_call(const Expr* expr) {
     return false;
 }
 
-bool ir_owns_heap(const IrType& type) {
+bool ir_is_heap_pointer(const IrType& type) {
     return type.kind == IrTypeKind::List || type.kind == IrTypeKind::String;
 }
 
@@ -804,6 +804,10 @@ private:
     void emit_owned_drops();
     void emit_path_exit();
     void note_user_call_moves(const CallExpr& expr);
+    void consume_heap_expr(const Expr* expr);
+    bool owns_heap(const IrType& type) const;
+    const RecordInfo* semantic_record(int record_id) const;
+    IrType field_ir_type(int record_id, const std::string& field) const;
     IrValue default_return_value() const;
 
     const Program* program_ = nullptr;
@@ -908,7 +912,7 @@ void Lowerer::lower_function(const FunctionDecl& function) {
     owned_.clear();
     seq_footer_ = {};
     for (const auto& param : function_->params) {
-        if (ir_owns_heap(param.second)) {
+        if (owns_heap(param.second)) {
             owned_.insert(param.first);
         }
     }
@@ -992,10 +996,10 @@ void Lowerer::lower_assignment(const AssignStmt& stmt) {
     ensure_local(stmt.name, value.type);
     const auto* id = dynamic_cast<const IdentifierExpr*>(stmt.value.get());
     const bool self_move = id != nullptr && id->name == stmt.name;
-    if (ir_owns_heap(value.type) && !self_move && owned_.contains(stmt.name)) {
+    if (owns_heap(value.type) && !self_move && owned_.contains(stmt.name)) {
         emit_drop(emit_load(stmt.name));
     }
-    if (ir_owns_heap(value.type)) {
+    if (owns_heap(value.type)) {
         if (id != nullptr && id->name != stmt.name) {
             owned_.erase(id->name);
         }
@@ -1107,8 +1111,16 @@ void Lowerer::write_place(const Expr* expr, const IrValue& value) {
 }
 
 void Lowerer::lower_field_assign(const FieldAssignStmt& stmt) {
-    const IrValue value = lower_expression(stmt.value.get());
     const IrValue parent = read_place(stmt.object.get());
+    const IrType field_type = field_ir_type(parent.type.record_id, stmt.field);
+    const bool heap_field = owns_heap(field_type);
+    if (heap_field) {
+        emit_drop(emit_field_get(parent, stmt.field, field_type));
+    }
+    const IrValue value = lower_expression(stmt.value.get());
+    if (heap_field) {
+        consume_heap_expr(stmt.value.get());
+    }
     write_place(stmt.object.get(), emit_field_set(parent, stmt.field, value));
 }
 
@@ -1765,6 +1777,7 @@ IrValue Lowerer::lower_call(const CallExpr& expr) {
         }
         for (const auto& argument : expr.arguments) {
             inst.args.push_back(lower_expression(argument.get()));
+            consume_heap_expr(argument.get());
         }
         inst.dest = make_temp(ir_record(found->second));
         emit(inst);
@@ -1926,10 +1939,74 @@ void Lowerer::emit_store(const std::string& name, const IrValue& value) {
 }
 
 void Lowerer::emit_drop(const IrValue& value) {
+    if (value.type.kind == IrTypeKind::Record) {
+        const RecordInfo* record = semantic_record(value.type.record_id);
+        if (record == nullptr) {
+            return;
+        }
+        for (const auto& field : record->fields) {
+            const IrType field_type = ir_type_from(field.type);
+            if (!owns_heap(field_type)) {
+                continue;
+            }
+            emit_drop(emit_field_get(value, field.name, field_type));
+        }
+        return;
+    }
+    if (!ir_is_heap_pointer(value.type)) {
+        return;
+    }
     IrInst inst;
     inst.op = IrOp::Drop;
     inst.args.push_back(value);
     emit(std::move(inst));
+}
+
+void Lowerer::consume_heap_expr(const Expr* expr) {
+    if (const auto* id = dynamic_cast<const IdentifierExpr*>(expr)) {
+        owned_.erase(id->name);
+    }
+}
+
+bool Lowerer::owns_heap(const IrType& type) const {
+    if (ir_is_heap_pointer(type)) {
+        return true;
+    }
+    if (type.kind != IrTypeKind::Record) {
+        return false;
+    }
+    const RecordInfo* record = semantic_record(type.record_id);
+    if (record == nullptr) {
+        return false;
+    }
+    for (const auto& field : record->fields) {
+        if (owns_heap(ir_type_from(field.type))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+const RecordInfo* Lowerer::semantic_record(int record_id) const {
+    for (const auto& record : semantic_.records) {
+        if (record.id == record_id) {
+            return &record;
+        }
+    }
+    return nullptr;
+}
+
+IrType Lowerer::field_ir_type(int record_id, const std::string& field) const {
+    const RecordInfo* record = semantic_record(record_id);
+    if (record == nullptr) {
+        return ir_void();
+    }
+    for (const auto& candidate : record->fields) {
+        if (candidate.name == field) {
+            return ir_type_from(candidate.type);
+        }
+    }
+    return ir_void();
 }
 
 void Lowerer::emit_named_drops(const std::vector<std::string>& names) {
