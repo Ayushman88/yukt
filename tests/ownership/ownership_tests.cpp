@@ -295,5 +295,17 @@ int main() {
         REQUIRE(has_diagnostic(result, "Cannot move inside repeat", "`xs`", repeat_suggestion));
     }
 
+    // A loop-local heap name is dropped at iteration end. Using it after the
+    // loop is Use after move; the last allocation must not stay readable.
+    {
+        const auto result = check(
+            "create main:\n"
+            "    repeat i in 1..3:\n"
+            "        xs = zeros(i)\n"
+            "    say count(xs)\n");
+        REQUIRE(has_title(result, "Use after move"));
+        REQUIRE(has_diagnostic(result, "Use after move", "`xs`", move_suggestion));
+    }
+
     return yukt::test::summary("ownership");
 }

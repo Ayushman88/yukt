@@ -456,5 +456,10 @@ int main() {
         REQUIRE(result.exit_code == 0);
     }
 
+    {
+        const auto result = run_file("tests/ownership/loop_local_after.yukt");
+        REQUIRE(!result.ok);
+    }
+
     return yukt::test::summary("native");
 }

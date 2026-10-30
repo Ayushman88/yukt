@@ -1325,8 +1325,11 @@ void Analyzer::analyze_repeat(const RepeatStmt& stmt) {
                 local_drops.push_back(name);
             }
         }
+        // Dropped at iteration end: the name is function-scoped but dead.
+        // Reading it after the loop is Use after move. Do not erase — a
+        // missing own_ entry would let the assigned local be read.
         for (const auto& name : local_drops) {
-            own_.erase(name);
+            own_[name].state = OwnState::Moved;
         }
     }
 

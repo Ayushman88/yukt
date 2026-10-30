@@ -841,7 +841,7 @@ Using a Moved name after the `if` is use after move.
 
 ### Repeat
 
-Moving or dropping a heap name that lives **outside** the loop from inside a `repeat` body is an error (`Cannot move inside repeat`): the first iteration would leave later iterations with a moved value. Assigning a **new, loop-local** heap name each iteration is allowed; it is dropped at the end of that iteration (and on overwrite). The iterator remains an integer.
+Moving or dropping a heap name that lives **outside** the loop from inside a `repeat` body is an error (`Cannot move inside repeat`): the first iteration would leave later iterations with a moved value. Assigning a **new, loop-local** heap name each iteration is allowed; it is dropped at the end of that iteration (and on overwrite). After the loop that name is **Moved**; reading it is `Use after move`. The iterator remains an integer.
 
 ### String literals
 
