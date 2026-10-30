@@ -2217,7 +2217,7 @@ void Analyzer::reject_field_move(const Expr* expr, SourceLocation location) {
     if (!type_owns_heap(types_, type, &records_)) {
         return;
     }
-    error(location, "Cannot move out of field",
+    error(location, "Cannot move out of record field",
           "Field `" + field->field + "` cannot be moved out of a record.",
           "Move the whole record, or copy with list.copy.");
 }
@@ -2233,7 +2233,7 @@ bool Analyzer::expect_type(Type actual, Type expected, SourceLocation location, 
 
 void Analyzer::error(SourceLocation location, std::string title, std::string detail, std::string suggestion) {
     const bool ownership_title = title == "Use after move" || title == "Cannot move inside repeat" ||
-                                 title == "Cannot move out of field" || title == "Cannot move out of list element";
+                                 title == "Cannot move out of record field" || title == "Cannot move out of list element";
     if (ownership_pass_ != ownership_title) {
         return;
     }
@@ -2243,7 +2243,7 @@ void Analyzer::error(SourceLocation location, std::string title, std::string det
 void Analyzer::error(SourceLocation location, std::string title, std::string detail, std::string suggestion,
                      std::vector<DiagnosticNote> notes) {
     const bool ownership_title = title == "Use after move" || title == "Cannot move inside repeat" ||
-                                 title == "Cannot move out of field" || title == "Cannot move out of list element";
+                                 title == "Cannot move out of record field" || title == "Cannot move out of list element";
     if (ownership_pass_ != ownership_title) {
         return;
     }

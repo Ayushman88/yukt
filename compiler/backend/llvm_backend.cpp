@@ -160,6 +160,7 @@ private:
     void emit_functions();
     void emit_function(const IrFunction& function);
     llvm::Value* materialize(const IrValue& value);
+    llvm::Value* materialize_owned(const IrValue& value);
     llvm::Value* emit_inst(const IrInst& inst);
     llvm::Value* emit_stdlib_call(const IrInst& inst);
     llvm::FunctionCallee runtime(const std::string& name) const;
@@ -502,6 +503,8 @@ void LlvmEmitter::emit_function(const IrFunction& function) {
                 }
                 if (function.return_type.kind == IrTypeKind::Void) {
                     builder_.CreateRetVoid();
+                } else if (function.return_type.kind == IrTypeKind::String) {
+                    builder_.CreateRet(materialize_owned(block.term.value));
                 } else {
                     builder_.CreateRet(materialize(block.term.value));
                 }
@@ -533,22 +536,26 @@ llvm::Value* LlvmEmitter::materialize(const IrValue& value) {
             return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context_), value.f64);
         case IrValue::Kind::ConstBool:
             return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context_), value.boolean ? 1 : 0);
-        case IrValue::Kind::ConstString: {
-            llvm::GlobalVariable* text = builder_.CreateGlobalString(value.text);
-            llvm::Value* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context_), 0);
-            llvm::Value* raw = builder_.CreateInBoundsGEP(text->getValueType(), text, {zero, zero});
-            return builder_.CreateCall(runtime("yukt_str_from_lit"), {raw});
-        }
+        case IrValue::Kind::ConstString:
+            return cstr_ptr(value.text);
         case IrValue::Kind::Undef:
             return llvm::PoisonValue::get(type_of(value.type));
     }
     return llvm::PoisonValue::get(llvm::Type::getInt64Ty(context_));
 }
 
+llvm::Value* LlvmEmitter::materialize_owned(const IrValue& value) {
+    llvm::Value* raw = materialize(value);
+    if (value.kind == IrValue::Kind::ConstString) {
+        return builder_.CreateCall(runtime("yukt_str_from_lit"), {raw});
+    }
+    return raw;
+}
+
 llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
     switch (inst.op) {
         case IrOp::Store:
-            builder_.CreateStore(materialize(inst.args[0]), locals_.at(inst.name));
+            builder_.CreateStore(materialize_owned(inst.args[0]), locals_.at(inst.name));
             return nullptr;
         case IrOp::Load:
             return builder_.CreateLoad(type_of(inst.dest.type), locals_.at(inst.name));
@@ -615,7 +622,7 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
             std::vector<llvm::Value*> args;
             args.reserve(inst.args.size());
             for (const auto& arg : inst.args) {
-                args.push_back(materialize(arg));
+                args.push_back(arg.type.kind == IrTypeKind::String ? materialize_owned(arg) : materialize(arg));
             }
             llvm::Value* call = builder_.CreateCall(callee->getFunctionType(), callee, args);
             if (inst.dest.type.kind == IrTypeKind::Void) {
@@ -639,8 +646,9 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
         case IrOp::ListSet: {
             llvm::Value* list = materialize(inst.args[0]);
             llvm::Value* index = materialize(inst.args[1]);
-            llvm::Value* value = materialize(inst.args[2]);
             const IrType elem = inst.args[2].type;
+            llvm::Value* value =
+                elem.kind == IrTypeKind::String ? materialize_owned(inst.args[2]) : materialize(inst.args[2]);
             if (elem.kind == IrTypeKind::I64 || elem.kind == IrTypeKind::F64) {
                 llvm::Type* elem_ty = type_of(elem);
                 llvm::Value* data = list_data_pointer(list);
@@ -764,7 +772,10 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
             if (record != nullptr) {
                 const std::size_t count = std::min(inst.args.size(), record->fields.size());
                 for (std::size_t i = 0; i < count; ++i) {
-                    llvm::Value* stored = to_stored_field(materialize(inst.args[i]), record->fields[i].type);
+                    llvm::Value* field_value = record->fields[i].type.kind == IrTypeKind::String
+                                                   ? materialize_owned(inst.args[i])
+                                                   : materialize(inst.args[i]);
+                    llvm::Value* stored = to_stored_field(field_value, record->fields[i].type);
                     rec = builder_.CreateInsertValue(rec, stored, {record_llvm_index(record_id, static_cast<int>(i))});
                 }
             }
@@ -792,7 +803,9 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
                 static_cast<std::size_t>(inst.field_index) < record->fields.size()) {
                 field_type = record->fields[static_cast<std::size_t>(inst.field_index)].type;
             }
-            llvm::Value* stored = to_stored_field(materialize(inst.args[1]), field_type);
+            llvm::Value* field_value =
+                field_type.kind == IrTypeKind::String ? materialize_owned(inst.args[1]) : materialize(inst.args[1]);
+            llvm::Value* stored = to_stored_field(field_value, field_type);
             return builder_.CreateInsertValue(object, stored,
                                               {record_llvm_index(object_type.record_id, inst.field_index)});
         }
@@ -800,6 +813,10 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
             if (!inst.args.empty() && inst.args[0].type.kind == IrTypeKind::Record) {
                 // Record bytes are not a tracked allocation. Heap fields are
                 // dropped by IR (FieldGet then Drop of each owned pointer).
+                return nullptr;
+            }
+            if (!inst.args.empty() && inst.args[0].kind == IrValue::Kind::ConstString) {
+                // Immortal literals are never tracked; only owned copies are dropped.
                 return nullptr;
             }
             builder_.CreateCall(runtime("yukt_release"), {materialize(inst.args[0])});

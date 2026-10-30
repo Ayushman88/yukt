@@ -1,9 +1,9 @@
 # YUKT Language Specification
 
-Version: 0.13.2 (ownership specified on this tree; `v0.13.1` exists locally and is not pushed; 0.13.3 not started). 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`.  
+Version: 0.13.2 (ownership implemented on this tree; `v0.13.1` exists locally and is not pushed; 0.13.3 not started). 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`.  
 Status: 0.12 language plus **records** ([0.13.1 — Records](#0131--records)) and **ownership** ([0.13.2 — Ownership](#0132--ownership)). `ref`, `foreign`, error values, and 0.13 stdlib expansion are **not** part of this slice. Numerical semantics for signed overflow and float rounding are unchanged.
 
-This document is the source of truth for YUKT syntax. **0.13.1 is implemented; 0.13.2 is specified below and being implemented.** If the compiler and this file disagree, that is a bug.
+This document is the source of truth for YUKT syntax. **0.13.1 and 0.13.2 are implemented.** If the compiler and this file disagree, that is a bug.
 
 ## Design
 
@@ -758,7 +758,7 @@ This slice is implemented. The gate is:
 
 ## 0.13.2 — Ownership
 
-Status: specified for implementation on branch `yukt-0.13.2-ownership`. `v0.13.1` exists locally (commit `41f2e04`). 0.13.3 (references) has not started. This section is complete enough to implement without reading `docs/YUKT_013_DESIGN.md`. It adds no keywords, operators, or statements. Programs that use no heap-typed names keep their 0.13.1 meaning; scalar-record programs (records of only `integer`, `float`, `boolean`, and nested plain records) are **unchanged**: bitwise copy, no drop, no tracking.
+Status: implemented on branch `yukt-0.13.2-ownership`. `v0.13.1` exists locally (commit `41f2e04`) and is the records tag; there is no `v0.13.2` tag yet. 0.13.3 (references) has not started. This section is complete enough to implement without reading `docs/YUKT_013_DESIGN.md`. It adds no keywords, operators, or statements. Programs that use no heap-typed names keep their 0.13.1 meaning; scalar-record programs (records of only `integer`, `float`, `boolean`, and nested plain records) are **unchanged**: bitwise copy, no drop, no tracking.
 
 ### What is owned
 

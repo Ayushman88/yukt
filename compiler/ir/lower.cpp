@@ -97,37 +97,19 @@ bool ir_is_heap_pointer(const IrType& type) {
     return type.kind == IrTypeKind::List || type.kind == IrTypeKind::String;
 }
 
-bool expr_allocates(const Expr* expr) {
-    if (expr == nullptr) {
-        return false;
-    }
-    if (dynamic_cast<const ListExpr*>(expr) != nullptr) {
+bool call_name_allocates(const std::string& qualifier, const std::string& callee) {
+    if (callee == "zeros") {
         return true;
     }
-    if (const auto* call = dynamic_cast<const CallExpr*>(expr)) {
-        if (call->callee == "zeros") {
-            return true;
-        }
-        for (const auto& argument : call->arguments) {
-            if (expr_allocates(argument.get())) {
-                return true;
-            }
-        }
-        return false;
+    if (callee == "std$list$copy" || callee == "std$list$slice" || callee == "std$str$concat" ||
+        callee == "std$str$slice" || callee == "std$str$repeat" || callee == "std$str$join" ||
+        callee == "std$str$split") {
+        return true;
     }
-    if (const auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
-        return expr_allocates(unary->operand.get());
-    }
-    if (const auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
-        return expr_allocates(binary->left.get()) || expr_allocates(binary->right.get());
-    }
-    if (const auto* index = dynamic_cast<const IndexExpr*>(expr)) {
-        return expr_allocates(index->collection.get()) || expr_allocates(index->index.get());
-    }
-    if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
-        return expr_allocates(field->object.get());
-    }
-    return false;
+    const std::string qualified = qualifier.empty() ? callee : qualifier + "." + callee;
+    return qualified == "list.copy" || qualified == "list.slice" || qualified == "str.concat" ||
+           qualified == "str.slice" || qualified == "str.repeat" || qualified == "str.join" ||
+           qualified == "str.split";
 }
 
 void collect_reads(const Expr* expr, std::set<std::string>& names) {
@@ -781,6 +763,8 @@ private:
     bool can_parallelize(const RepeatStmt& stmt, std::vector<std::string>& captures, LoopDecision& decision,
                          std::optional<SimpleReduction>& reduction) const;
     bool stmts_allocate(const std::vector<std::unique_ptr<Stmt>>& stmts) const;
+    bool expr_allocates(const Expr* expr) const;
+    bool call_allocates(const CallExpr& call) const;
     bool expr_is_string_concat(const Expr* expr) const;
     IrValue const_i64(std::int64_t value);
     IrValue const_f64(double value);
@@ -1376,12 +1360,12 @@ bool Lowerer::can_parallelize(const RepeatStmt& stmt, std::vector<std::string>& 
     bool ok = true;
     std::string effect_reason;
     collect_loop_effects(stmt.body, stmt.iterator, assigned, reads, inner_iterators, ok, effect_reason);
-    if (!ok) {
-        decision.reason = effect_reason.empty() ? "loop body is not independent" : effect_reason;
-        return false;
-    }
     if (stmts_allocate(stmt.body)) {
         decision.reason = "body allocates heap memory";
+        return false;
+    }
+    if (!ok) {
+        decision.reason = effect_reason.empty() ? "loop body is not independent" : effect_reason;
         return false;
     }
     auto candidate = classify_simple_reduction(stmt.body);
@@ -1477,6 +1461,52 @@ bool Lowerer::can_parallelize(const RepeatStmt& stmt, std::vector<std::string>& 
         decision.reason += ", trip " + std::to_string(decision.estimated_trip);
     }
     return true;
+}
+
+bool Lowerer::call_allocates(const CallExpr& call) const {
+    if (call_name_allocates(call.qualifier, call.callee)) {
+        return true;
+    }
+    if (const auto found = semantic_.call_ir_names.find(&call); found != semantic_.call_ir_names.end()) {
+        return call_name_allocates("", found->second);
+    }
+    return false;
+}
+
+bool Lowerer::expr_allocates(const Expr* expr) const {
+    if (expr == nullptr) {
+        return false;
+    }
+    if (dynamic_cast<const StringExpr*>(expr) != nullptr) {
+        return true;
+    }
+    if (dynamic_cast<const ListExpr*>(expr) != nullptr) {
+        return true;
+    }
+    if (const auto* call = dynamic_cast<const CallExpr*>(expr)) {
+        if (call_allocates(*call)) {
+            return true;
+        }
+        for (const auto& argument : call->arguments) {
+            if (expr_allocates(argument.get())) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (const auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+        return expr_allocates(unary->operand.get());
+    }
+    if (const auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+        return expr_allocates(binary->left.get()) || expr_allocates(binary->right.get());
+    }
+    if (const auto* index = dynamic_cast<const IndexExpr*>(expr)) {
+        return expr_allocates(index->collection.get()) || expr_allocates(index->index.get());
+    }
+    if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
+        return expr_allocates(field->object.get());
+    }
+    return false;
 }
 
 bool Lowerer::expr_is_string_concat(const Expr* expr) const {

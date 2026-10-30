@@ -326,6 +326,126 @@ int main() {
     }
 
     {
+        auto frontend = yukt::analyze_source("<test>",
+                                            "create main:\n"
+                                            "    n = 1000000\n"
+                                            "    repeat i in 0..n - 1:\n"
+                                            "        s = \"x\"\n"
+                                            "    say 1\n");
+        yukt::analyze_types(frontend);
+        yukt::CompileRequest request;
+        request.action = yukt::CompileAction::Explain;
+        request.input_path = "<test>";
+        const auto result = yukt::compile_program(frontend, request, *frontend.diagnostics);
+        REQUIRE_MSG(result.ok, result.explanation);
+        REQUIRE(result.explanation.find("planned: sequential") != std::string::npos);
+        REQUIRE(result.explanation.find("allocates") != std::string::npos);
+        REQUIRE(result.llvm_ir.find("yukt_parallel_for") == std::string::npos);
+    }
+
+    {
+        auto frontend = yukt::analyze_source("<test>",
+                                            "create main:\n"
+                                            "    n = 1000000\n"
+                                            "    names = [\"a\"]\n"
+                                            "    repeat i in 0..n - 1:\n"
+                                            "        names[i] = \"x\"\n"
+                                            "    say 1\n");
+        yukt::analyze_types(frontend);
+        yukt::CompileRequest request;
+        request.action = yukt::CompileAction::Explain;
+        request.input_path = "<test>";
+        const auto result = yukt::compile_program(frontend, request, *frontend.diagnostics);
+        REQUIRE_MSG(result.ok, result.explanation);
+        REQUIRE(result.explanation.find("planned: sequential") != std::string::npos);
+        REQUIRE(result.explanation.find("allocates") != std::string::npos);
+        REQUIRE(result.llvm_ir.find("yukt_parallel_for") == std::string::npos);
+    }
+
+    {
+        auto frontend = yukt::analyze_file(source_path("tests/ownership/par_alloc_list_copy.yukt"));
+        yukt::analyze_types(frontend);
+        yukt::CompileRequest request;
+        request.action = yukt::CompileAction::Explain;
+        request.input_path = source_path("tests/ownership/par_alloc_list_copy.yukt");
+        const auto result = yukt::compile_program(frontend, request, *frontend.diagnostics);
+        REQUIRE_MSG(result.ok, result.explanation);
+        REQUIRE(result.explanation.find("planned: sequential") != std::string::npos);
+        REQUIRE(result.explanation.find("allocates") != std::string::npos);
+        REQUIRE(result.llvm_ir.find("yukt_parallel_for") == std::string::npos);
+    }
+
+    {
+        const auto result = run_source(
+            "create main:\n"
+            "    say \"hi\"\n");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "hi\n");
+
+        auto frontend = yukt::analyze_source("<test>",
+                                            "create main:\n"
+                                            "    say \"hi\"\n");
+        yukt::analyze_types(frontend);
+        yukt::CompileRequest request;
+        request.action = yukt::CompileAction::EmitLlvm;
+        request.input_path = "<test>";
+        const auto llvm = yukt::compile_program(frontend, request, *frontend.diagnostics);
+        REQUIRE_MSG(llvm.ok, llvm.llvm_ir);
+        const auto main_body = llvm_function_body(llvm.llvm_ir, "yukt_main");
+        REQUIRE_MSG(!main_body.empty(), llvm.llvm_ir);
+        REQUIRE_MSG(main_body.find("yukt_str_from_lit") == std::string::npos, main_body);
+        REQUIRE_MSG(count_direct_calls(main_body, "yukt_release") == 0, main_body);
+    }
+
+    {
+        auto frontend = yukt::analyze_source("<test>",
+                                            "create main:\n"
+                                            "    s = \"hi\"\n"
+                                            "    say s\n");
+        yukt::analyze_types(frontend);
+        yukt::CompileRequest request;
+        request.action = yukt::CompileAction::EmitLlvm;
+        request.input_path = "<test>";
+        const auto llvm = yukt::compile_program(frontend, request, *frontend.diagnostics);
+        REQUIRE_MSG(llvm.ok, llvm.llvm_ir);
+        const auto main_body = llvm_function_body(llvm.llvm_ir, "yukt_main");
+        REQUIRE_MSG(!main_body.empty(), llvm.llvm_ir);
+        REQUIRE_MSG(count_direct_calls(main_body, "yukt_str_from_lit") >= 1, main_body);
+        REQUIRE_MSG(count_direct_calls(main_body, "yukt_release") >= 1, main_body);
+    }
+
+    {
+        const auto result = run_source(
+            "create take(s):\n"
+            "    say s\n"
+            "\n"
+            "create main:\n"
+            "    take(\"hi\")\n");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "hi\n");
+
+        auto frontend = yukt::analyze_source("<test>",
+                                            "create take(s):\n"
+                                            "    say s\n"
+                                            "\n"
+                                            "create main:\n"
+                                            "    take(\"hi\")\n");
+        yukt::analyze_types(frontend);
+        yukt::CompileRequest request;
+        request.action = yukt::CompileAction::EmitLlvm;
+        request.input_path = "<test>";
+        const auto llvm = yukt::compile_program(frontend, request, *frontend.diagnostics);
+        REQUIRE_MSG(llvm.ok, llvm.llvm_ir);
+        const auto main_body = llvm_function_body(llvm.llvm_ir, "yukt_main");
+        REQUIRE_MSG(!main_body.empty(), llvm.llvm_ir);
+        REQUIRE_MSG(count_direct_calls(main_body, "yukt_str_from_lit") >= 1, main_body);
+        const auto take_body = llvm_function_body(llvm.llvm_ir, "yukt_take");
+        if (!take_body.empty()) {
+            REQUIRE_MSG(count_direct_calls(take_body, "yukt_release") >= 1, take_body);
+        }
+    }
+
+    {
         const auto result = run_source(
             "create main:\n"
             "    n = 1000000\n"

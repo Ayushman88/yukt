@@ -1,0 +1,8 @@
+use std/list as list
+
+create main:
+    n = 1000000
+    items = zeros(n)
+    repeat i in 0..n - 1:
+        copy = list.copy(items)
+    say 1

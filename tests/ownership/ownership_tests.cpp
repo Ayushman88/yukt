@@ -446,8 +446,8 @@ int main() {
             "    p = Profile(\"ann\", zeros(2))\n"
             "    stolen = p.scores\n"
             "    say count(stolen)\n");
-        REQUIRE(has_title(result, "Cannot move out of field"));
-        REQUIRE(has_diagnostic(result, "Cannot move out of field", "scores", field_move_suggestion));
+        REQUIRE(has_title(result, "Cannot move out of record field"));
+        REQUIRE(has_diagnostic(result, "Cannot move out of record field", "scores", field_move_suggestion));
     }
 
     // Plain Point records stay untracked: copy and use both names.
@@ -594,8 +594,8 @@ int main() {
             "    p = Profile(\"a\", 1)\n"
             "    xs = [p.name]\n"
             "    say xs[0]\n");
-        REQUIRE(has_title(result, "Cannot move out of field"));
-        REQUIRE(has_diagnostic(result, "Cannot move out of field", "name", field_move_suggestion));
+        REQUIRE(has_title(result, "Cannot move out of record field"));
+        REQUIRE(has_diagnostic(result, "Cannot move out of record field", "name", field_move_suggestion));
     }
 
     // Putting a heap name in a list literal moves it.

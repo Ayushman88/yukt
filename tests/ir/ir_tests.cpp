@@ -306,6 +306,62 @@ int main() {
     {
         const auto module = ir_from(
             "create main:\n"
+            "    n = 1000000\n"
+            "    repeat i in 0..n - 1:\n"
+            "        s = \"x\"\n"
+            "    say 1\n");
+        const auto* main_fn = function_named(module, "main");
+        REQUIRE(main_fn != nullptr && !has_op(*main_fn, yukt::IrOp::ParallelFor));
+        bool saw_alloc = false;
+        for (const auto& decision : module.decisions) {
+            if (decision.iterator == "i") {
+                REQUIRE(!decision.parallel);
+                REQUIRE(decision.reason.find("allocates") != std::string::npos);
+                saw_alloc = true;
+            }
+        }
+        REQUIRE(saw_alloc);
+    }
+
+    {
+        const auto module = ir_from(
+            "create main:\n"
+            "    n = 1000000\n"
+            "    names = [\"a\"]\n"
+            "    repeat i in 0..n - 1:\n"
+            "        names[i] = \"x\"\n"
+            "    say 1\n");
+        const auto* main_fn = function_named(module, "main");
+        REQUIRE(main_fn != nullptr && !has_op(*main_fn, yukt::IrOp::ParallelFor));
+        bool saw_alloc = false;
+        for (const auto& decision : module.decisions) {
+            if (decision.iterator == "i") {
+                REQUIRE(!decision.parallel);
+                REQUIRE(decision.reason.find("allocates") != std::string::npos);
+                saw_alloc = true;
+            }
+        }
+        REQUIRE(saw_alloc);
+    }
+
+    {
+        const auto module = ir_from_file("tests/ownership/par_alloc_list_copy.yukt");
+        const auto* main_fn = function_named(module, "main");
+        REQUIRE(main_fn != nullptr && !has_op(*main_fn, yukt::IrOp::ParallelFor));
+        bool saw_alloc = false;
+        for (const auto& decision : module.decisions) {
+            if (decision.iterator == "i") {
+                REQUIRE(!decision.parallel);
+                REQUIRE(decision.reason.find("allocates") != std::string::npos);
+                saw_alloc = true;
+            }
+        }
+        REQUIRE(saw_alloc);
+    }
+
+    {
+        const auto module = ir_from(
+            "create main:\n"
             "    items = zeros(100)\n"
             "    repeat i in 0..99:\n"
             "        items[i] = i\n"
