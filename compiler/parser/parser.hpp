@@ -44,6 +44,7 @@ private:
     bool match(TokenKind kind);
     bool check(TokenKind kind) const;
     bool check_name() const;
+    bool take_function_name(Token& out, std::string_view after);
     bool check_next(TokenKind kind) const;
     const Token& peek() const;
     const Token& peek_next() const;

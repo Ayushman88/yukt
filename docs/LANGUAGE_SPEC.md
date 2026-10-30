@@ -37,7 +37,7 @@ create  say  if  otherwise  repeat  in  give  true  false
 use  share  as
 ```
 
-These cannot be used as variable names, parameter names, aliases, or `repeat` iterators. They may be used as **function names** after `create` / `share create` and as the callee after `.` in a qualified call, so a library can export `str.repeat(...)`. Statement position is unchanged: `repeat i in 1..5:` is still a loop. `use`, `share`, and `as` are reserved from 0.12.
+These cannot be used as variable names, parameter names, aliases, `repeat` iterators, or function names, with one exception: **`repeat`** may be a function name after `create` / `share create` and after `.` in a qualified call, so `std/str` can export `str.repeat(...)`. `create if` and `math.give(...)` remain errors. Statement position is unchanged: `repeat i in 1..5:` is still a loop. `use`, `share`, and `as` are reserved from 0.12.
 
 ## Lexical tokens
 
@@ -76,7 +76,8 @@ program        ::= { use_stmt } { function }
 use_stmt       ::= "use" module_path [ "as" IDENT ] NEWLINE
 module_path    ::= IDENT { "/" IDENT }
 
-function       ::= [ "share" ] "create" IDENT [ "(" [ IDENT { "," IDENT } ] ")" ] ":" suite
+function_name  ::= IDENT | "repeat"
+function       ::= [ "share" ] "create" function_name [ "(" [ IDENT { "," IDENT } ] ")" ] ":" suite
 
 suite          ::= NEWLINE INDENT { statement } DEDENT
 
@@ -109,7 +110,7 @@ postfix        ::= primary { "[" expression "]" }
 primary        ::= INTEGER | FLOAT | STRING | "true" | "false"
                  | IDENT | call | list | "(" expression ")"
 call           ::= callee "(" [ expression { "," expression } ] ")"
-callee         ::= IDENT | IDENT "." IDENT
+callee         ::= IDENT | IDENT "." function_name
 list           ::= "[" [ expression { "," expression } ] "]"
 ```
 
@@ -367,10 +368,11 @@ use_stmt       ::= "use" module_path [ "as" IDENT ] NEWLINE
 
 module_path    ::= IDENT { "/" IDENT }
 
-function       ::= [ "share" ] "create" IDENT [ "(" [ IDENT { "," IDENT } ] ")" ] ":" suite
+function_name  ::= IDENT | "repeat"
+function       ::= [ "share" ] "create" function_name [ "(" [ IDENT { "," IDENT } ] ")" ] ":" suite
 
 call           ::= callee "(" [ expression { "," expression } ] ")"
-callee         ::= IDENT | IDENT "." IDENT
+callee         ::= IDENT | IDENT "." function_name
 ```
 
 `/` in a `use` path is a path separator, not division. `.` between two identifiers in a callee is **module qualification**, not a float and not a method. A single `.` that is not part of a float literal becomes a token in 0.12. `math.sqrt` without `(` is an error: YUKT has no first-class function values.

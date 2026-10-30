@@ -24,7 +24,7 @@ Element type and length preserved. No implicit resize. Integer, float, boolean, 
 
 `asc`, `desc`, `sorted`, `search`
 
-Integer and float lists only. `asc`/`desc` mutate in place. `sorted` returns a copy. Search returns the lowest matching index or `-1`. Sort is **unstable** (selection sort). Unsorted search inputs are not asserted.
+Integer and float lists only. `asc`/`desc` mutate in place. `sorted` returns a copy. Search returns the lowest matching index or `-1`. Sort is **unstable heapsort** (`O(n log n)`). Float order is `-Inf < finite < +Inf < NaN`. Unsorted search inputs are not asserted.
 
 ### `std/math`
 
@@ -51,7 +51,7 @@ Allocator caps unchanged: six classes, four slots, 8,948,352-byte retention. Cac
 
 ## Compiler changes
 
-- `compiler/parser`: after `create` and after `.`, a reserved word may be a function name (`str.repeat`). Documented in `docs/LANGUAGE_SPEC.md`.
+- `compiler/parser`: **`repeat` is the only reserved word allowed as a function name** (`str.repeat`). `create if` / `math.give` are errors (`Reserved word`).
 - `compiler/semantic/analyzer.cpp`: per-call type schemes for stdlib IR names; skip dummy-body inference for runtime-backed functions; `NumericList` constraint for `sort`.
 - `compiler/ir/lower.cpp`: do not lower dummy bodies of runtime-backed stdlib functions. `stat.sum_*` still lower as ordinary YUKT.
 - `compiler/backend/llvm_backend.cpp`: map `std$…` calls to `yukt_*`; link `-lm`.
@@ -73,7 +73,7 @@ Command: `ctest --test-dir build --output-on-failure` on this Mac, 2026-10-30.
 | yukt_module_tests | Passed 0.52s |
 | yukt_ir_tests | Passed 0.63s |
 | yukt_native_tests | Passed 15.16s |
-| yukt_stdlib_tests | Passed 5.79s (77 assertions, 0 failed) |
+| yukt_stdlib_tests | Passed (342 assertions, 0 failed, including heapsort/NaN and `repeat`-only reserved names) |
 | hello_tokens / ast / types / check / ir / explain / run | Passed |
 | index_run | Passed |
 | module_ok_run / module_nested_run | Passed |
@@ -86,7 +86,7 @@ YUKT programs under `tests/stdlib/` exercised through `yukt_stdlib_tests` (compi
 
 - `str_basic.yukt`, `str_alias.yukt`
 - `list_basic.yukt`
-- `sort_basic.yukt`
+- `sort_basic.yukt`, `sort_nan.yukt`
 - `math_basic.yukt`
 - `stat_basic.yukt`
 - `all_modules.yukt`
@@ -110,8 +110,7 @@ Native proof: `yukt build tests/stdlib/all_modules.yukt -o /tmp/yukt-stdlib-all`
 
 ## Known limitations
 
-- Sort is unstable selection sort. Equal elements may move.
-- Float sort uses ordered `<` / `>` (same as the language). NaN placement is not a specified total order.
+- Sort is unstable heapsort. Equal elements may move. NaNs compare equal to each other and sort after `+Inf` on `sort.asc`.
 - `sort.search` on an unsorted list is undefined; tests do not assert an index.
 - `math.abs_i(INT64_MIN)` is undefined; tests do not execute that argument expecting a value.
 - `list.copy` of nested lists copies pointers (elementwise at the list-value level), not a deep clone of inner payloads.

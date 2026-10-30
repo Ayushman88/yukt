@@ -258,5 +258,41 @@ int main() {
         REQUIRE(call != nullptr && call->qualifier == "str" && call->callee == "repeat");
     }
 
+    {
+        const auto result = parse("create if:\n    say 1\n");
+        REQUIRE(result.diagnostics->has_errors());
+        bool reserved = false;
+        for (const auto& diagnostic : result.diagnostics->diagnostics()) {
+            if (diagnostic.title == "Reserved word") {
+                reserved = true;
+            }
+        }
+        REQUIRE(reserved);
+    }
+
+    {
+        const auto result = parse("create give(x):\n    say x\n");
+        REQUIRE(result.diagnostics->has_errors());
+        bool reserved = false;
+        for (const auto& diagnostic : result.diagnostics->diagnostics()) {
+            if (diagnostic.title == "Reserved word") {
+                reserved = true;
+            }
+        }
+        REQUIRE(reserved);
+    }
+
+    {
+        const auto result = parse("create main:\n    say math.if(1)\n");
+        REQUIRE(result.diagnostics->has_errors());
+        bool reserved = false;
+        for (const auto& diagnostic : result.diagnostics->diagnostics()) {
+            if (diagnostic.title == "Reserved word") {
+                reserved = true;
+            }
+        }
+        REQUIRE(reserved);
+    }
+
     return yukt::test::summary("parser");
 }

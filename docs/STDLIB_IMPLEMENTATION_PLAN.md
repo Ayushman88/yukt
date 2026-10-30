@@ -20,7 +20,7 @@ Evidence: `docs/STDLIB_IMPLEMENTATION_REPORT.md`.
 3. YUKT bodies for `stat.sum_i` and `stat.sum_f` only (allocation-free reductions).
 4. Semantic analyzer applies spec type schemes for stdlib IR names; skips dummy-body inference for runtime-backed functions.
 5. IR lowering omits those dummy functions; LLVM maps `std$…` calls to `yukt_*`.
-6. Keywords may be function names after `create` and after `.`, so `str.repeat` parses. Documented in `docs/LANGUAGE_SPEC.md`.
+6. Only the reserved word `repeat` may be a function name after `create` and after `.`, so `str.repeat` parses. `create if` is an error. Documented in `docs/LANGUAGE_SPEC.md`. Sort is heapsort with specified float NaN order.
 
 ## Phases
 
@@ -30,8 +30,8 @@ Evidence: `docs/STDLIB_IMPLEMENTATION_REPORT.md`.
 4. `std/sort.yukt` — done
 5. `std/math.yukt` + `-lm` — done
 6. `std/stat.yukt` (YUKT sums + runtime min/max/mean) — done
-7. `tests/stdlib/` — done (`yukt_stdlib_tests`: 77 passed, 0 failed)
-8. Full CTest — done (20/20 passed on macOS arm64, 2026-10-30)
+7. `tests/stdlib/` — done (`yukt_stdlib_tests`: 342 passed, 0 failed)
+8. Full CTest — done (20/20 passed on macOS arm64, 2026-10-30; keyword restriction and heapsort included)
 
 ## Non-goals
 

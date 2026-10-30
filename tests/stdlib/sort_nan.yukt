@@ -1,0 +1,19 @@
+use std/sort
+use std/math
+
+create main:
+    nanv = math.sqrt(-1.0)
+    ninf = math.log(0.0)
+    items = [2.0, nanv, ninf, 1.0]
+    sort.asc(items)
+    say items[0] == items[0]
+    say items[1]
+    say items[2]
+    say items[3] == items[3]
+    say sort.search(items, 1.0)
+    say sort.search(items, nanv)
+    sort.desc(items)
+    say items[0] == items[0]
+    say items[1]
+    say items[2]
+    say items[3] == items[3]

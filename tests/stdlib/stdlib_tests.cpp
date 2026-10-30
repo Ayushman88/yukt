@@ -126,6 +126,18 @@ int main() {
                 "[10, 20, 30, 40]\n"
                 "0\n");
 
+    require_run("tests/stdlib/sort_nan.yukt",
+                "true\n"
+                "1\n"
+                "2\n"
+                "false\n"
+                "1\n"
+                "3\n"
+                "false\n"
+                "2\n"
+                "1\n"
+                "true\n");
+
     require_run("tests/stdlib/sort_basic.yukt",
                 "0\n"
                 "-1\n"
@@ -238,6 +250,27 @@ int main() {
         REQUIRE(yukt_list_get_i64(nums, 0) == 1);
         REQUIRE(yukt_list_search(nums, 1, 0.0) == 0);
         REQUIRE(yukt_list_search(nums, 4, 0.0) == -1);
+        YuktList* reverse = yukt_list_zeros(256);
+        for (int64_t i = 0; i < 256; ++i) {
+            yukt_list_set_i64(reverse, i, 255 - i);
+        }
+        yukt_list_sort_asc(reverse);
+        REQUIRE(yukt_list_get_i64(reverse, 0) == 0);
+        REQUIRE(yukt_list_get_i64(reverse, 255) == 255);
+        for (int64_t i = 1; i < 256; ++i) {
+            REQUIRE(yukt_list_get_i64(reverse, i - 1) <= yukt_list_get_i64(reverse, i));
+        }
+        YuktList* floats = yukt_list_new(4, 1);
+        yukt_list_set_f64(floats, 0, 2.0);
+        yukt_list_set_f64(floats, 1, yukt_math_sqrt(-1.0));
+        yukt_list_set_f64(floats, 2, yukt_math_log(0.0));
+        yukt_list_set_f64(floats, 3, 1.0);
+        yukt_list_sort_asc(floats);
+        REQUIRE(std::isinf(yukt_list_get_f64(floats, 0)) && yukt_list_get_f64(floats, 0) < 0.0);
+        REQUIRE(yukt_list_get_f64(floats, 1) == 1.0);
+        REQUIRE(yukt_list_get_f64(floats, 2) == 2.0);
+        REQUIRE(std::isnan(yukt_list_get_f64(floats, 3)));
+        REQUIRE(yukt_list_search(floats, 0, yukt_math_sqrt(-1.0)) == 3);
         YuktList* copy = yukt_list_copy(nums);
         REQUIRE(copy != nullptr);
         REQUIRE(copy->kind == 0);

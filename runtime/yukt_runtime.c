@@ -852,35 +852,98 @@ YuktList* yukt_list_slice(const YuktList* src, int64_t start, int64_t end) {
     return yukt_list_clone_range(src, start, end - start);
 }
 
+static int yukt_i64_after(int64_t a, int64_t b, int descending) {
+    if (a == b) {
+        return 0;
+    }
+    return descending ? a < b : a > b;
+}
+
+static int yukt_f64_asc_before(double a, double b) {
+    const int nan_a = isnan(a);
+    const int nan_b = isnan(b);
+    if (nan_a != nan_b) {
+        return !nan_a;
+    }
+    if (nan_a) {
+        return 0;
+    }
+    return a < b;
+}
+
+static int yukt_f64_after(double a, double b, int descending) {
+    return descending ? yukt_f64_asc_before(a, b) : yukt_f64_asc_before(b, a);
+}
+
+static void yukt_sift_i64(int64_t* data, int64_t n, int64_t root, int descending) {
+    for (;;) {
+        if (root > (INT64_MAX - 1) / 2) {
+            break;
+        }
+        const int64_t left = root * 2 + 1;
+        if (left >= n) {
+            break;
+        }
+        int64_t pick = left;
+        const int64_t right = left + 1;
+        if (right < n && yukt_i64_after(data[right], data[pick], descending)) {
+            pick = right;
+        }
+        if (!yukt_i64_after(data[pick], data[root], descending)) {
+            break;
+        }
+        const int64_t tmp = data[root];
+        data[root] = data[pick];
+        data[pick] = tmp;
+        root = pick;
+    }
+}
+
+static void yukt_sift_f64(double* data, int64_t n, int64_t root, int descending) {
+    for (;;) {
+        if (root > (INT64_MAX - 1) / 2) {
+            break;
+        }
+        const int64_t left = root * 2 + 1;
+        if (left >= n) {
+            break;
+        }
+        int64_t pick = left;
+        const int64_t right = left + 1;
+        if (right < n && yukt_f64_after(data[right], data[pick], descending)) {
+            pick = right;
+        }
+        if (!yukt_f64_after(data[pick], data[root], descending)) {
+            break;
+        }
+        const double tmp = data[root];
+        data[root] = data[pick];
+        data[pick] = tmp;
+        root = pick;
+    }
+}
+
 static void yukt_sort_i64(int64_t* data, int64_t n, int descending) {
-    for (int64_t i = 0; i < n; ++i) {
-        int64_t best = i;
-        for (int64_t j = i + 1; j < n; ++j) {
-            if (descending ? data[j] > data[best] : data[j] < data[best]) {
-                best = j;
-            }
-        }
-        if (best != i) {
-            const int64_t tmp = data[i];
-            data[i] = data[best];
-            data[best] = tmp;
-        }
+    for (int64_t i = n / 2 - 1; i >= 0; --i) {
+        yukt_sift_i64(data, n, i, descending);
+    }
+    for (int64_t end = n - 1; end > 0; --end) {
+        const int64_t tmp = data[0];
+        data[0] = data[end];
+        data[end] = tmp;
+        yukt_sift_i64(data, end, 0, descending);
     }
 }
 
 static void yukt_sort_f64(double* data, int64_t n, int descending) {
-    for (int64_t i = 0; i < n; ++i) {
-        int64_t best = i;
-        for (int64_t j = i + 1; j < n; ++j) {
-            if (descending ? data[j] > data[best] : data[j] < data[best]) {
-                best = j;
-            }
-        }
-        if (best != i) {
-            const double tmp = data[i];
-            data[i] = data[best];
-            data[best] = tmp;
-        }
+    for (int64_t i = n / 2 - 1; i >= 0; --i) {
+        yukt_sift_f64(data, n, i, descending);
+    }
+    for (int64_t end = n - 1; end > 0; --end) {
+        const double tmp = data[0];
+        data[0] = data[end];
+        data[end] = tmp;
+        yukt_sift_f64(data, end, 0, descending);
     }
 }
 
@@ -942,13 +1005,13 @@ int64_t yukt_list_search(const YuktList* items, int64_t ivalue, double fvalue) {
     const double* data = (const double*)items->data;
     while (lo < hi) {
         const int64_t mid = lo + (hi - lo) / 2;
-        if (data[mid] < fvalue) {
+        if (yukt_f64_asc_before(data[mid], fvalue)) {
             lo = mid + 1;
         } else {
             hi = mid;
         }
     }
-    if (lo < items->length && data[lo] == fvalue) {
+    if (lo < items->length && (isnan(fvalue) ? isnan(data[lo]) : data[lo] == fvalue)) {
         return lo;
     }
     return -1;

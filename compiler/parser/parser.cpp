@@ -152,15 +152,11 @@ std::unique_ptr<FunctionDecl> Parser::parse_function() {
         return nullptr;
     }
 
-    if (!check_name()) {
-        error_at(peek(), "Unexpected token",
-                 "Expected a function name after `create`. Found " + token_description(peek()) + ".",
-                 "Use an identifier, for example `create greet(name):`.");
+    Token name;
+    if (!take_function_name(name, "create")) {
         synchronize();
         return nullptr;
     }
-
-    const Token name = advance();
     function->name = name.lexeme;
     function->name_location = name.location;
 
@@ -319,14 +315,11 @@ std::unique_ptr<Stmt> Parser::parse_assignment_or_call() {
 
     if (check(TokenKind::Dot)) {
         const Token dot = advance();
-        if (!check_name()) {
-            error_at(peek(), "Unexpected token",
-                     "Expected a function name after `.`. Found " + token_description(peek()) + ".",
-                     "Write a qualified call such as `math.add(1, 2)`.");
+        Token callee;
+        if (!take_function_name(callee, ".")) {
             synchronize();
             return nullptr;
         }
-        const Token callee = advance();
         if (!check(TokenKind::LParen)) {
             error_at(peek(), "Unexpected token",
                      "Qualified names must be called. Found " + token_description(peek()) + " after `" + name.lexeme +
@@ -573,13 +566,10 @@ std::unique_ptr<Expr> Parser::parse_primary() {
         }
         if (check(TokenKind::Dot)) {
             const Token dot = advance();
-            if (!check_name()) {
-                error_at(peek(), "Unexpected token",
-                         "Expected a function name after `.`. Found " + token_description(peek()) + ".",
-                         "Write a qualified call such as `math.add(1, 2)`.");
+            Token callee;
+            if (!take_function_name(callee, ".")) {
                 return nullptr;
             }
-            const Token callee = advance();
             if (!check(TokenKind::LParen)) {
                 error_at(peek(), "Unexpected token",
                          "`" + name.lexeme + "." + callee.lexeme + "` is not a value. Call it with `()`.",
@@ -676,7 +666,25 @@ bool Parser::match(TokenKind kind) {
 }
 
 bool Parser::check_name() const {
-    return check(TokenKind::Identifier) || is_keyword(peek().kind);
+    return check(TokenKind::Identifier) || check(TokenKind::KwRepeat);
+}
+
+bool Parser::take_function_name(Token& out, std::string_view after) {
+    if (check_name()) {
+        out = advance();
+        return true;
+    }
+    if (is_keyword(peek().kind)) {
+        error_at(peek(), "Reserved word",
+                 "`" + peek().lexeme + "` is reserved and cannot be a function name.",
+                 "Rename it. The only reserved function name is `repeat`, used by `str.repeat`.");
+        return false;
+    }
+    error_at(peek(), "Unexpected token",
+             "Expected a function name after `" + std::string(after) + "`. Found " + token_description(peek()) + ".",
+             after == "." ? "Write a qualified call such as `math.add(1, 2)`."
+                          : "Use an identifier, for example `create greet(name):`.");
+    return false;
 }
 
 bool Parser::check(TokenKind kind) const {

@@ -128,9 +128,17 @@ Do not ship `std/array` as an alias of `std/list`. That would freeze a lie.
 
 ## `std/sort` — now
 
-Implementation: **YUKT** on `list[integer]` and `list[float]`. Allocating helpers (`sorted`) allocate one copy via `list.copy`.
+Implementation: **runtime heapsort** (`O(n log n)` worst case, in place, **unstable**). `sorted` allocates one copy via `list.copy`. YUKT cannot express a NaN-aware float order with language `<`.
 
-Comparison is `<` / `>` on the element type. Equal elements may change order (**unstable**).
+Integer comparison is `<` / `>`. Equal integers may change order.
+
+Float comparison is **not** language `<` when NaNs are present (every IEEE `<` involving NaN is false). Ascending order is:
+
+```
+-Inf  <  finite  <  +Inf  <  NaN
+```
+
+`-0.0` and `+0.0` compare equal. All NaNs compare equal to each other for ordering; they may still change relative order. Descending is the reverse of that sequence. `sort.search` uses the same ascending order, so `sort.search(items, nan)` after `sort.asc` returns the lowest NaN index, or `-1`.
 
 | Call | Gives | Mutates | Alloc | Failure | Behavior |
 | --- | --- | --- | --- | --- | --- |
