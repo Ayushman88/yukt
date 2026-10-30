@@ -1,6 +1,6 @@
 # YUKT 0.11 design — Portability and compiler intelligence
 
-Status: implemented on top of the 0.10 compiler. This milestone does not change YUKT syntax.
+Status: implemented and frozen on top of the 0.10 compiler. This milestone does not change YUKT syntax. Audit: `docs/YUKT_011_AUDIT.md`.
 
 ## Goal
 

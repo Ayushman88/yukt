@@ -110,7 +110,7 @@ Benchmarks can start now. Do not claim YUKT is faster than C++ or Rust until tho
 
 ## 0.11 — Portability and compiler intelligence
 
-**Status: implemented**
+**Status: implemented and frozen** (audit: `docs/YUKT_011_AUDIT.md`)
 
 - Host-native GitHub Actions: `macos-latest` (arm64) and `ubuntu-latest` (x86-64)
 - Linker prefers the LLVM clang the compiler was built against

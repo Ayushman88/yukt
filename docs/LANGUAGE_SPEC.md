@@ -1,7 +1,7 @@
 # YUKT Language Specification
 
-Version: 0.11  
-Status: syntax, type checking, native host executables, optimizations, automatic parallelization (including simple +/* reductions), SIMD, execution explanation, and host-native CI.
+Version: 0.11 (frozen)  
+Status: syntax, type checking, native host executables, optimizations, automatic parallelization (including simple +/* reductions), SIMD, execution explanation, and host-native CI. Numerical semantics for integer overflow and float association are defined in this document.
 
 This document is the source of truth for YUKT syntax. If the compiler and this file disagree, that is a bug.
 

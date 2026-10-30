@@ -2,7 +2,7 @@
 
 YUKT is an English-inspired, statically typed, compiled programming language. This repository contains its compiler, language specification, and tests.
 
-The current milestone is **0.11: Portability and compiler intelligence**. `yukt build` and `yukt run` produce **host-native** binaries (Apple Silicon macOS and Linux x86-64) optimized at LLVM O3. Independent `repeat` loops and simple `+`/`*` reductions may run in parallel when estimated work is large; the runtime can still sequentialize a call that is not worth dispatching. `yukt --explain` reports those decisions only when they appear in generated LLVM IR. See `docs/YUKT_011_DESIGN.md`, `docs/EXECUTION_ENGINE.md`, and `docs/STDLIB.md`.
+The current milestone is **0.11: Portability and compiler intelligence**, frozen after the release audit in `docs/YUKT_011_AUDIT.md`. `yukt build` and `yukt run` produce **host-native** binaries (Apple Silicon macOS and Linux x86-64) optimized at LLVM O3. Independent `repeat` loops and simple `+`/`*` reductions may run in parallel when estimated work is large; the runtime can still sequentialize a call that is not worth dispatching. `yukt --explain` reports those decisions only when they appear in generated LLVM IR. See `docs/YUKT_011_DESIGN.md`, `docs/EXECUTION_ENGINE.md`, and `docs/STDLIB.md`. 0.12 starts with language design, not implementation.
 
 ## Example
 
@@ -51,7 +51,7 @@ YUKT is running!
 | Performance engineering | Implemented (0.08); see `docs/PERFORMANCE_ANALYSIS_0.08.md` |
 | Compiler optimization | Implemented (0.09); see `docs/PERFORMANCE_ANALYSIS_0.09.md` |
 | Intelligent execution engine | Implemented (0.10); see `docs/PERFORMANCE_ANALYSIS_0.10.md` |
-| Portability / intelligence | Implemented (0.11); see `docs/YUKT_011_DESIGN.md` |
+| Portability / intelligence | Frozen (0.11); see `docs/YUKT_011_AUDIT.md` |
 | Standard library | Foundations only; see `docs/STDLIB.md` |
 
 `yukt file.yukt` type-checks. `yukt build` and `yukt run` generate native code through LLVM.

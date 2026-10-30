@@ -36,10 +36,19 @@ Unknown trip counts still outline; the runtime sequentializer is the backstop fo
 
 Workflow: `.github/workflows/ci.yml` (`macos-latest` arm64, `ubuntu-latest` x86-64), `ctest --output-on-failure`.
 
-Local evidence (Apple Silicon macOS, this freeze): `ctest --test-dir build --output-on-failure` — **14/14 passed** (including `yukt_ir_tests` and `yukt_native_tests`).
+Host LLVM APIs differ: LLVM 23 (Homebrew) takes `Triple`; Ubuntu’s LLVM 18 takes string/`StringRef` for `lookupTarget` / `createTargetMachine` / `setTargetTriple`, and `getHostCPUFeatures` writes an out-parameter. `compiler/backend/llvm_backend.cpp` gates those on `LLVM_VERSION_MAJOR`.
 
-GitHub Actions evidence requires this tree on `main` (the 0.10 snapshot `d2181d3` has no workflow). Both `macos` and `linux` jobs must be green before calling 0.11 frozen.
+**Local (Apple Silicon macOS, LLVM 23):** `ctest --test-dir build --output-on-failure` — **14/14 passed**.
+
+**GitHub Actions** on `main` at `80e0411` — run [40998206191](https://github.com/Ayushman88/yukt/actions/runs/40998206191) **success**:
+
+| Job | Runner | Result |
+| --- | --- | --- |
+| macOS arm64 | `macos-latest` | 14/14 passed (37s) |
+| Ubuntu x86-64 | `ubuntu-latest` | 14/14 passed (57s) |
+
+The previous run on `be4be29` (`40997972412`) failed Linux at `configure_target` against LLVM 18; that is fixed.
 
 ## Freeze rule
 
-Do not start 0.12 (modules, stdlib) until this audit’s tests are green locally and both CI jobs have passed on GitHub.
+**YUKT 0.11 is frozen.** Do not start 0.12 (modules, imports, standard library) in this tree until a 0.12 language design is written into `docs/LANGUAGE_SPEC.md` first. Implementation of 0.12 waits on that spec.
