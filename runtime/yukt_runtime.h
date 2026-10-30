@@ -52,6 +52,7 @@ void yukt_list_fill_bool(YuktList* dest, int8_t value);
 void yukt_list_fill_cstr(YuktList* dest, const char* value);
 void yukt_list_fill_list(YuktList* dest, YuktList* value);
 void yukt_list_reverse(YuktList* dest);
+void yukt_list_check_slice(const YuktList* src, int64_t start, int64_t end);
 YuktList* yukt_list_slice(const YuktList* src, int64_t start, int64_t end);
 
 void yukt_list_sort_asc(YuktList* items);

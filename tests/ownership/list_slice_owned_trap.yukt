@@ -1,0 +1,9 @@
+use std/list as list
+
+record Profile:
+    name: string
+    n: integer
+
+create main:
+    people = [Profile("a", 1)]
+    say list.slice(people, 0, 2)

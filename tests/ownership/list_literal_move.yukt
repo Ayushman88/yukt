@@ -1,0 +1,4 @@
+create main:
+    s = "a"
+    xs = [s]
+    say xs[0]

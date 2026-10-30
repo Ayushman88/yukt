@@ -1,0 +1,11 @@
+use std/list as list
+
+record Profile:
+    name: string
+    n: integer
+
+create main:
+    people = [Profile("a", 1), Profile("b", 2)]
+    part = list.slice(people, 1, 2)
+    people[1].name = "z"
+    say part[0].name

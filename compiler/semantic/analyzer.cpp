@@ -2074,6 +2074,9 @@ Type Analyzer::analyze_list(const ListExpr& expr) {
                       types_.to_string(item) + ".",
                   "Use one element type in the list.");
         }
+        if (type_owns_heap(types_, item, &records_)) {
+            consume_heap_expr(value.get());
+        }
     }
     return list_type(element);
 }

@@ -767,6 +767,7 @@ private:
     void emit_drop_heap_contents(const IrValue& value);
     IrValue emit_clone_value(const IrValue& value);
     IrValue emit_clone_list_range(const IrValue& src, const IrValue& start, const IrValue& length);
+    void emit_list_slice_check(const IrValue& src, const IrValue& start, const IrValue& end);
     void copy_records();
     void lower_seq(const std::vector<const Stmt*>& stmts);
     void lower_say(const SayStmt& stmt);
@@ -1239,6 +1240,17 @@ IrValue Lowerer::emit_clone_list_range(const IrValue& src, const IrValue& start,
         emit_list_set(dest, index, emit_clone_value(emit_list_get(src, src_index, element)));
     });
     return dest;
+}
+
+void Lowerer::emit_list_slice_check(const IrValue& src, const IrValue& start, const IrValue& end) {
+    IrInst inst;
+    inst.op = IrOp::Call;
+    inst.name = "yukt_list_check_slice";
+    inst.args.push_back(src);
+    inst.args.push_back(start);
+    inst.args.push_back(end);
+    inst.dest = make_temp(ir_void());
+    emit(inst);
 }
 
 IrValue Lowerer::read_place(const Expr* expr) {
@@ -1995,6 +2007,7 @@ IrValue Lowerer::lower_call(const CallExpr& expr) {
         const IrValue start = lower_expression(expr.arguments[1].get());
         const IrValue end = lower_expression(expr.arguments[2].get());
         if (list_needs_compiler_clone(src.type)) {
+            emit_list_slice_check(src, start, end);
             const IrValue length = emit_bin(IrBinOp::Sub, end, start, ir_i64());
             return emit_clone_list_range(src, start, length);
         }
@@ -2039,12 +2052,16 @@ IrValue Lowerer::lower_list(const ListExpr& expr) {
         index.kind = IrValue::Kind::ConstI64;
         index.type = ir_i64();
         index.i64 = static_cast<std::int64_t>(i);
+        const IrValue element = lower_expression(expr.elements[i].get());
         IrInst set;
         set.op = IrOp::ListSet;
         set.args.push_back(create.dest);
         set.args.push_back(index);
-        set.args.push_back(lower_expression(expr.elements[i].get()));
+        set.args.push_back(element);
         emit(std::move(set));
+        if (owns_heap(element.type)) {
+            consume_heap_expr(expr.elements[i].get());
+        }
     }
     return create.dest;
 }

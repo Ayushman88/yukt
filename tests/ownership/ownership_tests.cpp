@@ -557,6 +557,64 @@ int main() {
         REQUIRE(!result.diagnostics->has_errors());
     }
 
+    // A list literal must not steal a heap slot.
+    {
+        const auto result = check(
+            "create main:\n"
+            "    names = [\"a\"]\n"
+            "    xs = [names[0]]\n"
+            "    say xs[0]\n");
+        REQUIRE(has_title(result, "Cannot move out of list element"));
+        REQUIRE(has_diagnostic(result, "Cannot move out of list element", "list element", list_elem_suggestion));
+    }
+
+    // A list literal must not steal a heap field.
+    {
+        const auto result = check(
+            "record Profile:\n"
+            "    name: string\n"
+            "    n: integer\n"
+            "\n"
+            "create main:\n"
+            "    p = Profile(\"a\", 1)\n"
+            "    xs = [p.name]\n"
+            "    say xs[0]\n");
+        REQUIRE(has_title(result, "Cannot move out of field"));
+        REQUIRE(has_diagnostic(result, "Cannot move out of field", "name", field_move_suggestion));
+    }
+
+    // Putting a heap name in a list literal moves it.
+    {
+        const auto result = check(
+            "create main:\n"
+            "    s = \"a\"\n"
+            "    xs = [s]\n"
+            "    say s\n");
+        REQUIRE(has_title(result, "Use after move"));
+        REQUIRE(has_diagnostic(result, "Use after move", "`s`", move_suggestion));
+    }
+
+    // Moving a heap name into a list literal is valid if the name is not reused.
+    {
+        const auto result = check(
+            "create main:\n"
+            "    s = \"a\"\n"
+            "    xs = [s]\n"
+            "    say xs[0]\n");
+        REQUIRE(!result.diagnostics->has_errors());
+    }
+
+    // Scalar list literals still copy index reads.
+    {
+        const auto result = check(
+            "create main:\n"
+            "    nums = [1, 2]\n"
+            "    xs = [nums[0]]\n"
+            "    say xs[0]\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        REQUIRE(!has_title(result, "Cannot move out of list element"));
+    }
+
     // Field overwrite on an indexed heap record is valid.
     {
         const auto result = check(

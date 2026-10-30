@@ -1067,11 +1067,15 @@ void yukt_list_reverse(YuktList* dest) {
     }
 }
 
-YuktList* yukt_list_slice(const YuktList* src, int64_t start, int64_t end) {
+void yukt_list_check_slice(const YuktList* src, int64_t start, int64_t end) {
     const int64_t n = src == NULL ? 0 : src->length;
     if (start < 0 || end < start || end > n) {
         die("invalid list slice");
     }
+}
+
+YuktList* yukt_list_slice(const YuktList* src, int64_t start, int64_t end) {
+    yukt_list_check_slice(src, start, end);
     if (src == NULL) {
         return yukt_list_new(0, 0);
     }

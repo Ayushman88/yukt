@@ -641,5 +641,54 @@ int main() {
         REQUIRE(result.exit_code == 0);
     }
 
+    {
+        const auto result = run_file("tests/ownership/list_literal_steal.yukt");
+        REQUIRE(!result.ok);
+    }
+
+    {
+        const auto result = run_file("tests/ownership/list_literal_use_after.yukt");
+        REQUIRE(!result.ok);
+    }
+
+    {
+        const auto result = run_file("tests/ownership/list_literal_move.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "a\n");
+        REQUIRE(result.exit_code == 0);
+        const auto llvm = emit_llvm_file("tests/ownership/list_literal_move.yukt");
+        REQUIRE_MSG(llvm.ok, llvm.llvm_ir);
+        REQUIRE(llvm.llvm_ir.find("yukt_str_clone") == std::string::npos);
+    }
+
+    {
+        const auto result = run_file("tests/ownership/list_slice_owned.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "b\n");
+        REQUIRE(result.exit_code == 0);
+    }
+
+    {
+        const auto result = run_file("tests/ownership/list_slice_owned_trap.yukt");
+        REQUIRE_MSG(result.ok, "owned-record slice trap must compile\n" + result.program_output);
+        REQUIRE(result.exit_code != 0);
+        REQUIRE(result.program_output.find("YUKT runtime error:") != std::string::npos);
+        REQUIRE(result.program_output.find("invalid list slice") != std::string::npos);
+    }
+
+    {
+        const auto result = run_file("tests/ownership/list_slice_owned_trap_start.yukt");
+        REQUIRE_MSG(result.ok, "start<0 owned-record slice must compile\n" + result.program_output);
+        REQUIRE(result.exit_code != 0);
+        REQUIRE(result.program_output.find("invalid list slice") != std::string::npos);
+    }
+
+    {
+        const auto result = run_file("tests/ownership/list_slice_owned_trap_order.yukt");
+        REQUIRE_MSG(result.ok, "end<start owned-record slice must compile\n" + result.program_output);
+        REQUIRE(result.exit_code != 0);
+        REQUIRE(result.program_output.find("invalid list slice") != std::string::npos);
+    }
+
     return yukt::test::summary("native");
 }

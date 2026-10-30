@@ -643,5 +643,33 @@ int main() {
         REQUIRE(drops_before_set == 1);
     }
 
+    {
+        const auto module = ir_from(
+            "create main:\n"
+            "    s = \"a\"\n"
+            "    xs = [s]\n"
+            "    say xs[0]\n");
+        std::ostringstream printed;
+        yukt::print_ir(module, printed);
+        const std::string ir = printed.str();
+        REQUIRE(ir.find("yukt_str_clone") == std::string::npos);
+        REQUIRE(ir.find("list_set ") != std::string::npos);
+        std::size_t drops = 0;
+        for (std::size_t pos = 0; (pos = ir.find("drop ", pos)) != std::string::npos; pos += 5) {
+            ++drops;
+        }
+        REQUIRE(drops == 1);
+    }
+
+    {
+        const auto module = ir_from_file("tests/ownership/list_slice_owned.yukt");
+        std::ostringstream printed;
+        yukt::print_ir(module, printed);
+        const std::string ir = printed.str();
+        REQUIRE(ir.find("std$list$slice") == std::string::npos);
+        REQUIRE(ir.find("yukt_list_check_slice") != std::string::npos);
+        REQUIRE(ir.find("yukt_str_clone") != std::string::npos);
+    }
+
     return yukt::test::summary("ir");
 }

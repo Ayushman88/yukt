@@ -380,6 +380,7 @@ void LlvmEmitter::declare_runtime() {
     runtime_["yukt_list_fill_cstr"] = module_.getOrInsertFunction("yukt_list_fill_cstr", void_ty, ptr, ptr);
     runtime_["yukt_list_fill_list"] = module_.getOrInsertFunction("yukt_list_fill_list", void_ty, ptr, ptr);
     runtime_["yukt_list_reverse"] = module_.getOrInsertFunction("yukt_list_reverse", void_ty, ptr);
+    runtime_["yukt_list_check_slice"] = module_.getOrInsertFunction("yukt_list_check_slice", void_ty, ptr, i64, i64);
     runtime_["yukt_list_slice"] = module_.getOrInsertFunction("yukt_list_slice", ptr, ptr, i64, i64);
     runtime_["yukt_list_sort_asc"] = module_.getOrInsertFunction("yukt_list_sort_asc", void_ty, ptr);
     runtime_["yukt_list_sort_desc"] = module_.getOrInsertFunction("yukt_list_sort_desc", void_ty, ptr);
@@ -601,6 +602,11 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
         case IrOp::Call: {
             if (inst.name == "yukt_str_clone") {
                 return builder_.CreateCall(runtime("yukt_str_clone"), {materialize(inst.args[0])});
+            }
+            if (inst.name == "yukt_list_check_slice") {
+                builder_.CreateCall(runtime("yukt_list_check_slice"),
+                                    {materialize(inst.args[0]), materialize(inst.args[1]), materialize(inst.args[2])});
+                return nullptr;
             }
             if (is_stdlib_runtime_ir(inst.name)) {
                 return emit_stdlib_call(inst);
