@@ -20,6 +20,7 @@
 
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringMap.h>
+#include <llvm/Config/llvm-config.h>
 #include <llvm/Analysis/CGSCCPassManager.h>
 #include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/IR/Attributes.h>
@@ -208,18 +209,33 @@ bool LlvmEmitter::emit_object(const std::string& path, std::string& error) {
     return true;
 }
 
+llvm::StringMap<bool> host_cpu_features() {
+#if LLVM_VERSION_MAJOR >= 21
+    return llvm::sys::getHostCPUFeatures();
+#else
+    llvm::StringMap<bool> features;
+    llvm::sys::getHostCPUFeatures(features);
+    return features;
+#endif
+}
+
 bool LlvmEmitter::configure_target(std::string& error) {
     initialize_native_targets();
-    const llvm::Triple triple(llvm::sys::getDefaultTargetTriple());
+    const std::string triple_str = llvm::sys::getDefaultTargetTriple();
     std::string lookup_error;
+#if LLVM_VERSION_MAJOR >= 21
+    const llvm::Triple triple(triple_str);
     const llvm::Target* target = llvm::TargetRegistry::lookupTarget(triple, lookup_error);
+#else
+    const llvm::Target* target = llvm::TargetRegistry::lookupTarget(triple_str, lookup_error);
+#endif
     if (target == nullptr) {
         error = lookup_error;
         return false;
     }
 
     const llvm::StringRef cpu = llvm::sys::getHostCPUName();
-    const llvm::StringMap<bool> features = llvm::sys::getHostCPUFeatures();
+    const llvm::StringMap<bool> features = host_cpu_features();
     std::string feature_str;
     for (const auto& feature : features) {
         feature_str += feature.getValue() ? '+' : '-';
@@ -229,14 +245,22 @@ bool LlvmEmitter::configure_target(std::string& error) {
 
     const llvm::TargetOptions options;
     auto reloc = std::optional<llvm::Reloc::Model>(llvm::Reloc::PIC_);
+#if LLVM_VERSION_MAJOR >= 21
     machine_.reset(target->createTargetMachine(triple, cpu, feature_str, options, reloc));
+#else
+    machine_.reset(target->createTargetMachine(triple_str, cpu, feature_str, options, reloc));
+#endif
     if (!machine_) {
-        error = "failed to create an LLVM target machine for " + triple.getTriple();
+        error = "failed to create an LLVM target machine for " + triple_str;
         return false;
     }
 
     module_.setDataLayout(machine_->createDataLayout());
+#if LLVM_VERSION_MAJOR >= 21
     module_.setTargetTriple(triple);
+#else
+    module_.setTargetTriple(triple_str);
+#endif
     return true;
 }
 
