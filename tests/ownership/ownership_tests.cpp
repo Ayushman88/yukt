@@ -2,6 +2,7 @@
 #include "semantic/analyzer.hpp"
 #include "test_harness.hpp"
 
+#include <cstdint>
 #include <string>
 
 namespace {
@@ -32,6 +33,18 @@ bool has_diagnostic(const yukt::FrontendResult& result, const std::string& title
     for (const auto& diagnostic : result.diagnostics->diagnostics()) {
         if (diagnostic.title == title && diagnostic.detail.find(detail_substr) != std::string::npos &&
             diagnostic.suggestion == suggestion) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool has_title_on_line(const yukt::FrontendResult& result, const std::string& title, std::uint32_t line) {
+    if (result.diagnostics == nullptr) {
+        return false;
+    }
+    for (const auto& diagnostic : result.diagnostics->diagnostics()) {
+        if (diagnostic.title == title && diagnostic.location.line == line) {
             return true;
         }
     }
@@ -352,6 +365,44 @@ int main() {
             "    p.scores = zeros(count(p.scores))\n"
             "    say count(p.scores)\n");
         REQUIRE(!result.diagnostics->has_errors());
+    }
+
+    // RHS that moves the object is Use after move on the field-assign place.
+    {
+        const auto result = check(
+            "record Profile:\n"
+            "    name: string\n"
+            "    scores: list\n"
+            "\n"
+            "create take(p):\n"
+            "    give p.scores\n"
+            "\n"
+            "create main:\n"
+            "    p = Profile(\"ann\", zeros(2))\n"
+            "    p.scores = take(p)\n"
+            "    say count(p.scores)\n");
+        REQUIRE(result.diagnostics->has_errors());
+        REQUIRE(has_title(result, "Use after move"));
+        REQUIRE(has_diagnostic(result, "Use after move", "`p`", move_suggestion));
+        REQUIRE(has_title_on_line(result, "Use after move", 10));
+    }
+
+    // Same order bug without a later use of `p` and without field move-out.
+    {
+        const auto result = check(
+            "record Profile:\n"
+            "    name: string\n"
+            "    scores: list\n"
+            "\n"
+            "create take(p):\n"
+            "    say p.name\n"
+            "    give zeros(1)\n"
+            "\n"
+            "create main:\n"
+            "    p = Profile(\"ann\", zeros(2))\n"
+            "    p.scores = take(p)\n");
+        REQUIRE(has_title(result, "Use after move"));
+        REQUIRE(has_diagnostic(result, "Use after move", "`p`", move_suggestion));
     }
 
     // Whole-record move of a heap record; using only the destination is valid.

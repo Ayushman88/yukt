@@ -513,6 +513,29 @@ int main() {
     }
 
     {
+        const auto result = run_file("tests/ownership/profile_field_assign_move.yukt");
+        REQUIRE(!result.ok);
+    }
+
+    {
+        auto frontend = yukt::analyze_source(
+            "<test>",
+            "record Profile:\n"
+            "    name: string\n"
+            "    scores: list\n"
+            "\n"
+            "create take(p):\n"
+            "    say p.name\n"
+            "    give zeros(1)\n"
+            "\n"
+            "create main:\n"
+            "    p = Profile(\"ann\", zeros(2))\n"
+            "    p.scores = take(p)\n");
+        yukt::analyze_types(frontend);
+        REQUIRE(frontend.diagnostics->has_errors());
+    }
+
+    {
         const char* source =
             "record Point:\n"
             "    x: integer\n"

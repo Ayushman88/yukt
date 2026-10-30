@@ -1,0 +1,11 @@
+record Profile:
+    name: string
+    scores: list
+
+create take(p):
+    give p.scores
+
+create main:
+    p = Profile("ann", zeros(2))
+    p.scores = take(p)
+    say count(p.scores)

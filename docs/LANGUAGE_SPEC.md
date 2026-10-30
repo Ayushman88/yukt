@@ -814,7 +814,7 @@ Moved  --any use-->             compile error: Use after move
 ### Nested records
 
 - **No field move-out.** `s = profile.scores` where the field type is a heap type is an error (`Cannot move out of record field`). Use `list.copy(profile.scores)` to obtain a distinct owner. `list.copy` on a field is a read: the field stays Owned and the record stays Owned.
-- **Field overwrite drops.** `profile.scores = zeros(n)` evaluates the right-hand side first, then drops the previous list, then stores the new one — the same order as local assignment. `p.scores = zeros(count(p.scores))` is valid.
+- **Field overwrite drops.** `profile.scores = zeros(n)` evaluates the right-hand side first, then drops the previous list, then stores the new one — the same order as local assignment. `p.scores = zeros(count(p.scores))` is valid. A right-hand side that moves the object (`p.scores = take(p)`) is Use after move.
 - **Whole-record move.** Moving `profile` moves `name` and `scores` together. One drop of `profile` drops every owned field. Fields are never dropped separately after a whole-record move.
 - **No partial moves.** Records with some fields Moved and some Owned do not exist in 0.13.2.
 - Using a moved record, or any of its fields, is use after move.

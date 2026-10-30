@@ -1158,8 +1158,10 @@ void Analyzer::analyze_index_assign(const IndexAssignStmt& stmt) {
 }
 
 void Analyzer::analyze_field_assign(const FieldAssignStmt& stmt) {
-    const Type object = analyze_expression(stmt.object.get());
+    // RHS first so a call that moves the object is Use after move on the place,
+    // matching evaluation order (`p.scores = zeros(count(p.scores))` stays valid).
     const Type value = analyze_expression(stmt.value.get());
+    const Type object = analyze_expression(stmt.object.get());
     const Type resolved = types_.prune(object);
     if (resolved.kind == TypeKind::Variable) {
         add_field_constraint(object, stmt.field, value, stmt.field_location);
