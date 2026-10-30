@@ -545,5 +545,28 @@ int main() {
         REQUIRE(first_drop > second_zeros);
     }
 
+    {
+        const auto module = ir_from(
+            "record Profile:\n"
+            "    name: string\n"
+            "    n: integer\n"
+            "\n"
+            "create main:\n"
+            "    people = [Profile(\"a\", 1)]\n"
+            "    say people[0].n\n");
+        std::ostringstream printed;
+        yukt::print_ir(module, printed);
+        const std::string ir = printed.str();
+        REQUIRE(ir.find("drop ") != std::string::npos);
+        REQUIRE(ir.find("list_get ") != std::string::npos);
+        REQUIRE(ir.find("field ") != std::string::npos);
+        REQUIRE(ir.find("list_len ") != std::string::npos);
+        std::size_t drops = 0;
+        for (std::size_t pos = 0; (pos = ir.find("drop ", pos)) != std::string::npos; pos += 5) {
+            ++drops;
+        }
+        REQUIRE(drops >= 2);
+    }
+
     return yukt::test::summary("ir");
 }

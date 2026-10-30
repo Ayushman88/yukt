@@ -106,6 +106,8 @@ void yukt_runtime_release(void);
 void yukt_release(void* ptr);
 /* Fresh tracked, owned copy of a NUL-terminated string (NULL becomes ""). */
 char* yukt_str_from_lit(const char* s);
+/* Fresh tracked copy of a string slot. NULL stays NULL. */
+char* yukt_str_clone(const char* s);
 /* Number of currently tracked allocations (for ownership tests). */
 int64_t yukt_debug_live_allocs(void);
 

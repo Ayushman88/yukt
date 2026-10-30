@@ -128,6 +128,7 @@ private:
     void own_move_call_args(const CallExpr& expr);
     void consume_heap_expr(const Expr* expr);
     void reject_field_move(const Expr* expr, SourceLocation location);
+    void reject_list_element_move(const Expr* expr, SourceLocation location);
 
     bool expect_type(Type actual, Type expected, SourceLocation location, std::string title, std::string detail,
                      std::string suggestion);
@@ -1086,12 +1087,15 @@ void Analyzer::analyze_assignment(const AssignStmt& stmt) {
 
     const bool heap = type_owns_heap(types_, value_type, &records_);
     // A direct move is `lhs = rhs` where `rhs` is a bare heap-typed name.
-    // Binding a heap field (`stolen = p.scores`) is not a move.
+    // Binding a heap field or list element is not a steal.
     std::string moved_from;
     SourceLocation moved_from_location;
     if (heap) {
         if (dynamic_cast<const FieldExpr*>(stmt.value.get()) != nullptr) {
             reject_field_move(stmt.value.get(), stmt.value != nullptr ? stmt.value->span.start : stmt.name_location);
+        } else if (dynamic_cast<const IndexExpr*>(stmt.value.get()) != nullptr) {
+            reject_list_element_move(stmt.value.get(),
+                                     stmt.value != nullptr ? stmt.value->span.start : stmt.name_location);
         } else if (const auto* id = dynamic_cast<const IdentifierExpr*>(stmt.value.get())) {
             if (lookup_local(id->name) != nullptr && name_is_heap(id->name)) {
                 moved_from = id->name;
@@ -1171,6 +1175,9 @@ void Analyzer::analyze_index_assign(const IndexAssignStmt& stmt) {
         error(stmt.span.start, "Type mismatch",
               "Cannot store " + types_.to_string(value) + " in a list of " + types_.to_string(element) + ".",
               "Store a value that matches the list element type.");
+    }
+    if (type_owns_heap(types_, value, &records_)) {
+        consume_heap_expr(stmt.value.get());
     }
 }
 
@@ -2163,7 +2170,28 @@ void Analyzer::consume_heap_expr(const Expr* expr) {
         }
         return;
     }
+    reject_list_element_move(expr, expr->span.start);
     reject_field_move(expr, expr->span.start);
+}
+
+void Analyzer::reject_list_element_move(const Expr* expr, SourceLocation location) {
+    const auto* index = dynamic_cast<const IndexExpr*>(expr);
+    if (index == nullptr) {
+        return;
+    }
+    Type type;
+    const auto found = expr_types_.find(expr);
+    if (found != expr_types_.end()) {
+        type = found->second;
+    } else {
+        return;
+    }
+    if (!type_owns_heap(types_, type, &records_)) {
+        return;
+    }
+    error(location, "Cannot move out of list element",
+          "A list element cannot be moved out of a list.",
+          "Copy the list with list.copy, or use the element in place.");
 }
 
 void Analyzer::reject_field_move(const Expr* expr, SourceLocation location) {
@@ -2197,7 +2225,7 @@ bool Analyzer::expect_type(Type actual, Type expected, SourceLocation location, 
 
 void Analyzer::error(SourceLocation location, std::string title, std::string detail, std::string suggestion) {
     const bool ownership_title = title == "Use after move" || title == "Cannot move inside repeat" ||
-                                 title == "Cannot move out of field";
+                                 title == "Cannot move out of field" || title == "Cannot move out of list element";
     if (ownership_pass_ != ownership_title) {
         return;
     }
@@ -2207,7 +2235,7 @@ void Analyzer::error(SourceLocation location, std::string title, std::string det
 void Analyzer::error(SourceLocation location, std::string title, std::string detail, std::string suggestion,
                      std::vector<DiagnosticNote> notes) {
     const bool ownership_title = title == "Use after move" || title == "Cannot move inside repeat" ||
-                                 title == "Cannot move out of field";
+                                 title == "Cannot move out of field" || title == "Cannot move out of list element";
     if (ownership_pass_ != ownership_title) {
         return;
     }

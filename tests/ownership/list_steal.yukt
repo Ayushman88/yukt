@@ -1,0 +1,4 @@
+create main:
+    names = ["a"]
+    stolen = names[0]
+    say stolen

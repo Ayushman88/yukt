@@ -321,6 +321,7 @@ int main() {
     }
 
     const std::string field_move_suggestion = "Move the whole record, or copy with list.copy.";
+    const std::string list_elem_suggestion = "Copy the list with list.copy, or use the element in place.";
 
     // Whole-record move of a heap record; using the source field is Use after move.
     {
@@ -482,6 +483,67 @@ int main() {
             "\n"
             "create main:\n"
             "    say count(Box(zeros(1)).items)\n");
+        REQUIRE(!result.diagnostics->has_errors());
+    }
+
+    // Binding a heap string out of a list is not a steal.
+    {
+        const auto result = check(
+            "create main:\n"
+            "    names = [\"a\"]\n"
+            "    stolen = names[0]\n"
+            "    say stolen\n");
+        REQUIRE(has_title(result, "Cannot move out of list element"));
+        REQUIRE(has_diagnostic(result, "Cannot move out of list element", "list element", list_elem_suggestion));
+    }
+
+    // Binding a heap record out of a list is not a steal.
+    {
+        const auto result = check(
+            "record Profile:\n"
+            "    name: string\n"
+            "    n: integer\n"
+            "\n"
+            "create main:\n"
+            "    people = [Profile(\"a\", 1)]\n"
+            "    stolen = people[0]\n"
+            "    say stolen.n\n");
+        REQUIRE(has_title(result, "Cannot move out of list element"));
+        REQUIRE(has_diagnostic(result, "Cannot move out of list element", "list element", list_elem_suggestion));
+    }
+
+    // Index overwrite of a string slot is valid (drop happens in IR/runtime).
+    {
+        const auto result = check(
+            "create main:\n"
+            "    names = [\"a\", \"b\"]\n"
+            "    names[0] = \"c\"\n"
+            "    say names[0]\n");
+        REQUIRE(!result.diagnostics->has_errors());
+    }
+
+    // Index read of a scalar element is still a value copy.
+    {
+        const auto result = check(
+            "create main:\n"
+            "    xs = [1, 2]\n"
+            "    n = xs[0]\n"
+            "    say n\n"
+            "    say xs[1]\n");
+        REQUIRE(!result.diagnostics->has_errors());
+    }
+
+    // Field overwrite on an indexed heap record is valid.
+    {
+        const auto result = check(
+            "record Profile:\n"
+            "    name: string\n"
+            "    n: integer\n"
+            "\n"
+            "create main:\n"
+            "    people = [Profile(\"a\", 1)]\n"
+            "    people[0].name = \"b\"\n"
+            "    say people[0].n\n");
         REQUIRE(!result.diagnostics->has_errors());
     }
 

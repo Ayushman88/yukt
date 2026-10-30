@@ -362,6 +362,7 @@ void LlvmEmitter::declare_runtime() {
     runtime_["yukt_runtime_release"] = module_.getOrInsertFunction("yukt_runtime_release", void_ty);
     runtime_["yukt_release"] = module_.getOrInsertFunction("yukt_release", void_ty, ptr);
     runtime_["yukt_str_from_lit"] = module_.getOrInsertFunction("yukt_str_from_lit", ptr, ptr);
+    runtime_["yukt_str_clone"] = module_.getOrInsertFunction("yukt_str_clone", ptr, ptr);
     runtime_["yukt_str_len"] = module_.getOrInsertFunction("yukt_str_len", i64, ptr);
     runtime_["yukt_str_at"] = module_.getOrInsertFunction("yukt_str_at", i64, ptr, i64);
     runtime_["yukt_str_slice"] = module_.getOrInsertFunction("yukt_str_slice", ptr, ptr, i64, i64);
@@ -598,6 +599,9 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
             break;
         }
         case IrOp::Call: {
+            if (inst.name == "yukt_str_clone") {
+                return builder_.CreateCall(runtime("yukt_str_clone"), {materialize(inst.args[0])});
+            }
             if (is_stdlib_runtime_ir(inst.name)) {
                 return emit_stdlib_call(inst);
             }

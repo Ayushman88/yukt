@@ -184,7 +184,28 @@ void yukt_release(void* ptr) {
     }
     if (node->kind == YUKT_ALLOC_LIST) {
         YuktList* list = (YuktList*)node->ptr;
-        /* Task 6 fills owned-element drop. 0.13.1 lists have no owned slots. */
+        /* Kind 3/4 payloads are pointers; walk them here. Kind 5 record bytes
+         * have field offsets only the compiler knows, so it drops owned
+         * fields before calling yukt_release on the list itself. */
+        if (list->data != NULL && list->kind == 3) {
+            const char** slots = (const char**)list->data;
+            for (int64_t i = 0; i < list->length; ++i) {
+                if (slots[i] != NULL) {
+                    void* slot = (void*)slots[i];
+                    slots[i] = NULL;
+                    yukt_release(slot);
+                }
+            }
+        } else if (list->data != NULL && list->kind == 4) {
+            YuktList** slots = (YuktList**)list->data;
+            for (int64_t i = 0; i < list->length; ++i) {
+                if (slots[i] != NULL) {
+                    YuktList* slot = slots[i];
+                    slots[i] = NULL;
+                    yukt_release(slot);
+                }
+            }
+        }
         if (list->data != NULL && yukt_cache_put(yukt_list_bins, list->data, node->bytes)) {
             list->data = NULL;
         }
@@ -408,6 +429,8 @@ void yukt_list_set_rec(YuktList* list, int64_t index, const void* src, int64_t s
     if (stride != list->stride || list->data == NULL) {
         die("record list layout mismatch");
     }
+    /* Bitwise store. For records with owned fields the compiler drops the
+     * previous element's heap fields before this call. */
     memcpy((char*)list->data + (size_t)index * (size_t)stride, src, (size_t)stride);
 }
 
@@ -446,14 +469,22 @@ void yukt_list_set_cstr(YuktList* list, int64_t index, const char* value) {
     if (list == NULL || index < 0 || index >= list->length) {
         die("list index out of range");
     }
-    ((const char**)list->data)[index] = value;
+    const char** slot = &((const char**)list->data)[index];
+    if (*slot != NULL && *slot != value) {
+        yukt_release((void*)*slot);
+    }
+    *slot = value;
 }
 
 void yukt_list_set_list(YuktList* list, int64_t index, YuktList* value) {
     if (list == NULL || index < 0 || index >= list->length) {
         die("list index out of range");
     }
-    ((YuktList**)list->data)[index] = value;
+    YuktList** slot = &((YuktList**)list->data)[index];
+    if (*slot != NULL && *slot != value) {
+        yukt_release(*slot);
+    }
+    *slot = value;
 }
 
 YuktList* yukt_list_zeros(int64_t length) {
@@ -734,6 +765,13 @@ char* yukt_str_from_lit(const char* s) {
     return yukt_str_from_bytes(s, strlen(s));
 }
 
+char* yukt_str_clone(const char* s) {
+    if (s == NULL) {
+        return NULL;
+    }
+    return yukt_str_from_lit(s);
+}
+
 int64_t yukt_str_len(const char* s) {
     return (int64_t)strlen(yukt_cstr(s));
 }
@@ -901,14 +939,33 @@ static YuktList* yukt_list_clone_range(const YuktList* src, int64_t start, int64
         return yukt_list_new(0, 0);
     }
     YuktList* dest = src->kind == 5 ? yukt_list_new_rec(length, src->stride) : yukt_list_new(length, src->kind);
-    if (length > 0 && src->data != NULL && dest->data != NULL) {
-        const size_t esz = element_size_of(src);
-        size_t bytes = 0;
-        if (yukt_size_mul((size_t)length, esz, &bytes) != 0) {
-            die("out of memory");
-        }
-        memcpy(dest->data, (const char*)src->data + (size_t)start * esz, bytes);
+    if (length <= 0 || src->data == NULL || dest->data == NULL) {
+        return dest;
     }
+    if (src->kind == 3) {
+        const char* const* from = (const char* const*)src->data;
+        const char** to = (const char**)dest->data;
+        for (int64_t i = 0; i < length; ++i) {
+            to[i] = yukt_str_clone(from[start + i]);
+        }
+        return dest;
+    }
+    if (src->kind == 4) {
+        YuktList* const* from = (YuktList* const*)src->data;
+        YuktList** to = (YuktList**)dest->data;
+        for (int64_t i = 0; i < length; ++i) {
+            to[i] = from[start + i] == NULL ? NULL : yukt_list_copy(from[start + i]);
+        }
+        return dest;
+    }
+    /* Kind 0/1/2 and kind-5 plain records stay memcpy. Kind-5 owned records
+     * are cloned by the compiler, which does not call this path. */
+    const size_t esz = element_size_of(src);
+    size_t bytes = 0;
+    if (yukt_size_mul((size_t)length, esz, &bytes) != 0) {
+        die("out of memory");
+    }
+    memcpy(dest->data, (const char*)src->data + (size_t)start * esz, bytes);
     return dest;
 }
 
@@ -948,16 +1005,31 @@ void yukt_list_fill_bool(YuktList* dest, int8_t value) {
 
 void yukt_list_fill_cstr(YuktList* dest, const char* value) {
     yukt_require_kind(dest, 3, "list fill type mismatch");
-    value = yukt_cstr(value);
+    if (dest->data == NULL) {
+        return;
+    }
+    const char** data = (const char**)dest->data;
     for (int64_t i = 0; i < dest->length; ++i) {
-        ((const char**)dest->data)[i] = value;
+        if (data[i] != NULL) {
+            yukt_release((void*)data[i]);
+            data[i] = NULL;
+        }
+        data[i] = yukt_str_from_lit(value);
     }
 }
 
 void yukt_list_fill_list(YuktList* dest, YuktList* value) {
     yukt_require_kind(dest, 4, "list fill type mismatch");
+    if (dest->data == NULL) {
+        return;
+    }
+    YuktList** data = (YuktList**)dest->data;
     for (int64_t i = 0; i < dest->length; ++i) {
-        ((YuktList**)dest->data)[i] = value;
+        if (data[i] != NULL) {
+            yukt_release(data[i]);
+            data[i] = NULL;
+        }
+        data[i] = yukt_list_copy(value);
     }
 }
 

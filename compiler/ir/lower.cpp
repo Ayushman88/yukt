@@ -757,6 +757,15 @@ private:
     int field_index_of(int record_id, const std::string& name) const;
     IrValue emit_field_get(const IrValue& object, const std::string& field, IrType type);
     IrValue emit_field_set(const IrValue& object, const std::string& field, const IrValue& value);
+    IrValue emit_list_len(const IrValue& list);
+    IrValue emit_list_get(const IrValue& list, const IrValue& index, IrType element);
+    void emit_list_set(const IrValue& list, const IrValue& index, const IrValue& value);
+    IrValue emit_list_new(const IrValue& length, IrType type);
+    void emit_counted_loop(const IrValue& count, const std::function<void(const IrValue&)>& body_fn);
+    bool list_needs_compiler_clone(const IrType& type) const;
+    bool list_needs_element_drop(const IrType& type) const;
+    IrValue emit_clone_value(const IrValue& value);
+    IrValue emit_clone_list_range(const IrValue& src, const IrValue& start, const IrValue& length);
     void copy_records();
     void lower_seq(const std::vector<const Stmt*>& stmts);
     void lower_say(const SayStmt& stmt);
@@ -1009,12 +1018,14 @@ void Lowerer::lower_assignment(const AssignStmt& stmt) {
 }
 
 void Lowerer::lower_index_assign(const IndexAssignStmt& stmt) {
-    IrInst inst;
-    inst.op = IrOp::ListSet;
-    inst.args.push_back(lower_expression(stmt.collection.get()));
-    inst.args.push_back(lower_expression(stmt.index.get()));
-    inst.args.push_back(lower_expression(stmt.value.get()));
-    emit(std::move(inst));
+    const IrValue collection = lower_expression(stmt.collection.get());
+    const IrValue index = lower_expression(stmt.index.get());
+    const IrValue value = lower_expression(stmt.value.get());
+    if (owns_heap(value.type) && value.type.kind == IrTypeKind::Record) {
+        emit_drop(emit_list_get(collection, index, value.type));
+    }
+    consume_heap_expr(stmt.value.get());
+    emit_list_set(collection, index, value);
 }
 
 void Lowerer::copy_records() {
@@ -1074,6 +1085,142 @@ IrValue Lowerer::emit_field_set(const IrValue& object, const std::string& field,
     inst.dest = make_temp(object.type);
     emit(inst);
     return inst.dest;
+}
+
+IrValue Lowerer::emit_list_len(const IrValue& list) {
+    IrInst inst;
+    inst.op = IrOp::ListLen;
+    inst.args.push_back(list);
+    inst.dest = make_temp(ir_i64());
+    emit(inst);
+    return inst.dest;
+}
+
+IrValue Lowerer::emit_list_get(const IrValue& list, const IrValue& index, IrType element) {
+    IrInst inst;
+    inst.op = IrOp::ListGet;
+    inst.args.push_back(list);
+    inst.args.push_back(index);
+    inst.dest = make_temp(std::move(element));
+    emit(inst);
+    return inst.dest;
+}
+
+void Lowerer::emit_list_set(const IrValue& list, const IrValue& index, const IrValue& value) {
+    IrInst inst;
+    inst.op = IrOp::ListSet;
+    inst.args.push_back(list);
+    inst.args.push_back(index);
+    inst.args.push_back(value);
+    emit(std::move(inst));
+}
+
+IrValue Lowerer::emit_list_new(const IrValue& length, IrType type) {
+    IrInst inst;
+    inst.op = IrOp::List;
+    inst.dest = make_temp(std::move(type));
+    inst.args.push_back(length);
+    emit(inst);
+    return inst.dest;
+}
+
+void Lowerer::emit_counted_loop(const IrValue& count, const std::function<void(const IrValue&)>& body_fn) {
+    if (function_ == nullptr || current().terminated) {
+        return;
+    }
+    const std::string i_name = "$i" + std::to_string(next_temp_++);
+    ensure_local(i_name, ir_i64());
+    emit_store(i_name, const_i64(0));
+    const std::string cond_name = new_block("ownloop").name;
+    const std::string body_name = new_block("ownbody").name;
+    const std::string after_name = new_block("ownafter").name;
+    finish_jump(cond_name);
+
+    switch_to(cond_name);
+    const IrValue keep = emit_bin(IrBinOp::Lt, emit_load(i_name), count, ir_bool());
+    finish_branch(keep, body_name, after_name);
+
+    switch_to(body_name);
+    body_fn(emit_load(i_name));
+    if (!current().terminated) {
+        emit_store(i_name, emit_bin(IrBinOp::Add, emit_load(i_name), const_i64(1), ir_i64()));
+        finish_jump(cond_name, i_name);
+    }
+
+    switch_to(after_name);
+}
+
+bool Lowerer::list_needs_compiler_clone(const IrType& type) const {
+    if (type.kind != IrTypeKind::List || type.element == nullptr) {
+        return false;
+    }
+    const IrType& element = *type.element;
+    if (element.kind == IrTypeKind::Record) {
+        return owns_heap(element);
+    }
+    if (element.kind == IrTypeKind::List) {
+        return list_needs_compiler_clone(element);
+    }
+    return false;
+}
+
+bool Lowerer::list_needs_element_drop(const IrType& type) const {
+    return type.kind == IrTypeKind::List && type.element != nullptr && type.element->kind == IrTypeKind::Record &&
+           owns_heap(*type.element);
+}
+
+IrValue Lowerer::emit_clone_value(const IrValue& value) {
+    if (value.type.kind == IrTypeKind::String) {
+        IrInst inst;
+        inst.op = IrOp::Call;
+        inst.name = "yukt_str_clone";
+        inst.args.push_back(value);
+        inst.dest = make_temp(ir_string());
+        emit(inst);
+        return inst.dest;
+    }
+    if (value.type.kind == IrTypeKind::List) {
+        if (list_needs_compiler_clone(value.type)) {
+            return emit_clone_list_range(value, const_i64(0), emit_list_len(value));
+        }
+        IrInst inst;
+        inst.op = IrOp::Call;
+        inst.name = "std$list$copy";
+        inst.args.push_back(value);
+        inst.dest = make_temp(value.type);
+        emit(inst);
+        return inst.dest;
+    }
+    if (value.type.kind == IrTypeKind::Record && owns_heap(value.type)) {
+        const RecordInfo* record = semantic_record(value.type.record_id);
+        if (record == nullptr) {
+            return value;
+        }
+        IrInst inst;
+        inst.op = IrOp::RecordNew;
+        inst.name = record->identity;
+        for (const auto& field : record->fields) {
+            const IrType field_type = ir_type_from(field.type);
+            inst.args.push_back(emit_clone_value(emit_field_get(value, field.name, field_type)));
+        }
+        inst.dest = make_temp(value.type);
+        emit(inst);
+        return inst.dest;
+    }
+    return value;
+}
+
+IrValue Lowerer::emit_clone_list_range(const IrValue& src, const IrValue& start, const IrValue& length) {
+    const IrValue dest = emit_list_new(length, src.type);
+    if (src.type.element == nullptr) {
+        return dest;
+    }
+    const IrType element = *src.type.element;
+    emit_counted_loop(length, [this, src, start, dest, element](const IrValue& index) {
+        const IrValue src_index = emit_bin(IrBinOp::Add, start, index, ir_i64());
+        emit_list_set(dest, index, emit_clone_value(emit_list_get(src, src_index, element)));
+    });
+    return dest;
 }
 
 IrValue Lowerer::read_place(const Expr* expr) {
@@ -1782,12 +1929,47 @@ IrValue Lowerer::lower_call(const CallExpr& expr) {
         return inst.dest;
     }
 
+    std::string ir_name = expr.callee;
+    if (const auto found = semantic_.call_ir_names.find(&expr); found != semantic_.call_ir_names.end()) {
+        ir_name = found->second;
+    }
+
+    if (ir_name == "std$list$copy" && !expr.arguments.empty()) {
+        const IrValue src = lower_expression(expr.arguments[0].get());
+        if (list_needs_compiler_clone(src.type)) {
+            return emit_clone_list_range(src, const_i64(0), emit_list_len(src));
+        }
+        IrInst inst;
+        inst.op = IrOp::Call;
+        inst.name = ir_name;
+        inst.args.push_back(src);
+        inst.dest = make_temp(type_of(&expr));
+        emit(inst);
+        return inst.dest;
+    }
+
+    if (ir_name == "std$list$slice" && expr.arguments.size() >= 3) {
+        const IrValue src = lower_expression(expr.arguments[0].get());
+        const IrValue start = lower_expression(expr.arguments[1].get());
+        const IrValue end = lower_expression(expr.arguments[2].get());
+        if (list_needs_compiler_clone(src.type)) {
+            const IrValue length = emit_bin(IrBinOp::Sub, end, start, ir_i64());
+            return emit_clone_list_range(src, start, length);
+        }
+        IrInst inst;
+        inst.op = IrOp::Call;
+        inst.name = ir_name;
+        inst.args.push_back(src);
+        inst.args.push_back(start);
+        inst.args.push_back(end);
+        inst.dest = make_temp(type_of(&expr));
+        emit(inst);
+        return inst.dest;
+    }
+
     IrInst inst;
     inst.op = IrOp::Call;
-    inst.name = expr.callee;
-    if (const auto found = semantic_.call_ir_names.find(&expr); found != semantic_.call_ir_names.end()) {
-        inst.name = found->second;
-    }
+    inst.name = std::move(ir_name);
     for (const auto& argument : expr.arguments) {
         inst.args.push_back(lower_expression(argument.get()));
     }
@@ -1949,6 +2131,17 @@ void Lowerer::emit_drop(const IrValue& value) {
             }
             emit_drop(emit_field_get(value, field.name, field_type));
         }
+        return;
+    }
+    if (list_needs_element_drop(value.type) && value.type.element != nullptr) {
+        const IrValue n = emit_list_len(value);
+        emit_counted_loop(n, [this, value](const IrValue& index) {
+            emit_drop(emit_list_get(value, index, *value.type.element));
+        });
+        IrInst inst;
+        inst.op = IrOp::Drop;
+        inst.args.push_back(value);
+        emit(std::move(inst));
         return;
     }
     if (!ir_is_heap_pointer(value.type)) {

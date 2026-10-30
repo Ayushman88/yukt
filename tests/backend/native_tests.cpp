@@ -558,5 +558,31 @@ int main() {
         REQUIRE_MSG(count_direct_calls(main_body, "yukt_runtime_release") == 1, main_body);
     }
 
+    {
+        const auto result = run_file("tests/ownership/list_slots.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "c\nb\n");
+        REQUIRE(result.exit_code == 0);
+    }
+
+    {
+        const auto result = run_file("tests/ownership/list_of_profile.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "a\n");
+        REQUIRE(result.exit_code == 0);
+    }
+
+    {
+        const auto result = run_file("tests/ownership/list_steal.yukt");
+        REQUIRE(!result.ok);
+    }
+
+    {
+        const auto result = run_file("tests/ownership/list_fill_strings.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "x\nz\n");
+        REQUIRE(result.exit_code == 0);
+    }
+
     return yukt::test::summary("native");
 }
