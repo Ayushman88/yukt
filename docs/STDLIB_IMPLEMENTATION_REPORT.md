@@ -101,8 +101,8 @@ Native proof: `yukt build tests/stdlib/all_modules.yukt -o /tmp/yukt-stdlib-all`
 
 | Check | This session |
 | --- | --- |
-| macOS arm64 native link + run | Yes |
-| Linux x86-64 | Not run locally. Host-native CI (`.github/workflows/ci.yml`) is the verification path. |
+| macOS arm64 native link + run | Yes (local + CI job `macOS arm64`) |
+| Linux x86-64 | Yes on GitHub Actions (`Ubuntu x86-64`, run [41008599932](https://github.com/Ayushman88/yukt/actions/runs/41008599932), commit `3b60075`) |
 | `-lm` on generated programs | Yes (`link_executable`) |
 | LLVM headers in frontend | None found |
 | `benchmarks/results-0.11.json` | Unchanged |

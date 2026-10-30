@@ -10,7 +10,7 @@ YUKT is a real programming language. The compiler is handwritten C++20. Do not i
 
 Implemented: lexer, parser, AST, diagnostics (notes, GNU line, TTY color, per-file locations), scopes, type inference, YUKT IR, LLVM lowering, host object emission, `yukt build`, `yukt run`, `yukt --explain`, LLVM O3, list indexing, `count` / `zeros`, work-based automatic parallelization, simple +/* parallel reductions, adaptive runtime parallelization, host-CPU SIMD via LLVM vectorize, counted-loop lowering, range-parallel runtime, aligned list payloads, size-class payload reuse, host-native CI (macOS arm64, Linux x86-64), the 0.08–0.10 performance sprints, the 0.12 module system (`use` / `share` / `as` / `.` qualification, whole-program DAG, one native executable), and the 0.12.1 now-gated standard library (`std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`).
 
-Not implemented: 0.13 stdlib (maps, sets, arrays, files, JSON, errors), package management, or cross-compilation to non-host triples.
+Not implemented: 0.13 language (records, ownership, refs, foreign C, error values) or the stdlib that needs it (maps, sets, arrays, files, JSON). Design: `docs/YUKT_013_DESIGN.md`. Also not implemented: package management or cross-compilation to non-host triples.
 
 Native execution is real when `yukt build` writes a host binary and `file` reports an executable for that architecture. Do not call a program "native" if it was interpreted.
 

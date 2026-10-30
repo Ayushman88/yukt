@@ -142,14 +142,16 @@ Preserve 0.11 benchmarks (`benchmarks/results-0.11.json`). Do not overwrite them
 
 ## 0.13 — Memory and systems programming
 
-- Memory ownership model
-- Stack and heap management
-- Structs and custom data types
-- Pointers and references
-- C interoperability
-- Efficient memory-safe abstractions
+**Status: design started.** See `docs/YUKT_013_DESIGN.md`. Do not implement until 0.13.1 is written into `docs/LANGUAGE_SPEC.md`.
 
-Specify syntax before implementing. This is a language milestone, not a backend tweak.
+- Records (named structs) and field access
+- Ownership: move of heap values, free when the owning frame returns (no GC)
+- `ref` borrows; no raw pointers in YUKT source
+- `foreign` C functions with explicit types
+- Error values (`ok` / `fail`); traps stay for programmer bugs
+- Then `std/map`, `std/set`, `std/file`, `std/json` on those foundations
+
+Specify syntax before implementing. This is a language milestone, not extra runtime functions behind compiler special cases.
 
 Goal: make YUKT suitable for serious systems programming.
 

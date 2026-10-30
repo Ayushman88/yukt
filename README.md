@@ -142,6 +142,7 @@ tools/       Reserved for developer tools
 - [0.11 design](docs/YUKT_011_DESIGN.md)
 - [0.11 freeze audit](docs/YUKT_011_AUDIT.md)
 - [0.12 design](docs/YUKT_012_DESIGN.md)
+- [0.13 design](docs/YUKT_013_DESIGN.md)
 - [Execution engine](docs/EXECUTION_ENGINE.md)
 - [Standard library foundations](docs/STDLIB.md)
 - [Standard library API contract](docs/STDLIB_SPEC.md)
