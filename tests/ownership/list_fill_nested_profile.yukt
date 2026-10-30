@@ -1,0 +1,12 @@
+use std/list as list
+
+record Profile:
+    name: string
+    n: integer
+
+create main:
+    groups = [[Profile("a", 1)], [Profile("b", 2)]]
+    list.fill(groups, groups[0])
+    groups[0][0].name = "x"
+    say groups[0][0].name
+    say groups[1][0].name

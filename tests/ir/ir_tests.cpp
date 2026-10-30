@@ -3,6 +3,7 @@
 #include "ir/lower.hpp"
 #include "test_harness.hpp"
 
+#include <filesystem>
 #include <sstream>
 #include <string>
 
@@ -12,10 +13,23 @@
 
 namespace {
 
+std::string source_path(const std::string& relative) {
+    return (std::filesystem::path(YUKT_SOURCE_DIR) / relative).string();
+}
+
 yukt::IrModule ir_from(const std::string& source) {
     auto result = yukt::analyze_source("<test>", source);
     yukt::analyze_types(result);
     return yukt::lower_to_ir(*result.program, result.semantic, "<test>");
+}
+
+yukt::IrModule ir_from_file(const std::string& relative) {
+    auto result = yukt::analyze_file(source_path(relative));
+    yukt::analyze_types(result);
+    if (!result.graph.modules.empty()) {
+        return yukt::lower_to_ir(result.graph, result.semantic);
+    }
+    return yukt::lower_to_ir(*result.program, result.semantic, result.path);
 }
 
 const yukt::IrFunction* function_named(const yukt::IrModule& module, const std::string& name) {
@@ -593,6 +607,40 @@ int main() {
             ++drops;
         }
         REQUIRE(drops >= 2);
+    }
+
+    {
+        const auto module = ir_from_file("tests/ownership/list_fill_nested_profile.yukt");
+        std::ostringstream printed;
+        yukt::print_ir(module, printed);
+        const std::string ir = printed.str();
+        REQUIRE(ir.find("std$list$fill") == std::string::npos);
+        REQUIRE(ir.find("yukt_str_clone") != std::string::npos);
+        REQUIRE(ir.find("record ") != std::string::npos);
+    }
+
+    {
+        const auto module = ir_from_file("tests/ownership/list_index_replace_nested.yukt");
+        std::ostringstream printed;
+        yukt::print_ir(module, printed);
+        const std::string ir = printed.str();
+        const auto after_clone = ir.find("block ownafter2");
+        REQUIRE(after_clone != std::string::npos);
+        const auto replace_set = ir.find("list_set ", after_clone);
+        REQUIRE(replace_set != std::string::npos);
+        const auto len_before_set = ir.find("list_len ", after_clone);
+        REQUIRE(len_before_set != std::string::npos);
+        REQUIRE(len_before_set < replace_set);
+        std::size_t drops_before_set = 0;
+        for (std::size_t pos = after_clone; pos < replace_set;) {
+            const auto drop = ir.find("drop ", pos);
+            if (drop == std::string::npos || drop >= replace_set) {
+                break;
+            }
+            ++drops_before_set;
+            pos = drop + 5;
+        }
+        REQUIRE(drops_before_set == 1);
     }
 
     return yukt::test::summary("ir");

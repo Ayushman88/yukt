@@ -1028,8 +1028,8 @@ void Lowerer::lower_index_assign(const IndexAssignStmt& stmt) {
     }
     const IrValue collection = lower_expression(stmt.collection.get());
     const IrValue index = lower_expression(stmt.index.get());
-    if (heap && stored.type.kind == IrTypeKind::Record) {
-        emit_drop(emit_list_get(collection, index, stored.type));
+    if (list_needs_element_drop(collection.type) && collection.type.element != nullptr) {
+        emit_drop_heap_contents(emit_list_get(collection, index, *collection.type.element));
     }
     if (heap && !borrowed_element) {
         consume_heap_expr(stmt.value.get());
@@ -1961,6 +1961,30 @@ IrValue Lowerer::lower_call(const CallExpr& expr) {
         inst.op = IrOp::Call;
         inst.name = ir_name;
         inst.args.push_back(src);
+        inst.dest = make_temp(type_of(&expr));
+        emit(inst);
+        return inst.dest;
+    }
+
+    if (ir_name == "std$list$fill" && expr.arguments.size() >= 2) {
+        const IrValue dest = lower_expression(expr.arguments[0].get());
+        const IrValue proto_src = lower_expression(expr.arguments[1].get());
+        if (list_needs_compiler_clone(dest.type) && dest.type.element != nullptr) {
+            const IrValue proto = emit_clone_value(proto_src);
+            const IrValue n = emit_list_len(dest);
+            const IrType element = *dest.type.element;
+            emit_counted_loop(n, [this, dest, proto, element](const IrValue& index) {
+                emit_drop_heap_contents(emit_list_get(dest, index, element));
+                emit_list_set(dest, index, emit_clone_value(proto));
+            });
+            emit_drop(proto);
+            return make_temp(ir_void());
+        }
+        IrInst inst;
+        inst.op = IrOp::Call;
+        inst.name = ir_name;
+        inst.args.push_back(dest);
+        inst.args.push_back(proto_src);
         inst.dest = make_temp(type_of(&expr));
         emit(inst);
         return inst.dest;

@@ -623,5 +623,23 @@ int main() {
         REQUIRE(result.exit_code == 0);
     }
 
+    {
+        const auto result = run_file("tests/ownership/list_fill_nested_profile.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "x\na\n");
+        REQUIRE(result.exit_code == 0);
+        const auto llvm = emit_llvm_file("tests/ownership/list_fill_nested_profile.yukt");
+        REQUIRE_MSG(llvm.ok, llvm.llvm_ir);
+        REQUIRE(llvm.llvm_ir.find("yukt_list_fill_list") == std::string::npos);
+        REQUIRE(llvm.llvm_ir.find("yukt_str_clone") != std::string::npos);
+    }
+
+    {
+        const auto result = run_file("tests/ownership/list_index_replace_nested.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "keep\nx\n");
+        REQUIRE(result.exit_code == 0);
+    }
+
     return yukt::test::summary("native");
 }
