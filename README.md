@@ -2,7 +2,7 @@
 
 YUKT is an English-inspired, statically typed, compiled programming language. This repository contains its compiler, language specification, and tests.
 
-The current public tags are **v0.12.1** and **v0.11.0**. 0.13.1 records are **implemented on this tree**; there is no `v0.13.1` tag yet, and 0.13.2 has not started. `yukt build` and `yukt run` produce **host-native** binaries optimized at LLVM O3, including multi-file programs linked through `use`. Independent `repeat` loops and simple `+`/`*` reductions may run in parallel when estimated work is large; the runtime can still sequentialize a call that is not worth dispatching. `yukt --explain` reports those decisions only when they appear in generated LLVM IR. See `docs/YUKT_011_DESIGN.md`, `docs/YUKT_012_DESIGN.md`, `docs/YUKT_013_DESIGN.md`, `docs/EXECUTION_ENGINE.md`, `docs/RUNTIME.md`, and `docs/STDLIB.md`. Shipped library modules: `std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`. This 0.13.1 records slice has been verified on Apple Silicon macOS; Linux x86-64 CI is the 0.11/0.12 host-native gate and has not been re-run for this untagged tree.
+The current public tags are **v0.12.1** and **v0.11.0**. `v0.13.1` is the records tag (local until pushed). 0.13.2 ownership is **in progress** on branch `yukt-0.13.2-ownership`; its contract is in `docs/LANGUAGE_SPEC.md`. `yukt build` and `yukt run` produce **host-native** binaries optimized at LLVM O3, including multi-file programs linked through `use`. Independent `repeat` loops and simple `+`/`*` reductions may run in parallel when estimated work is large; the runtime can still sequentialize a call that is not worth dispatching. `yukt --explain` reports those decisions only when they appear in generated LLVM IR. See `docs/YUKT_011_DESIGN.md`, `docs/YUKT_012_DESIGN.md`, `docs/YUKT_013_DESIGN.md`, `docs/EXECUTION_ENGINE.md`, `docs/RUNTIME.md`, and `docs/STDLIB.md`. Shipped library modules: `std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`. The 0.13.1 records slice has been verified on Apple Silicon macOS; Linux x86-64 CI is the 0.11/0.12 host-native gate and has not been re-run for records.
 
 ## Example
 
@@ -47,14 +47,15 @@ YUKT is running!
 | Automatic parallelization | Implemented (conservative + simple +/* reductions) |
 | SIMD / loop vectorize | Implemented via LLVM |
 | C++ / Rust benches | `benches/` and `docs/BENCHMARKS.md` (per-host) |
-| Host-native CI | macOS arm64 and Ubuntu x86-64 (0.11/0.12). 0.13.1 records are unverified on Linux |
+| Host-native CI | macOS arm64 and Ubuntu x86-64 (0.11/0.12). 0.13.1 records and 0.13.2 ownership are unverified on Linux |
 | Performance engineering | Implemented (0.08); see `docs/PERFORMANCE_ANALYSIS_0.08.md` |
 | Compiler optimization | Implemented (0.09); see `docs/PERFORMANCE_ANALYSIS_0.09.md` |
 | Intelligent execution engine | Implemented (0.10); see `docs/PERFORMANCE_ANALYSIS_0.10.md` |
 | Portability / intelligence | Frozen (0.11); see `docs/YUKT_011_AUDIT.md` |
 | Modules (`use` / `share` / `as`) | Implemented (0.12); see `docs/LANGUAGE_SPEC.md` |
 | Standard library APIs | `std/str`, `std/list`, `std/sort`, `std/math`, `std/stat` |
-| Records (`record` / `share record`) | Implemented on this tree (0.13.1, untagged); see `docs/LANGUAGE_SPEC.md` |
+| Records (`record` / `share record`) | Implemented (0.13.1, tag `v0.13.1` local until pushed); see `docs/LANGUAGE_SPEC.md` |
+| Ownership (move, drop, overwrite) | Specified (0.13.2, in progress); not yet implemented |
 
 `yukt file.yukt` type-checks. `yukt build` and `yukt run` generate native code through LLVM.
 

@@ -1,6 +1,6 @@
 # YUKT 0.13 design — Systems language foundations
 
-Status: **roadmap and this design are approved.** 0.13.1 Records is **implemented on this tree**; there is no `v0.13.1` tag yet. `v0.12.1` is the last public tag. Do **not** start 0.13.2 until it is authorized. Do **not** copy 0.13.2–0.13.6 into `LANGUAGE_SPEC.md` yet.
+Status: **roadmap and this design are approved.** 0.13.1 Records is implemented and tagged `v0.13.1` locally (not pushed). `v0.12.1` is the last public tag. 0.13.2 Ownership is copied into `LANGUAGE_SPEC.md` and in progress on branch `yukt-0.13.2-ownership`. Do **not** start 0.13.3. Do **not** copy 0.13.3–0.13.6 into `LANGUAGE_SPEC.md` yet.
 
 0.13 is a **language** milestone. Maps, files, and JSON stay blocked until types, ownership, and errors exist as real language rules. They must not appear as C functions with fake YUKT wrappers.
 

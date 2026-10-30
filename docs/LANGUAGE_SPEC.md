@@ -1,9 +1,9 @@
 # YUKT Language Specification
 
-Version: 0.13.1 (records implemented on this tree; no `v0.13.1` tag yet). 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`.  
-Status: 0.12 language plus **records** as specified in [0.13.1 — Records](#0131--records). Ownership, `ref`, `foreign`, error values, and 0.13 stdlib expansion are **not** part of this slice. Numerical semantics for signed overflow and float rounding are unchanged.
+Version: 0.13.2 (ownership specified on this tree; `v0.13.1` exists locally and is not pushed; 0.13.3 not started). 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`.  
+Status: 0.12 language plus **records** ([0.13.1 — Records](#0131--records)) and **ownership** ([0.13.2 — Ownership](#0132--ownership)). `ref`, `foreign`, error values, and 0.13 stdlib expansion are **not** part of this slice. Numerical semantics for signed overflow and float rounding are unchanged.
 
-This document is the source of truth for YUKT syntax. **0.13.1 is implemented.** If the compiler and this file disagree, that is a bug.
+This document is the source of truth for YUKT syntax. **0.13.1 is implemented; 0.13.2 is specified below and being implemented.** If the compiler and this file disagree, that is a bug.
 
 ## Design
 
@@ -755,3 +755,142 @@ This slice is implemented. The gate is:
 - No change to allocator caps, 0.11 benches, or `v0.12.1` behavior of programs that contain no records.
 
 
+
+## 0.13.2 — Ownership
+
+Status: specified for implementation on branch `yukt-0.13.2-ownership`. `v0.13.1` exists locally (commit `41f2e04`). 0.13.3 (references) has not started. This section is complete enough to implement without reading `docs/YUKT_013_DESIGN.md`. It adds no keywords, operators, or statements. Programs that use no heap-typed names keep their 0.13.1 meaning; scalar-record programs (records of only `integer`, `float`, `boolean`, and nested plain records) are **unchanged**: bitwise copy, no drop, no tracking.
+
+### What is owned
+
+A **heap type** is `string`, `list[T]`, or a record that **contains ownership**. A record contains ownership iff any field's type is `string`, `list[T]`, or a record that contains ownership. Every heap allocation has **exactly one owner** at a time.
+
+**Plain values** are `integer`, `float`, `boolean`, and records of only those (including nested plain records). Assignment copies bits. They are not in the ownership state machine and are never dropped.
+
+A record that contains ownership owns its heap fields. Moving the record moves every owned field together. Heap fields in records are allowed from 0.13.2 on; in 0.13.1 they were an error.
+
+```yukt
+record Profile:
+    name: string
+    scores: list
+```
+
+Field types stay `type_name` (an identifier or `alias.Name`); the grammar is unchanged. In 0.13.2 the field type names `string` and `list` become valid. A field written `list` is a `list[integer]`, the list type `zeros` and integer literals produce. Fields of other list element types wait for a later spec; the compiler must reject them rather than guess.
+
+### Per-name states
+
+Ownership is tracked per name for **heap-typed names only**: locals, parameters, and record fields whose type is a heap type. Bindings stay function-scoped.
+
+| State | May read | May overwrite | May move out | Meaning |
+| --- | --- | --- | --- | --- |
+| **Uninit** | no | yes (first assign) | no | Name declared or not yet assigned; no allocation |
+| **Owned** | yes | yes (drops previous) | yes | Name owns exactly one live allocation |
+| **Moved** | no | no | no | Name no longer owns an allocation |
+
+(`Borrowed` belongs to 0.13.3 and does not exist here. In 0.13.2 a borrow lasts only for one statement or expression and the owner stays Owned.)
+
+**Moved-from is dead.** A Moved name cannot be read, indexed, passed, `give`n, assigned through (`moved[0] = 1`), moved again, or **reassigned**. Reassigning a Moved name (`s = zeros(3)` after `s` was moved) is an error in 0.13.2. Re-initialization needs a later, explicit spec.
+
+### Transitions
+
+```
+Uninit --assign heap value-->   Owned
+Owned  --x = y (y a heap name)--> drop old x if Owned; x takes y's allocation; y becomes Moved; x becomes Owned
+Owned  --x = e (e fresh value)--> drop(x); then x owns e
+Owned  --give x-->              x becomes Moved; the caller receives an Owned value; no drop in this function
+Owned  --end of function-->     drop(x) on every return path, unless x was given
+Owned  --pass x to user call-->  x becomes Moved (callee parameter is Owned)
+Owned  --builtin borrow-->      stays Owned
+
+Moved  --any use-->             compile error: Use after move
+```
+
+- **Assign.** First assignment of a heap value to an Uninit name makes it Owned.
+- **Move.** `x = y` for heap names is a pointer transfer. No runtime call is made on the move itself.
+- **Overwrite drop.** Assigning to an Owned name drops its previous allocation first, then stores the new value.
+- **`give` transfer.** `give x` transfers the allocation to the caller. The callee must not drop it. The caller of a function that `give`s a heap value receives an Owned value. A function that does not `give` an owned local drops it on every return path.
+- **End-of-function drop.** Every Owned heap name, including parameters, is dropped when the function returns unless it was moved or given.
+- **User-call move.** Passing an owned heap value **by value** to a user function moves it into that parameter. The callee owns it and drops it unless it `give`s it back.
+
+### Nested records
+
+- **No field move-out.** `s = profile.scores` where the field type is a heap type is an error (`Cannot move out of record field`). Use `list.copy(profile.scores)` to obtain a distinct owner. `list.copy` on a field is a read: the field stays Owned and the record stays Owned.
+- **Field overwrite drops.** `profile.scores = zeros(n)` drops the previous list, then stores the new one.
+- **Whole-record move.** Moving `profile` moves `name` and `scores` together. One drop of `profile` drops every owned field. Fields are never dropped separately after a whole-record move.
+- **No partial moves.** Records with some fields Moved and some Owned do not exist in 0.13.2.
+- Using a moved record, or any of its fields, is use after move.
+
+### List element rule
+
+A list of heap elements (`list[string]`, `list[list[T]]`, `list[record]` with owned fields) owns its slots.
+
+- `items[i]` is a **borrow**: the list stays Owned.
+- `items[i] = v` drops the previous slot, then moves `v` in.
+- Binding a heap element out of a list (`s = items[0]` where the element type is a heap type) is **not a steal**. It is a compile error in 0.13.2: `Cannot move out of list element`. For scalar element types `s = items[0]` still reads a value.
+- To duplicate, use `list.copy` on the whole list. This matches the record no-field-move-out rule.
+- Dropping a list first drops its owned elements.
+
+### If-join
+
+At an `if` / `otherwise`, snapshot ownership before the branch. Analyze `then` from the snapshot and record its result. Restore the snapshot, analyze `otherwise` (an absent `otherwise` leaves the snapshot), and record its result. Join per name:
+
+- if any path leaves the name **Moved**, the join is **Moved**;
+- else if any path leaves it **Owned**, the join is **Owned**;
+- else **Uninit**.
+
+Using a Moved name after the `if` is use after move.
+
+### Repeat
+
+Moving or dropping a heap name that lives **outside** the loop from inside a `repeat` body is an error (`Cannot move inside repeat`): the first iteration would leave later iterations with a moved value. Assigning a **new, loop-local** heap name each iteration is allowed; it is dropped at the end of that iteration (and on overwrite). The iterator remains an integer.
+
+### String literals
+
+A string literal that becomes an owned value (bound to a name, passed to a user function, or stored into a list or record field) is **copied** into a tracked buffer. Dropping that name releases the copy. The literal's static storage is never freed.
+
+### Builtin borrow versus move
+
+| Form | Effect on owner |
+| --- | --- |
+| `say x`, `count(x)`, `x[i]`, `x[i] = v` (the index itself) | borrow; owner stays Owned |
+| `zeros`, list literals, string literals, `str.*` that allocate | produce a fresh Owned value |
+| `list.copy(x)`, `list.slice(x, …)` | borrow `x`; return a new Owned value; owned slots are cloned |
+| `list.fill`, `list.reverse`, `sort.*` | borrow the destination; do not move it |
+| user `create f(items):` with a heap parameter | **move** into `f` |
+| `str.len` / `at` / `find` / `contains` / `starts` / `ends` | borrow |
+| `str.concat` / `slice` / `repeat` / `join` | borrow inputs; return a new Owned string |
+| `str.split` | borrow input; return a new Owned list that owns the parts |
+
+`list.fill` of `list[record]` stays a type mismatch (0.13.1 rule).
+
+### Runtime contract
+
+`yukt_release(ptr)` unregisters **one** live tracked allocation, then returns its payload to the size-class cache or `free`s it. Releasing a list drops its owned elements first. Releasing null is a no-op; releasing a pointer that is not registered, or releasing the same live object twice, traps (compiler bug). The compiler inserts the call; there is no user `free` and no destructor syntax.
+
+`yukt_runtime_release` still runs when `yukt_main` returns and releases anything still registered. It is a **safety net**, not a second owner: a correct 0.13.2 program releases or transfers everything it owns. Allocator caps are unchanged: six size classes, four slots per class. Parallelization rules are unchanged; a parallel `repeat` still refuses bodies that allocate. See `docs/RUNTIME.md`.
+
+### Diagnostics
+
+Every ownership error has file, line, and column.
+
+| Situation | Title |
+| --- | --- |
+| Read, index, pass, `give`, assign through, or move a Moved name | `Use after move` |
+| Reassign a Moved name | `Use after move` (reassignment is not allowed in 0.13.2) |
+| Move or drop an outer heap name inside `repeat` | `Cannot move inside repeat` |
+| Bind a heap element out of a list | `Cannot move out of list element` |
+| Bind a heap field out of a record | `Cannot move out of record field` |
+
+### What 0.13.2 does not do
+
+- No `ref`, no borrow checker (0.13.3). No `foreign` (0.13.4). No error values (0.13.5). No stdlib expansion (0.13.6).
+- No block-scoped locals, no `free` in user code, no destructor syntax, no GC.
+- No re-initialization of Moved names.
+
+### Regression gate (0.13.2)
+
+- Entire 0.12 and 0.13.1 CTest suites stay green.
+- Use after move is rejected; use after move of a whole record is rejected.
+- `give` of a list does not free before the caller reads it.
+- Overwrite drops the previous allocation (observable by live-allocation count).
+- Moving a `Profile`-style record does not double-free; overwriting one field drops only that field.
+- Allocator caps and parallel thresholds unchanged; `benchmarks/results-0.11.json` unchanged.

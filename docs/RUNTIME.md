@@ -62,3 +62,16 @@ The caches and the allocation tracker are **not locked**. The 0.11 compiler refu
 | `yukt_list_sort_*` / `sorted` / `search` | Unstable numeric sort and binary search |
 | `yukt_math_*` | Integer helpers and libm wrappers |
 | `yukt_stat_min_*` / `max_*` / `mean_f` | Empty-list traps; sums stay in YUKT |
+
+## Ownership release (0.13.2)
+
+`yukt_release(void* ptr)` unregisters one tracked list or string and returns
+its payload to the size-class cache or `free`. Lists drop owned elements
+first. The compiler inserts this call. `yukt_runtime_release` still runs
+when `yukt_main` returns and releases anything still registered.
+Caps, six classes, and four slots are unchanged.
+
+Releasing null is a no-op. Releasing a pointer that is not registered, or a
+live object twice, traps. String literals are copied into tracked buffers when
+they become owned values; the static literal is never released. See
+`docs/LANGUAGE_SPEC.md` (0.13.2 — Ownership).

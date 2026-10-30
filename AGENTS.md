@@ -6,11 +6,11 @@ YUKT is a real programming language. The compiler is handwritten C++20. Do not i
 
 ## Current milestone
 
-**0.13.1 — Records** (0.12 remains tagged `v0.12.1`; 0.11 remains tagged `v0.11.0`).
+**0.13.2 — Ownership** (in progress on `yukt-0.13.2-ownership`; 0.13.1 records are tagged `v0.13.1` locally; 0.12 remains tagged `v0.12.1`; 0.11 remains tagged `v0.11.0`).
 
 Implemented: lexer, parser, AST, diagnostics (notes, GNU line, TTY color, per-file locations), scopes, type inference, YUKT IR, LLVM lowering, host object emission, `yukt build`, `yukt run`, `yukt --explain`, LLVM O3, list indexing, `count` / `zeros`, work-based automatic parallelization, simple +/* parallel reductions, adaptive runtime parallelization, host-CPU SIMD via LLVM vectorize, counted-loop lowering, range-parallel runtime, aligned list payloads, size-class payload reuse, host-native CI (macOS arm64, Linux x86-64), the 0.08–0.10 performance sprints, the 0.12 module system (`use` / `share` / `as` / `.` qualification, whole-program DAG, one native executable), the 0.12.1 now-gated standard library (`std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`), and 0.13.1 records (`record` / `share record`, nominal layouts, constructors, field access, fieldwise equality, list-of-record).
 
-Not implemented: 0.13.2–0.13.6 (ownership, refs, foreign C, error values) or the stdlib that needs them (maps, sets, arrays, files, JSON). Design: `docs/YUKT_013_DESIGN.md`. Also not implemented: package management or cross-compilation to non-host triples.
+Not implemented: 0.13.3–0.13.6 (refs, foreign C, error values) or the stdlib that needs them (maps, sets, arrays, files, JSON). 0.13.2 ownership is specified in `docs/LANGUAGE_SPEC.md` and in progress. Design: `docs/YUKT_013_DESIGN.md`. Also not implemented: package management or cross-compilation to non-host triples.
 
 Native execution is real when `yukt build` writes a host binary and `file` reports an executable for that architecture. Do not call a program "native" if it was interpreted.
 
@@ -63,7 +63,7 @@ The compiler entry point is `compiler/main.cpp`. Frontend/IR code lives in `yukt
 
 ## Language constraints
 
-YUKT 0.13.1 is indentation-sensitive. Blocks are introduced by `:` and a newline, then an indented suite.
+YUKT 0.13.2 is indentation-sensitive. Blocks are introduced by `:` and a newline, then an indented suite.
 
 Supported syntax is listed in `docs/LANGUAGE_SPEC.md`:
 
