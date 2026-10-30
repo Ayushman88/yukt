@@ -51,4 +51,4 @@ The previous run on `be4be29` (`40997972412`) failed Linux at `configure_target`
 
 ## Freeze rule
 
-**YUKT 0.11 is frozen.** Do not start 0.12 (modules, imports, standard library) in this tree until a 0.12 language design is written into `docs/LANGUAGE_SPEC.md` first. Implementation of 0.12 waits on that spec.
+**YUKT 0.11 is frozen** (tag `v0.11.0`). The 0.12 module system is specified in `docs/LANGUAGE_SPEC.md`; do not implement it in the compiler until that design is accepted.

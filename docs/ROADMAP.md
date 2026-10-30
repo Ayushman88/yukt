@@ -127,14 +127,19 @@ This milestone does **not** cross-compile, add modules, or add CUDA.
 
 ## 0.12 — Standard library
 
-- Requires a `use`/module story specified in `docs/LANGUAGE_SPEC.md` first
-- Strings and collections; arrays, lists, maps, and sets
+**Status: module system specified, not implemented** (`docs/LANGUAGE_SPEC.md` § 0.12, `docs/YUKT_012_DESIGN.md`)
+
+- `use` / `share` / namespaces, resolution, whole-program compilation, circular-import errors — specified
+- Do not start compiler work until that spec is the accepted design
+- Then: strings and collections; arrays, lists, maps, and sets
 - File handling and JSON parsing
 - Sorting, searching, math, statistics
 - Error handling
 - Written in YUKT where possible; runtime only where the language cannot express it
 
 Goal: build useful applications without depending on external languages.
+
+Preserve 0.11 benchmarks (`benchmarks/results-0.11.json`). Do not overwrite them in place.
 
 ## 0.13 — Memory and systems programming
 

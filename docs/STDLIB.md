@@ -1,8 +1,8 @@
 # YUKT standard library foundations
 
-Status: 0.11 documents the split. The library itself is **0.12**.
+Status: 0.11 is frozen. The module/`use` system is **specified** in `docs/LANGUAGE_SPEC.md` (0.12) and **not implemented**. Library APIs (maps, JSON, files) are not specified yet.
 
-YUKT 0.11 does not add `use`, modules, maps, JSON, or files. Those need syntax specified in `docs/LANGUAGE_SPEC.md` first.
+YUKT 0.11 does not parse `use`. 0.12 must implement the spec first, then specify and add library modules under `std/`.
 
 ## What exists now
 

@@ -6,11 +6,11 @@ YUKT is a real programming language. The compiler is handwritten C++20. Do not i
 
 ## Current milestone
 
-**0.11 — Portability and compiler intelligence**
+**0.11 frozen** (tag `v0.11.0`). **0.12 is language design only** — modules and imports in `docs/LANGUAGE_SPEC.md`. Do not implement `use` / `share` / qualification in the compiler until an implementation plan is approved.
 
-Implemented: lexer, parser, AST, diagnostics (notes, GNU line, TTY color), scopes, type inference, YUKT IR, LLVM lowering, host object emission, `yukt build`, `yukt run`, `yukt --explain`, LLVM O3, list indexing, `count` / `zeros`, work-based automatic parallelization, simple +/* parallel reductions, adaptive runtime parallelization, host-CPU SIMD via LLVM vectorize, counted-loop lowering, range-parallel runtime, aligned list payloads, size-class payload reuse, host-native CI (macOS arm64, Linux x86-64), and the 0.08–0.10 performance sprints.
+Implemented (0.11): lexer, parser, AST, diagnostics (notes, GNU line, TTY color), scopes, type inference, YUKT IR, LLVM lowering, host object emission, `yukt build`, `yukt run`, `yukt --explain`, LLVM O3, list indexing, `count` / `zeros`, work-based automatic parallelization, simple +/* parallel reductions, adaptive runtime parallelization, host-CPU SIMD via LLVM vectorize, counted-loop lowering, range-parallel runtime, aligned list payloads, size-class payload reuse, host-native CI (macOS arm64, Linux x86-64), and the 0.08–0.10 performance sprints.
 
-Not implemented: a standard library, modules, or cross-compilation to non-host triples.
+Not implemented: modules, a standard library, or cross-compilation to non-host triples. 0.12 syntax is specified; parsing it is still a bug until 0.12 compiler work starts.
 
 Native execution is real when `yukt build` writes a host binary and `file` reports an executable for that architecture. Do not call a program "native" if it was interpreted.
 
@@ -101,7 +101,7 @@ If `--ast` fails, fix the parser. If `--types` fails, fix semantic analysis. If 
 
 ## Out of scope until later milestones
 
-- Imports / modules (0.12)
+- Imports / modules (0.12 specified in `docs/LANGUAGE_SPEC.md`; do not implement yet)
 - Classes / structs (0.13)
 - Package management
 - An interactive REPL

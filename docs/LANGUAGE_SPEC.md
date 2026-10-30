@@ -1,7 +1,7 @@
 # YUKT Language Specification
 
-Version: 0.11 (frozen)  
-Status: syntax, type checking, native host executables, optimizations, automatic parallelization (including simple +/* reductions), SIMD, execution explanation, and host-native CI. Numerical semantics for integer overflow and float association are defined in this document.
+Version: 0.11 frozen; 0.12 module system specified, not implemented.  
+Status: 0.11 syntax, type checking, native host executables, optimizations, automatic parallelization (including simple +/* reductions), SIMD, execution explanation, and host-native CI. Numerical semantics for signed overflow and float rounding are defined in this document. The 0.12 module and import system below is language design only; the 0.11 compiler must still reject it.
 
 This document is the source of truth for YUKT syntax. If the compiler and this file disagree, that is a bug.
 
@@ -321,15 +321,153 @@ If `main` gives an integer, that value is the process exit code. Other return ty
 
 `yukt build file.yukt -o name` emits a native executable for the host. `yukt run file.yukt` compiles to a temporary binary and executes it. Neither command is an interpreter.
 
-## Out of scope
+## Out of scope for 0.11
 
-The following are **not** part of YUKT 0.11 and must not be parsed as if they were:
+The 0.11 compiler must not parse the following as if they were implemented. Modules and imports are specified in the next section for 0.12; they are still rejected until that milestone’s compiler work starts.
 
-- modules and imports
+- modules and imports (`use`, `share`, `as`, `.` qualification) — specified for 0.12, not implemented
 - classes or structs
 - `and` / `or` / `not`
 - bitwise operators
 - `for`, `while`, `break`, `continue`
 - type annotations
-- methods or member access (`.`)
+- methods or other member access (`.` is only module qualification in 0.12, not `list.len`)
 - an interpreter or bytecode VM
+- package versions, remotes, or a package manager
+
+## 0.12 — Modules and imports
+
+**Status: specified, not implemented.** Do not change the compiler until an implementation plan is approved. Syntax in this section is the source of truth for 0.12.
+
+0.12’s job is a module/`use` story so a YUKT-written standard library can exist as real files. It does not add maps, JSON, files, or new collection types. Those APIs wait for a later 0.12 library spec after this system exists.
+
+### Purpose
+
+A program is still one native executable. The entry file has `create main`. Other `.yukt` files are modules. A module is a file of functions. There is no executable top-level code.
+
+### New reserved words
+
+```
+use  share  as
+```
+
+These cannot be used as names in 0.12. They are not reserved in the 0.11 compiler.
+
+### Grammar additions
+
+`use` lines come first, then functions. A `use` after a `create` is an error.
+
+```
+program        ::= { use_stmt } { function }
+
+use_stmt       ::= "use" module_path [ "as" IDENT ] NEWLINE
+
+module_path    ::= IDENT { "/" IDENT }
+
+function       ::= [ "share" ] "create" IDENT [ "(" [ IDENT { "," IDENT } ] ")" ] ":" suite
+
+call           ::= callee "(" [ expression { "," expression } ] ")"
+callee         ::= IDENT | IDENT "." IDENT
+```
+
+`/` in a `use` path is a path separator, not division. `.` between two identifiers in a callee is **module qualification**, not a float and not a method. A single `.` that is not part of a float literal becomes a token in 0.12. `math.sqrt` without `(` is an error: YUKT has no first-class function values.
+
+### Visibility
+
+- `create name` is **private** to its source file. Other files cannot call it.
+- `share create name` is **exported**. Importers call it as `alias.name(...)`.
+- `share` is only valid immediately before `create`. `share` on any other form is an error.
+- `create main` cannot be `share`. `share create main` is an error.
+- Only the **entry file** (the path passed to `yukt build` / `yukt run`) may define `create main`. A library module that contains `main` is an error.
+- The whole program still has exactly one `create main`, with no parameters.
+- There are no module-level variables. Only functions are bindable across files.
+- Compiler builtins `count` and `zeros` remain visible in every file without `use`, as in 0.11.
+
+```yukt
+# math.yukt
+share create add(a, b):
+    give a + b
+
+create helper(a):
+    give a + 1
+```
+
+```yukt
+# app.yukt
+use math
+
+create main:
+    say math.add(2, 3)
+    # math.helper(1) is an error: helper is private
+    # add(2, 3) is an error: no glob import; the name is math.add
+```
+
+### Namespaces
+
+- `use a/b` binds the **last path component** as the alias (`b`), unless `as` names a different alias.
+- `use std/math` binds `math`. `use std/math as m` binds `m`.
+- The alias is a namespace, not a value. It is only valid as the left side of `alias.name(...)`.
+- Two `use` lines in the same file that bind the same alias are an error, even if they resolve to the same file.
+- An alias must not collide with a `create` name in that file or with `count` / `zeros`.
+- Unqualified `name(...)` looks up functions in the **current file** and builtins. It does not search imported modules.
+- `alias.name` looks up `name` only among **shared** functions of that module. Unknown or private names are errors at the `.` (file, line, column, and a note of what is shared).
+
+### Dependency resolution
+
+Module identity is the canonical file path of a `.yukt` file. Two `use` strings that resolve to the same file are one module.
+
+A module path is one or more identifiers separated by `/`. It must not contain `.`, `..`, a `.yukt` suffix, or an empty component.
+
+Resolve `use p`:
+
+1. If the first component is `std`, the path must have at least two components. `use std` is an error. `use std/math` resolves only to `<stdlib-root>/math.yukt`, where `<stdlib-root>` is the compiler’s `std/` directory (source tree or install). The project tree is **not** searched for `std`. User modules cannot start with `std`.
+2. Otherwise, try `<directory of the importing file>/p.yukt`.
+3. Otherwise, try `<directory of the entry file>/p.yukt`.
+4. Otherwise report `Cannot find module p`, with notes listing the paths that were tried.
+
+Importer-relative (step 2) wins over entry-relative (step 3) when both exist as different files.
+
+No search of `PATH`, the network, or a package registry. 0.12 has no versions and no package manager.
+
+If the file exists but is not readable UTF-8 YUKT source, that is a diagnostic on the `use` line.
+
+### Compilation
+
+- `yukt build entry.yukt` and `yukt run entry.yukt` load the entry file, then recursively load each used module. Inspection flags (`--ast`, `--types`, `--emit-ir`, `--emit-llvm`, `--explain`) do the same.
+- Compilation is **whole-program**: one host-native executable. 0.12 does not emit separately linked YUKT libraries.
+- The frontend stays LLVM-free. The driver owns the module graph; semantic analysis is whole-program; each function still lowers through YUKT IR.
+- Do not concatenate library sources into the entry file as a parse hack.
+- LLVM / C names: entry `create main` remains `yukt_main`. Every other function is `yukt_<module>_<name>`. `<module>` is the file path relative to the entry directory, without `.yukt`, with `/` replaced by `_`. Standard-library files use `std/` plus the path under `<stdlib-root>` (so `std/math.yukt` → `std_math`). A module file that is not under the entry directory and not under `<stdlib-root>` is an error. `share create add` in `std/math` is `yukt_std_math_add`. Private functions are mangled the same way so they cannot collide across files. The entry file stem is used for non-`main` functions in the entry module.
+- Two modules may both `share create add`; importers distinguish them by alias.
+- Duplicate function names in one file remain an error.
+
+### Circular imports
+
+**Import cycles are errors.** Self-`use` is a cycle.
+
+The compiler builds a directed graph with an edge from importer to importee for each `use`. If the graph is not a DAG, it reports `Circular import` on each `use` that participates, with a note listing one cycle as file paths:
+
+```text
+Circular import
+note: a.yukt -> b.yukt -> a.yukt
+```
+
+0.12 has no module-level initialization, but cycles are still forbidden so compilation stays a DAG and mutual recursion cannot span files. Mutual recursion belongs in one file. Relaxing this would be a later spec change, not a silent compiler choice.
+
+### Standard library files
+
+`std/` stays the reserved tree for YUKT-written library modules. 0.12 may add files there only after their APIs are specified. Until then the directory may be empty. Builtins `count` and `zeros` do not move into `std/` in this design.
+
+### Diagnostics
+
+Every module error has file, line, and column of the `use`, `share`, or qualified call. Missing modules, private access, alias collisions, reserved `std` misuse, and cycles must not be ignored.
+
+### Non-goals for this design
+
+- Selective import (`use add from math`) and glob import (`use math.*`)
+- Re-export (`share use math`)
+- First-class function values
+- Method call / field access
+- Separate compilation to `.o` per module as a user feature
+- Package versions, lockfiles, or downloads
+
