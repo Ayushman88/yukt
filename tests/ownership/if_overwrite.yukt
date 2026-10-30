@@ -1,0 +1,6 @@
+create main:
+    n = 0
+    if n > 0:
+        xs = zeros(3)
+    xs = zeros(5)
+    say count(xs)

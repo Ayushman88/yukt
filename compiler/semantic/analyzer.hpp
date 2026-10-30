@@ -59,9 +59,6 @@ struct SemanticInfo {
     std::unordered_map<const FunctionDecl*, std::string> function_ir_names;
     std::unordered_map<const CallExpr*, std::string> call_ir_names;
     std::unordered_map<const CallExpr*, int> record_constructors;
-    std::unordered_map<const Stmt*, std::vector<std::string>> drop_before;
-    std::unordered_map<const FunctionDecl*, std::vector<std::string>> drop_on_return;
-    std::unordered_map<const RepeatStmt*, std::vector<std::string>> drop_on_iter;
 };
 
 SemanticInfo analyze_semantics(const Program& program, DiagnosticEngine& diagnostics);

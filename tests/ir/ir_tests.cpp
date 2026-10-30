@@ -409,6 +409,49 @@ int main() {
     {
         const auto module = ir_from(
             "create main:\n"
+            "    n = 0\n"
+            "    if n > 0:\n"
+            "        xs = zeros(3)\n"
+            "    xs = zeros(5)\n"
+            "    say count(xs)\n");
+        const auto* main_fn = function_named(module, "main");
+        REQUIRE(main_fn != nullptr);
+        bool else_drops_before_zeros = false;
+        bool then_overwrite_drop = false;
+        if (main_fn != nullptr) {
+            for (const auto& block : main_fn->blocks) {
+                int zeros = 0;
+                bool seen_zeros = false;
+                bool stored_after_zeros = false;
+                bool drop_before_store = false;
+                for (const auto& inst : block.insts) {
+                    if (inst.op == yukt::IrOp::Zeros) {
+                        ++zeros;
+                        seen_zeros = true;
+                        stored_after_zeros = false;
+                    }
+                    if (inst.op == yukt::IrOp::Drop && seen_zeros && !stored_after_zeros) {
+                        drop_before_store = true;
+                    }
+                    if (inst.op == yukt::IrOp::Store && seen_zeros) {
+                        stored_after_zeros = true;
+                    }
+                }
+                if (zeros == 1 && drop_before_store) {
+                    else_drops_before_zeros = true;
+                }
+                if (zeros >= 2 && drop_before_store) {
+                    then_overwrite_drop = true;
+                }
+            }
+        }
+        REQUIRE(!else_drops_before_zeros);
+        REQUIRE(then_overwrite_drop);
+    }
+
+    {
+        const auto module = ir_from(
+            "create main:\n"
             "    repeat i in 1..3:\n"
             "        xs = zeros(i)\n"
             "    say 1\n");

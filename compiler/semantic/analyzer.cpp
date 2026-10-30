@@ -159,9 +159,6 @@ private:
     // False during type inference; true on the second walk, after parameter types
     // have been unified, so heap parameters can enter the ownership map as Owned.
     bool ownership_pass_ = false;
-    std::unordered_map<const Stmt*, std::vector<std::string>> drop_before_;
-    std::unordered_map<const FunctionDecl*, std::vector<std::string>> drop_on_return_;
-    std::unordered_map<const RepeatStmt*, std::vector<std::string>> drop_on_iter_;
 };
 
 bool is_numeric(Type type) {
@@ -215,9 +212,6 @@ SemanticInfo Analyzer::run() {
     info.call_ir_names = call_ir_names_;
     info.record_constructors = record_constructors_;
     info.records = records_;
-    info.drop_before = drop_before_;
-    info.drop_on_return = drop_on_return_;
-    info.drop_on_iter = drop_on_iter_;
     const int module_count = graph_ == nullptr ? 1 : static_cast<int>(graph_->modules.size());
     for (int module_index = 0; module_index < module_count; ++module_index) {
         const Program* program = module_program(module_index);
@@ -730,9 +724,6 @@ void Analyzer::analyze_functions() {
     // Parameter types are unified only after every call site has been seen.
     // Walk again so heap parameters start Owned and `give xs` can mark Moved.
     ownership_pass_ = true;
-    drop_before_.clear();
-    drop_on_return_.clear();
-    drop_on_iter_.clear();
     walk_functions();
     ownership_pass_ = false;
 }
@@ -982,19 +973,6 @@ void Analyzer::analyze_function(FunctionSymbol& function) {
             analyze_statement(stmt.get());
         }
 
-        if (ownership_pass_) {
-            std::vector<std::string> remaining;
-            for (const auto& [name, own] : own_) {
-                if (own.state == OwnState::Owned) {
-                    remaining.push_back(name);
-                }
-            }
-            std::sort(remaining.begin(), remaining.end());
-            if (!remaining.empty()) {
-                drop_on_return_[function.decl] = std::move(remaining);
-            }
-        }
-
         if (!ownership_pass_ && !scopes_.empty()) {
             for (const auto& [name, symbol] : scopes_.front()) {
                 bool parameter = false;
@@ -1120,8 +1098,6 @@ void Analyzer::analyze_assignment(const AssignStmt& stmt) {
                         error(stmt.name_location, "Cannot move inside repeat",
                               "Moving `" + stmt.name + "` inside `repeat` would leave later iterations with a moved value.",
                               "Copy first, or restructure so the move happens outside the loop.");
-                    } else {
-                        drop_before_[&stmt].push_back(stmt.name);
                     }
                 }
                 own_[stmt.name] = OwnName{OwnState::Owned, stmt.name_location};
@@ -1231,28 +1207,8 @@ void Analyzer::analyze_give(const GiveStmt& stmt) {
                   "` already gives " + types_.to_string(current_function_->return_type) + ".",
               "Every `give` in a function must have the same type.");
     }
-    // Drop every still-Owned heap name except the identifier being transferred.
-    // `give x` then marks x Moved so the callee does not release it.
-    if (ownership_pass_) {
-        std::string given;
-        if (type_owns_heap(types_, type)) {
-            if (const auto* id = dynamic_cast<const IdentifierExpr*>(stmt.value.get())) {
-                if (lookup_local(id->name) != nullptr && name_is_heap(id->name)) {
-                    given = id->name;
-                }
-            }
-        }
-        std::vector<std::string> remaining;
-        for (const auto& [name, own] : own_) {
-            if (own.state == OwnState::Owned && name != given) {
-                remaining.push_back(name);
-            }
-        }
-        std::sort(remaining.begin(), remaining.end());
-        if (!remaining.empty()) {
-            drop_before_[&stmt] = std::move(remaining);
-        }
-    }
+    // `give x` marks x Moved so the callee does not release it. Remaining
+    // Owned names are dropped by IR lowering from the path-local owned set.
     if (type_owns_heap(types_, type)) {
         if (const auto* id = dynamic_cast<const IdentifierExpr*>(stmt.value.get())) {
             if (lookup_local(id->name) != nullptr && name_is_heap(id->name)) {
@@ -1368,10 +1324,6 @@ void Analyzer::analyze_repeat(const RepeatStmt& stmt) {
             if (was == snapshot.end() || was->second.state != OwnState::Owned) {
                 local_drops.push_back(name);
             }
-        }
-        std::sort(local_drops.begin(), local_drops.end());
-        if (!local_drops.empty()) {
-            drop_on_iter_[&stmt] = local_drops;
         }
         for (const auto& name : local_drops) {
             own_.erase(name);

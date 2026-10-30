@@ -801,7 +801,6 @@ private:
     void emit_store(const std::string& name, const IrValue& value);
     void emit_drop(const IrValue& value);
     void emit_named_drops(const std::vector<std::string>& names);
-    void emit_drops_before(const Stmt* stmt);
     void emit_owned_drops();
     void emit_path_exit();
     void note_user_call_moves(const CallExpr& expr);
@@ -991,12 +990,14 @@ void Lowerer::lower_seq(const std::vector<const Stmt*>& stmts) {
 void Lowerer::lower_assignment(const AssignStmt& stmt) {
     const IrValue value = lower_expression(stmt.value.get());
     ensure_local(stmt.name, value.type);
-    emit_drops_before(&stmt);
+    const auto* id = dynamic_cast<const IdentifierExpr*>(stmt.value.get());
+    const bool self_move = id != nullptr && id->name == stmt.name;
+    if (ir_owns_heap(value.type) && !self_move && owned_.contains(stmt.name)) {
+        emit_drop(emit_load(stmt.name));
+    }
     if (ir_owns_heap(value.type)) {
-        if (const auto* id = dynamic_cast<const IdentifierExpr*>(stmt.value.get())) {
-            if (id->name != stmt.name) {
-                owned_.erase(id->name);
-            }
+        if (id != nullptr && id->name != stmt.name) {
+            owned_.erase(id->name);
         }
         owned_.insert(stmt.name);
     }
@@ -1934,13 +1935,6 @@ void Lowerer::emit_drop(const IrValue& value) {
 void Lowerer::emit_named_drops(const std::vector<std::string>& names) {
     for (const auto& name : names) {
         emit_drop(emit_load(name));
-    }
-}
-
-void Lowerer::emit_drops_before(const Stmt* stmt) {
-    const auto found = semantic_.drop_before.find(stmt);
-    if (found != semantic_.drop_before.end()) {
-        emit_named_drops(found->second);
     }
 }
 

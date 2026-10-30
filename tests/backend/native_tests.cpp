@@ -430,6 +430,13 @@ int main() {
     }
 
     {
+        const auto result = run_file("tests/ownership/if_overwrite.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "5\n");
+        REQUIRE(result.exit_code == 0);
+    }
+
+    {
         const auto result = run_source(
             "create main:\n"
             "    xs = zeros(1)\n"
