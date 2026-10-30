@@ -79,6 +79,7 @@ private:
     void compute_record_layouts();
     void check_shared_signatures();
     void analyze_functions();
+    void walk_functions();
     std::string ir_name_for(int module_index, const FunctionDecl& function) const;
     const Program* module_program(int index) const;
     FunctionSymbol* lookup_shared(int module_index, const std::string& name);
@@ -155,6 +156,9 @@ private:
     FunctionSymbol* current_function_ = nullptr;
     std::unordered_map<std::string, OwnName> own_;
     std::unordered_set<std::string> loop_protected_;
+    // False during type inference; true on the second walk, after parameter types
+    // have been unified, so heap parameters can enter the ownership map as Owned.
+    bool ownership_pass_ = false;
 };
 
 bool is_numeric(Type type) {
@@ -716,6 +720,15 @@ void Analyzer::check_shared_signatures() {
 }
 
 void Analyzer::analyze_functions() {
+    walk_functions();
+    // Parameter types are unified only after every call site has been seen.
+    // Walk again so heap parameters start Owned and `give xs` can mark Moved.
+    ownership_pass_ = true;
+    walk_functions();
+    ownership_pass_ = false;
+}
+
+void Analyzer::walk_functions() {
     const int module_count = graph_ == nullptr ? 1 : static_cast<int>(graph_->modules.size());
     for (int module_index = 0; module_index < module_count; ++module_index) {
         current_module_ = module_index;
@@ -951,13 +964,16 @@ void Analyzer::analyze_function(FunctionSymbol& function) {
             }
             seen.emplace(name, function.decl->name_location);
             declare_local(name, function.parameters[i], function.decl->name_location, false);
+            if (ownership_pass_ && type_owns_heap(types_, function.parameters[i])) {
+                own_[name] = OwnName{OwnState::Owned, function.decl->name_location};
+            }
         }
 
         for (const auto& stmt : function.decl->body) {
             analyze_statement(stmt.get());
         }
 
-        if (!scopes_.empty()) {
+        if (!ownership_pass_ && !scopes_.empty()) {
             for (const auto& [name, symbol] : scopes_.front()) {
                 bool parameter = false;
                 for (const auto& parameter_name : function.decl->parameters) {
@@ -2089,15 +2105,26 @@ bool Analyzer::expect_type(Type actual, Type expected, SourceLocation location, 
 }
 
 void Analyzer::error(SourceLocation location, std::string title, std::string detail, std::string suggestion) {
+    const bool ownership_title = title == "Use after move" || title == "Cannot move inside repeat";
+    if (ownership_pass_ != ownership_title) {
+        return;
+    }
     diagnostics_.error(location, std::move(title), std::move(detail), std::move(suggestion));
 }
 
 void Analyzer::error(SourceLocation location, std::string title, std::string detail, std::string suggestion,
                      std::vector<DiagnosticNote> notes) {
+    const bool ownership_title = title == "Use after move" || title == "Cannot move inside repeat";
+    if (ownership_pass_ != ownership_title) {
+        return;
+    }
     diagnostics_.error(location, std::move(title), std::move(detail), std::move(suggestion), std::move(notes));
 }
 
 void Analyzer::add_constraint(Type type, ConstraintKind kind, SourceLocation location, std::string operator_text) {
+    if (ownership_pass_) {
+        return;
+    }
     Constraint constraint;
     constraint.type = std::move(type);
     constraint.kind = kind;
@@ -2107,6 +2134,9 @@ void Analyzer::add_constraint(Type type, ConstraintKind kind, SourceLocation loc
 }
 
 void Analyzer::add_field_constraint(Type object, std::string field, Type field_type, SourceLocation location) {
+    if (ownership_pass_) {
+        return;
+    }
     Constraint constraint;
     constraint.type = std::move(object);
     constraint.kind = ConstraintKind::Field;
@@ -2117,6 +2147,9 @@ void Analyzer::add_field_constraint(Type object, std::string field, Type field_t
 }
 
 void Analyzer::require_non_void(Type type, SourceLocation location, std::string detail, std::string suggestion) {
+    if (ownership_pass_) {
+        return;
+    }
     if (types_.prune(type).kind == TypeKind::Void) {
         error(location, "Type mismatch", std::move(detail), std::move(suggestion));
         return;

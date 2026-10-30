@@ -159,5 +159,117 @@ int main() {
         REQUIRE(!result.diagnostics->has_errors());
     }
 
+    // Heap parameters start Owned. `give xs` marks Moved; using the param after is
+    // Use after move (count, second give, pass to another user function).
+    {
+        const auto result = check(
+            "create take(xs):\n"
+            "    give xs\n"
+            "    say count(xs)\n"
+            "\n"
+            "create main:\n"
+            "    xs = zeros(2)\n"
+            "    ys = take(xs)\n"
+            "    say count(ys)\n");
+        REQUIRE(has_title(result, "Use after move"));
+        REQUIRE(has_diagnostic(result, "Use after move", "`xs`", move_suggestion));
+    }
+
+    {
+        const auto result = check(
+            "create take(xs):\n"
+            "    give xs\n"
+            "    give xs\n"
+            "\n"
+            "create main:\n"
+            "    xs = zeros(2)\n"
+            "    ys = take(xs)\n"
+            "    say count(ys)\n");
+        REQUIRE(has_title(result, "Use after move"));
+        REQUIRE(has_diagnostic(result, "Use after move", "`xs`", move_suggestion));
+    }
+
+    {
+        const auto result = check(
+            "create sink(xs):\n"
+            "    say count(xs)\n"
+            "\n"
+            "create take(xs):\n"
+            "    give xs\n"
+            "    sink(xs)\n"
+            "\n"
+            "create main:\n"
+            "    xs = zeros(2)\n"
+            "    ys = take(xs)\n"
+            "    say count(ys)\n");
+        REQUIRE(has_title(result, "Use after move"));
+        REQUIRE(has_diagnostic(result, "Use after move", "`xs`", move_suggestion));
+    }
+
+    // Integer parameters must not be Owned: assigning and then using the param is fine.
+    {
+        const auto result = check(
+            "create add(n):\n"
+            "    m = n\n"
+            "    give n + m\n"
+            "\n"
+            "create main:\n"
+            "    say add(3)\n");
+        REQUIRE(!result.diagnostics->has_errors());
+    }
+
+    // If-join: then moves, otherwise does not, use after if → Use after move.
+    {
+        const auto result = check(
+            "create main:\n"
+            "    xs = zeros(2)\n"
+            "    if 1 == 1:\n"
+            "        ys = xs\n"
+            "        say count(ys)\n"
+            "    otherwise:\n"
+            "        say count(xs)\n"
+            "    say count(xs)\n");
+        REQUIRE(has_title(result, "Use after move"));
+        REQUIRE(has_diagnostic(result, "Use after move", "`xs`", move_suggestion));
+    }
+
+    // If-join: both branches leave Owned → valid.
+    {
+        const auto result = check(
+            "create main:\n"
+            "    xs = zeros(2)\n"
+            "    if 1 == 1:\n"
+            "        say count(xs)\n"
+            "    otherwise:\n"
+            "        say count(xs)\n"
+            "    say count(xs)\n");
+        REQUIRE(!result.diagnostics->has_errors());
+    }
+
+    // If-join: no otherwise, then moves, use after if → Use after move.
+    {
+        const auto result = check(
+            "create main:\n"
+            "    xs = zeros(2)\n"
+            "    if 1 == 1:\n"
+            "        ys = xs\n"
+            "        say count(ys)\n"
+            "    say count(xs)\n");
+        REQUIRE(has_title(result, "Use after move"));
+        REQUIRE(has_diagnostic(result, "Use after move", "`xs`", move_suggestion));
+    }
+
+    // Reassigning a Moved name is Use after move (not a fresh Owned binding).
+    {
+        const auto result = check(
+            "create main:\n"
+            "    xs = zeros(2)\n"
+            "    ys = xs\n"
+            "    xs = zeros(3)\n"
+            "    say count(xs)\n");
+        REQUIRE(has_title(result, "Use after move"));
+        REQUIRE(has_diagnostic(result, "Use after move", "`xs`", move_suggestion));
+    }
+
     return yukt::test::summary("ownership");
 }
