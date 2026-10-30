@@ -239,7 +239,11 @@ int main() {
         const auto result = parse(
             "create main:\n"
             "    say math.add\n");
-        REQUIRE(result.diagnostics->has_errors());
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* main = function_named(*result.program, "main");
+        const auto* say = main != nullptr && !main->body.empty() ? as<yukt::SayStmt>(main->body[0].get()) : nullptr;
+        const auto* field = say != nullptr ? as<yukt::FieldExpr>(say->value.get()) : nullptr;
+        REQUIRE(field != nullptr && field->field == "add");
     }
 
     {
@@ -284,6 +288,61 @@ int main() {
 
     {
         const auto result = parse("create main:\n    say math.if(1)\n");
+        REQUIRE(result.diagnostics->has_errors());
+        bool reserved = false;
+        for (const auto& diagnostic : result.diagnostics->diagnostics()) {
+            if (diagnostic.title == "Reserved word") {
+                reserved = true;
+            }
+        }
+        REQUIRE(reserved);
+    }
+
+    {
+        const auto result = parse(
+            "record Point:\n"
+            "    x: integer\n"
+            "    y: integer\n"
+            "\n"
+            "share record Flag:\n"
+            "    on: boolean\n"
+            "\n"
+            "create main:\n"
+            "    p = Point(1, 2)\n"
+            "    say p.x\n"
+            "    p.y = 9\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        REQUIRE(result.program != nullptr && result.program->records.size() == 2);
+        REQUIRE(result.program->records[0] != nullptr && result.program->records[0]->name == "Point");
+        REQUIRE(result.program->records[0] != nullptr && !result.program->records[0]->shared);
+        REQUIRE(result.program->records[0] != nullptr && result.program->records[0]->fields.size() == 2);
+        REQUIRE(result.program->records[1] != nullptr && result.program->records[1]->shared);
+        const auto* main = function_named(*result.program, "main");
+        REQUIRE(main != nullptr && main->body.size() == 3);
+        const auto* assign = main != nullptr ? as<yukt::AssignStmt>(main->body[0].get()) : nullptr;
+        const auto* ctor = assign != nullptr ? as<yukt::CallExpr>(assign->value.get()) : nullptr;
+        REQUIRE(ctor != nullptr && ctor->callee == "Point" && ctor->arguments.size() == 2);
+        const auto* say = main != nullptr ? as<yukt::SayStmt>(main->body[1].get()) : nullptr;
+        const auto* field = say != nullptr ? as<yukt::FieldExpr>(say->value.get()) : nullptr;
+        REQUIRE(field != nullptr && field->field == "x");
+        const auto* field_assign = main != nullptr ? as<yukt::FieldAssignStmt>(main->body[2].get()) : nullptr;
+        REQUIRE(field_assign != nullptr && field_assign->field == "y");
+    }
+
+    {
+        const auto result = parse("record Empty:\n    1\n");
+        REQUIRE(result.diagnostics->has_errors());
+        bool invalid = false;
+        for (const auto& diagnostic : result.diagnostics->diagnostics()) {
+            if (diagnostic.title == "Invalid record") {
+                invalid = true;
+            }
+        }
+        REQUIRE(invalid);
+    }
+
+    {
+        const auto result = parse("record if:\n    x: integer\n");
         REQUIRE(result.diagnostics->has_errors());
         bool reserved = false;
         for (const auto& diagnostic : result.diagnostics->diagnostics()) {

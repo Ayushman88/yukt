@@ -1,0 +1,11 @@
+use std/list as list
+
+record Point:
+    x: integer
+    y: integer
+
+create main:
+    points = [Point(1, 2)]
+    empty = list.slice(points, 0, 0)
+    say empty
+    say count(empty)

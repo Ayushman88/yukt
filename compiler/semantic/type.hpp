@@ -14,6 +14,7 @@ enum class TypeKind {
     String,
     Void,
     List,
+    Record,
     Variable,
 };
 
@@ -21,6 +22,8 @@ struct Type {
     TypeKind kind = TypeKind::Void;
     int variable = -1;
     std::shared_ptr<Type> element;
+    int record_id = -1;
+    std::string record_name;
 };
 
 Type integer_type();
@@ -29,6 +32,7 @@ Type boolean_type();
 Type string_type();
 Type void_type();
 Type list_type(Type element);
+Type record_type(int record_id, std::string record_name);
 
 class TypeContext {
 public:

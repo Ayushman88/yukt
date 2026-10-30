@@ -1,0 +1,5 @@
+record Hidden:
+    n: integer
+
+share create make:
+    give Hidden(1)

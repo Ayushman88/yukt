@@ -1,0 +1,14 @@
+record Flag:
+    on: boolean
+
+record Point:
+    x: integer
+    y: integer
+
+create main:
+    flags = [Flag(true), Flag(false)]
+    points = [Point(1, 2)]
+    say flags
+    say points
+    say flags[0].on
+    say points[0].y

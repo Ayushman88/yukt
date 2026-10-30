@@ -8,6 +8,9 @@ bool operator==(const IrType& left, const IrType& right) {
     if (left.kind != right.kind) {
         return false;
     }
+    if (left.kind == IrTypeKind::Record) {
+        return left.record_id == right.record_id;
+    }
     if (left.kind != IrTypeKind::List) {
         return true;
     }
@@ -22,29 +25,36 @@ bool operator!=(const IrType& left, const IrType& right) {
 }
 
 IrType ir_i64() {
-    return IrType{IrTypeKind::I64, nullptr};
+    return IrType{.kind = IrTypeKind::I64};
 }
 
 IrType ir_f64() {
-    return IrType{IrTypeKind::F64, nullptr};
+    return IrType{.kind = IrTypeKind::F64};
 }
 
 IrType ir_bool() {
-    return IrType{IrTypeKind::Bool, nullptr};
+    return IrType{.kind = IrTypeKind::Bool};
 }
 
 IrType ir_string() {
-    return IrType{IrTypeKind::String, nullptr};
+    return IrType{.kind = IrTypeKind::String};
 }
 
 IrType ir_void() {
-    return IrType{IrTypeKind::Void, nullptr};
+    return IrType{.kind = IrTypeKind::Void};
 }
 
 IrType ir_list(IrType element) {
     IrType type;
     type.kind = IrTypeKind::List;
     type.element = std::make_shared<IrType>(std::move(element));
+    return type;
+}
+
+IrType ir_record(int record_id) {
+    IrType type;
+    type.kind = IrTypeKind::Record;
+    type.record_id = record_id;
     return type;
 }
 
@@ -60,6 +70,8 @@ IrType ir_type_from(const Type& type) {
             return ir_string();
         case TypeKind::List:
             return ir_list(type.element != nullptr ? ir_type_from(*type.element) : ir_i64());
+        case TypeKind::Record:
+            return ir_record(type.record_id);
         case TypeKind::Void:
         case TypeKind::Variable:
             return ir_void();
@@ -81,6 +93,8 @@ std::string ir_type_name(const IrType& type) {
             return "void";
         case IrTypeKind::List:
             return "list[" + (type.element != nullptr ? ir_type_name(*type.element) : "?") + "]";
+        case IrTypeKind::Record:
+            return "record#" + std::to_string(type.record_id);
     }
     return "void";
 }
@@ -97,6 +111,8 @@ int list_elem_kind(const IrType& type) {
             return 3;
         case IrTypeKind::List:
             return 4;
+        case IrTypeKind::Record:
+            return 5;
         case IrTypeKind::Void:
             return -1;
     }
@@ -159,6 +175,13 @@ std::string bin_name(IrBinOp op) {
 
 void print_ir(const IrModule& module, std::ostream& out) {
     out << "; YUKT IR — " << module.source_path << '\n';
+    for (const auto& record : module.records) {
+        out << "record " << record.name << " id " << record.id << " size " << record.size << " align " << record.align
+            << '\n';
+        for (const auto& field : record.fields) {
+            out << "  " << field.name << ": " << ir_type_name(field.type) << " @" << field.offset << '\n';
+        }
+    }
     for (const auto& function : module.functions) {
         out << "function " << function.name << '(';
         for (std::size_t i = 0; i < function.params.size(); ++i) {
@@ -229,6 +252,24 @@ void print_ir(const IrModule& module, std::ostream& out) {
                         break;
                     case IrOp::Say:
                         out << "say " << value_text(inst.args[0]) << '\n';
+                        break;
+                    case IrOp::RecordNew:
+                        out << value_text(inst.dest) << " = record " << inst.name << '(';
+                        for (std::size_t i = 0; i < inst.args.size(); ++i) {
+                            if (i != 0) {
+                                out << ", ";
+                            }
+                            out << value_text(inst.args[i]);
+                        }
+                        out << ")\n";
+                        break;
+                    case IrOp::FieldGet:
+                        out << value_text(inst.dest) << " = field " << value_text(inst.args[0]) << '.' << inst.name
+                            << '\n';
+                        break;
+                    case IrOp::FieldSet:
+                        out << value_text(inst.dest) << " = field_set " << value_text(inst.args[0]) << '.' << inst.name
+                            << ", " << value_text(inst.args[1]) << '\n';
                         break;
                 }
             }

@@ -172,6 +172,9 @@ static void print_value(int64_t kind, const void* data, int64_t index) {
         case 4:
             print_list(((YuktList* const*)data)[index]);
             break;
+        case 5:
+            printf("?");
+            break;
         default:
             printf("?");
             break;
@@ -193,20 +196,40 @@ static void print_list(const YuktList* list) {
     printf("]");
 }
 
+void yukt_print_i64(int64_t value) {
+    printf("%" PRId64, value);
+}
+
+void yukt_print_f64(double value) {
+    printf("%g", value);
+}
+
+void yukt_print_bool(int8_t value) {
+    printf("%s", value ? "true" : "false");
+}
+
+void yukt_print_cstr(const char* value) {
+    printf("%s", value != NULL ? value : "");
+}
+
 void yukt_say_i64(int64_t value) {
-    printf("%" PRId64 "\n", value);
+    yukt_print_i64(value);
+    printf("\n");
 }
 
 void yukt_say_f64(double value) {
-    printf("%g\n", value);
+    yukt_print_f64(value);
+    printf("\n");
 }
 
 void yukt_say_bool(int8_t value) {
-    printf("%s\n", value ? "true" : "false");
+    yukt_print_bool(value);
+    printf("\n");
 }
 
 void yukt_say_cstr(const char* value) {
-    printf("%s\n", value != NULL ? value : "");
+    yukt_print_cstr(value);
+    printf("\n");
 }
 
 void yukt_say_list(const YuktList* list) {
@@ -255,6 +278,19 @@ static size_t element_size(int64_t kind) {
     }
 }
 
+static size_t element_size_of(const YuktList* list) {
+    if (list == NULL) {
+        return sizeof(void*);
+    }
+    if (list->kind == 5) {
+        return list->stride > 0 ? (size_t)list->stride : 0;
+    }
+    if (list->stride > 0) {
+        return (size_t)list->stride;
+    }
+    return element_size(list->kind);
+}
+
 static void* yukt_alloc_aligned_zero(size_t bytes) {
     if (bytes == 0) {
         return NULL;
@@ -281,10 +317,11 @@ YuktList* yukt_list_new(int64_t length, int64_t kind) {
     }
     list->length = length;
     list->kind = kind;
+    list->stride = (int64_t)element_size(kind);
     size_t payload = 0;
     if (length > 0) {
         size_t nbytes = 0;
-        if (yukt_size_mul((size_t)length, element_size(kind), &nbytes) != 0) {
+        if (yukt_size_mul((size_t)length, (size_t)list->stride, &nbytes) != 0) {
             die("out of memory");
         }
         payload = yukt_alloc_size(yukt_pad16(nbytes));
@@ -292,6 +329,53 @@ YuktList* yukt_list_new(int64_t length, int64_t kind) {
     }
     yukt_track(YUKT_ALLOC_LIST, list, payload);
     return list;
+}
+
+YuktList* yukt_list_new_rec(int64_t length, int64_t stride) {
+    if (length < 0) {
+        die("negative list length");
+    }
+    if (stride <= 0) {
+        die("invalid record stride");
+    }
+    YuktList* list = (YuktList*)calloc(1, sizeof(YuktList));
+    if (list == NULL) {
+        die("out of memory");
+    }
+    list->length = length;
+    list->kind = 5;
+    list->stride = stride;
+    size_t payload = 0;
+    if (length > 0) {
+        size_t nbytes = 0;
+        if (yukt_size_mul((size_t)length, (size_t)stride, &nbytes) != 0) {
+            die("out of memory");
+        }
+        payload = yukt_alloc_size(yukt_pad16(nbytes));
+        list->data = yukt_alloc_aligned_zero(payload);
+    }
+    yukt_track(YUKT_ALLOC_LIST, list, payload);
+    return list;
+}
+
+void yukt_list_set_rec(YuktList* list, int64_t index, const void* src, int64_t stride) {
+    if (list == NULL || list->kind != 5 || src == NULL || index < 0 || index >= list->length) {
+        die("list index out of range");
+    }
+    if (stride != list->stride || list->data == NULL) {
+        die("record list layout mismatch");
+    }
+    memcpy((char*)list->data + (size_t)index * (size_t)stride, src, (size_t)stride);
+}
+
+void yukt_list_get_rec(const YuktList* list, int64_t index, void* dest, int64_t stride) {
+    if (list == NULL || list->kind != 5 || dest == NULL || index < 0 || index >= list->length) {
+        die("list index out of range");
+    }
+    if (stride != list->stride || list->data == NULL) {
+        die("record list layout mismatch");
+    }
+    memcpy(dest, (const char*)list->data + (size_t)index * (size_t)stride, (size_t)stride);
 }
 
 void yukt_list_set_i64(YuktList* list, int64_t index, int64_t value) {
@@ -766,9 +850,9 @@ static YuktList* yukt_list_clone_range(const YuktList* src, int64_t start, int64
     if (src == NULL) {
         return yukt_list_new(0, 0);
     }
-    YuktList* dest = yukt_list_new(length, src->kind);
+    YuktList* dest = src->kind == 5 ? yukt_list_new_rec(length, src->stride) : yukt_list_new(length, src->kind);
     if (length > 0 && src->data != NULL && dest->data != NULL) {
-        const size_t esz = element_size(src->kind);
+        const size_t esz = element_size_of(src);
         size_t bytes = 0;
         if (yukt_size_mul((size_t)length, esz, &bytes) != 0) {
             die("out of memory");
@@ -831,13 +915,23 @@ void yukt_list_reverse(YuktList* dest) {
     if (dest == NULL || dest->length <= 1 || dest->data == NULL) {
         return;
     }
-    const size_t esz = element_size(dest->kind);
-    char tmp[sizeof(void*)];
+    const size_t esz = element_size_of(dest);
+    if (esz == 0) {
+        return;
+    }
+    char stack_tmp[16];
+    char* tmp = esz <= sizeof(stack_tmp) ? stack_tmp : (char*)malloc(esz);
+    if (tmp == NULL) {
+        die("out of memory");
+    }
     char* data = (char*)dest->data;
     for (int64_t i = 0, j = dest->length - 1; i < j; ++i, --j) {
         memcpy(tmp, data + (size_t)i * esz, esz);
         memcpy(data + (size_t)i * esz, data + (size_t)j * esz, esz);
         memcpy(data + (size_t)j * esz, tmp, esz);
+    }
+    if (tmp != stack_tmp) {
+        free(tmp);
     }
 }
 

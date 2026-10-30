@@ -1,0 +1,8 @@
+record Sample:
+    v: float
+
+create main:
+    a = Sample(0.0)
+    b = Sample(-0.0)
+    say a == b
+    say a != b

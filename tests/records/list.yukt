@@ -1,0 +1,13 @@
+record Point:
+    x: integer
+    y: integer
+
+create main:
+    points = [Point(1, 2), Point(3, 4)]
+    say points
+    say points[0]
+    points[1] = Point(9, 8)
+    say points
+    points[0].x = 7
+    say points
+    say count(points)

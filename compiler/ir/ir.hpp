@@ -19,11 +19,30 @@ enum class IrTypeKind {
     String,
     Void,
     List,
+    Record,
 };
 
 struct IrType {
     IrTypeKind kind = IrTypeKind::Void;
     std::shared_ptr<IrType> element;
+    int record_id = -1;
+};
+
+struct IrRecordField {
+    std::string name;
+    IrType type;
+    std::int64_t offset = 0;
+    std::int64_t size = 0;
+    std::int64_t align = 1;
+};
+
+struct IrRecord {
+    int id = -1;
+    std::string name;
+    std::string identity;
+    std::int64_t size = 0;
+    std::int64_t align = 1;
+    std::vector<IrRecordField> fields;
 };
 
 bool operator==(const IrType& left, const IrType& right);
@@ -35,6 +54,7 @@ IrType ir_bool();
 IrType ir_string();
 IrType ir_void();
 IrType ir_list(IrType element);
+IrType ir_record(int record_id);
 IrType ir_type_from(const Type& type);
 std::string ir_type_name(const IrType& type);
 int list_elem_kind(const IrType& type);
@@ -90,6 +110,9 @@ enum class IrOp {
     Zeros,
     ParallelFor,
     Say,
+    RecordNew,
+    FieldGet,
+    FieldSet,
 };
 
 struct IrInst {
@@ -100,6 +123,7 @@ struct IrInst {
     std::string name;
     std::vector<IrValue> args;
     std::int64_t work = 1;
+    int field_index = -1;
     std::string reduce_local;
     IrBinOp reduce_bin = IrBinOp::Add;
 };
@@ -151,6 +175,7 @@ struct IrFunction {
 struct IrModule {
     std::string source_path;
     std::vector<IrFunction> functions;
+    std::vector<IrRecord> records;
     std::vector<LoopDecision> decisions;
 };
 

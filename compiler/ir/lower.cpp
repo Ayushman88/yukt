@@ -45,6 +45,9 @@ bool expr_mentions(const Expr* expr, const std::string& name) {
     if (const auto* index = dynamic_cast<const IndexExpr*>(expr)) {
         return expr_mentions(index->collection.get(), name) || expr_mentions(index->index.get(), name);
     }
+    if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
+        return expr_mentions(field->object.get(), name);
+    }
     return false;
 }
 
@@ -80,6 +83,9 @@ bool has_user_call(const Expr* expr) {
     if (const auto* index = dynamic_cast<const IndexExpr*>(expr)) {
         return has_user_call(index->collection.get()) || has_user_call(index->index.get());
     }
+    if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
+        return has_user_call(field->object.get());
+    }
     return false;
 }
 
@@ -109,6 +115,9 @@ bool expr_allocates(const Expr* expr) {
     }
     if (const auto* index = dynamic_cast<const IndexExpr*>(expr)) {
         return expr_allocates(index->collection.get()) || expr_allocates(index->index.get());
+    }
+    if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
+        return expr_allocates(field->object.get());
     }
     return false;
 }
@@ -145,6 +154,10 @@ void collect_reads(const Expr* expr, std::set<std::string>& names) {
     if (const auto* index = dynamic_cast<const IndexExpr*>(expr)) {
         collect_reads(index->collection.get(), names);
         collect_reads(index->index.get(), names);
+        return;
+    }
+    if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
+        collect_reads(field->object.get(), names);
     }
 }
 
@@ -169,6 +182,9 @@ bool stmt_uses_name(const Stmt* stmt, const std::string& name) {
     if (const auto* index_assign = dynamic_cast<const IndexAssignStmt*>(stmt)) {
         return expr_mentions(index_assign->collection.get(), name) ||
                expr_mentions(index_assign->index.get(), name) || expr_mentions(index_assign->value.get(), name);
+    }
+    if (const auto* field_assign = dynamic_cast<const FieldAssignStmt*>(stmt)) {
+        return expr_mentions(field_assign->object.get(), name) || expr_mentions(field_assign->value.get(), name);
     }
     if (const auto* say = dynamic_cast<const SayStmt*>(stmt)) {
         return expr_mentions(say->value.get(), name);
@@ -280,6 +296,13 @@ bool first_use_is_read(const std::vector<std::unique_ptr<Stmt>>& stmts, const st
         if (const auto* index_assign = dynamic_cast<const IndexAssignStmt*>(stmt.get())) {
             if (expr_mentions(index_assign->collection.get(), name) || expr_mentions(index_assign->index.get(), name) ||
                 expr_mentions(index_assign->value.get(), name)) {
+                seen = true;
+                return true;
+            }
+            continue;
+        }
+        if (const auto* field_assign = dynamic_cast<const FieldAssignStmt*>(stmt.get())) {
+            if (expr_mentions(field_assign->object.get(), name) || expr_mentions(field_assign->value.get(), name)) {
                 seen = true;
                 return true;
             }
@@ -463,7 +486,8 @@ std::int64_t body_work(const std::vector<std::unique_ptr<Stmt>>& stmts,
             work += 1;
             continue;
         }
-        if (dynamic_cast<const IndexAssignStmt*>(stmt.get()) != nullptr) {
+        if (dynamic_cast<const IndexAssignStmt*>(stmt.get()) != nullptr ||
+            dynamic_cast<const FieldAssignStmt*>(stmt.get()) != nullptr) {
             work += 2;
             continue;
         }
@@ -587,6 +611,12 @@ bool reduction_used_unsafely(const std::vector<std::unique_ptr<Stmt>>& stmts, co
             }
             continue;
         }
+        if (const auto* field_assign = dynamic_cast<const FieldAssignStmt*>(stmt.get())) {
+            if (expr_mentions(field_assign->object.get(), name) || expr_mentions(field_assign->value.get(), name)) {
+                return true;
+            }
+            continue;
+        }
         if (stmt_uses_name(stmt.get(), name)) {
             return true;
         }
@@ -623,6 +653,40 @@ void collect_loop_effects(const std::vector<std::unique_ptr<Stmt>>& stmts, const
             collect_reads(index_assign->index.get(), reads);
             collect_reads(index_assign->value.get(), reads);
             continue;
+        }
+        if (const auto* field_assign = dynamic_cast<const FieldAssignStmt*>(stmt.get())) {
+            const Expr* cursor = field_assign->object.get();
+            const IndexExpr* indexed = nullptr;
+            while (const auto* field = dynamic_cast<const FieldExpr*>(cursor)) {
+                cursor = field->object.get();
+            }
+            indexed = dynamic_cast<const IndexExpr*>(cursor);
+            if (indexed != nullptr) {
+                const auto* collection = dynamic_cast<const IdentifierExpr*>(indexed->collection.get());
+                if (collection == nullptr || !expr_mentions(indexed->index.get(), iterator) ||
+                    has_user_call(indexed->index.get()) || has_user_call(field_assign->value.get())) {
+                    ok = false;
+                    reason = "list write is not indexed solely by this iterator";
+                    return;
+                }
+                reads.insert(collection->name);
+                collect_reads(indexed->index.get(), reads);
+                collect_reads(field_assign->value.get(), reads);
+                continue;
+            }
+            if (const auto* ident = dynamic_cast<const IdentifierExpr*>(cursor)) {
+                if (has_user_call(field_assign->value.get())) {
+                    ok = false;
+                    reason = "body contains a user function call";
+                    return;
+                }
+                assigned.insert(ident->name);
+                collect_reads(field_assign->value.get(), reads);
+                continue;
+            }
+            ok = false;
+            reason = "body contains a statement that is not known to be independent";
+            return;
         }
         if (dynamic_cast<const SayStmt*>(stmt.get()) != nullptr) {
             ok = false;
@@ -679,6 +743,13 @@ private:
     void lower_statement(const Stmt* stmt);
     void lower_assignment(const AssignStmt& stmt);
     void lower_index_assign(const IndexAssignStmt& stmt);
+    void lower_field_assign(const FieldAssignStmt& stmt);
+    IrValue read_place(const Expr* expr);
+    void write_place(const Expr* expr, const IrValue& value);
+    int field_index_of(int record_id, const std::string& name) const;
+    IrValue emit_field_get(const IrValue& object, const std::string& field, IrType type);
+    IrValue emit_field_set(const IrValue& object, const std::string& field, const IrValue& value);
+    void copy_records();
     void lower_say(const SayStmt& stmt);
     void lower_give(const GiveStmt& stmt);
     void lower_expr_stmt(const ExprStmt& stmt);
@@ -760,6 +831,7 @@ Lowerer::Lowerer(const ModuleGraph& graph, const SemanticInfo& semantic)
 }
 
 IrModule Lowerer::run() {
+    copy_records();
     for (const Program* program : programs_) {
         program_ = program;
         for (const auto& function : program->functions) {
@@ -862,6 +934,10 @@ void Lowerer::lower_statement(const Stmt* stmt) {
         lower_index_assign(*index_assign);
         return;
     }
+    if (const auto* field_assign = dynamic_cast<const FieldAssignStmt*>(stmt)) {
+        lower_field_assign(*field_assign);
+        return;
+    }
     if (const auto* say = dynamic_cast<const SayStmt*>(stmt)) {
         lower_say(*say);
         return;
@@ -897,6 +973,105 @@ void Lowerer::lower_index_assign(const IndexAssignStmt& stmt) {
     inst.args.push_back(lower_expression(stmt.index.get()));
     inst.args.push_back(lower_expression(stmt.value.get()));
     emit(std::move(inst));
+}
+
+void Lowerer::copy_records() {
+    module_.records.clear();
+    for (const auto& record : semantic_.records) {
+        IrRecord ir;
+        ir.id = record.id;
+        ir.name = record.name;
+        ir.identity = record.identity;
+        ir.size = record.size;
+        ir.align = record.align;
+        for (const auto& field : record.fields) {
+            IrRecordField ir_field;
+            ir_field.name = field.name;
+            ir_field.type = ir_type_from(field.type);
+            ir_field.offset = field.offset;
+            ir_field.size = field.size;
+            ir_field.align = field.align;
+            ir.fields.push_back(std::move(ir_field));
+        }
+        module_.records.push_back(std::move(ir));
+    }
+}
+
+int Lowerer::field_index_of(int record_id, const std::string& name) const {
+    for (const auto& record : semantic_.records) {
+        if (record.id != record_id) {
+            continue;
+        }
+        for (int i = 0; i < static_cast<int>(record.fields.size()); ++i) {
+            if (record.fields[static_cast<std::size_t>(i)].name == name) {
+                return i;
+            }
+        }
+    }
+    return -1;
+}
+
+IrValue Lowerer::emit_field_get(const IrValue& object, const std::string& field, IrType type) {
+    IrInst inst;
+    inst.op = IrOp::FieldGet;
+    inst.name = field;
+    inst.field_index = field_index_of(object.type.record_id, field);
+    inst.args.push_back(object);
+    inst.dest = make_temp(type);
+    emit(inst);
+    return inst.dest;
+}
+
+IrValue Lowerer::emit_field_set(const IrValue& object, const std::string& field, const IrValue& value) {
+    IrInst inst;
+    inst.op = IrOp::FieldSet;
+    inst.name = field;
+    inst.field_index = field_index_of(object.type.record_id, field);
+    inst.args.push_back(object);
+    inst.args.push_back(value);
+    inst.dest = make_temp(object.type);
+    emit(inst);
+    return inst.dest;
+}
+
+IrValue Lowerer::read_place(const Expr* expr) {
+    if (const auto* ident = dynamic_cast<const IdentifierExpr*>(expr)) {
+        return emit_load(ident->name);
+    }
+    if (const auto* index = dynamic_cast<const IndexExpr*>(expr)) {
+        return lower_index(*index);
+    }
+    if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
+        return emit_field_get(read_place(field->object.get()), field->field, type_of(expr));
+    }
+    return lower_expression(expr);
+}
+
+void Lowerer::write_place(const Expr* expr, const IrValue& value) {
+    if (const auto* ident = dynamic_cast<const IdentifierExpr*>(expr)) {
+        ensure_local(ident->name, value.type);
+        emit_store(ident->name, value);
+        return;
+    }
+    if (const auto* index = dynamic_cast<const IndexExpr*>(expr)) {
+        IrInst inst;
+        inst.op = IrOp::ListSet;
+        inst.args.push_back(lower_expression(index->collection.get()));
+        inst.args.push_back(lower_expression(index->index.get()));
+        inst.args.push_back(value);
+        emit(std::move(inst));
+        return;
+    }
+    if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
+        const IrValue parent = read_place(field->object.get());
+        write_place(field->object.get(), emit_field_set(parent, field->field, value));
+    }
+}
+
+void Lowerer::lower_field_assign(const FieldAssignStmt& stmt) {
+    const IrValue value = lower_expression(stmt.value.get());
+    const IrValue parent = read_place(stmt.object.get());
+    write_place(stmt.object.get(), emit_field_set(parent, stmt.field, value));
 }
 
 void Lowerer::lower_say(const SayStmt& stmt) {
@@ -1118,6 +1293,13 @@ bool Lowerer::stmts_allocate(const std::vector<std::unique_ptr<Stmt>>& stmts) co
         if (const auto* index_assign = dynamic_cast<const IndexAssignStmt*>(stmt.get())) {
             if (expr_allocates(index_assign->index.get()) || expr_allocates(index_assign->value.get()) ||
                 expr_is_string_concat(index_assign->index.get()) || expr_is_string_concat(index_assign->value.get())) {
+                return true;
+            }
+            continue;
+        }
+        if (const auto* field_assign = dynamic_cast<const FieldAssignStmt*>(stmt.get())) {
+            if (expr_allocates(field_assign->object.get()) || expr_allocates(field_assign->value.get()) ||
+                expr_is_string_concat(field_assign->object.get()) || expr_is_string_concat(field_assign->value.get())) {
                 return true;
             }
             continue;
@@ -1389,6 +1571,9 @@ IrValue Lowerer::lower_expression(const Expr* expr) {
     if (const auto* index = dynamic_cast<const IndexExpr*>(expr)) {
         return lower_index(*index);
     }
+    if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
+        return emit_field_get(lower_expression(field->object.get()), field->field, type_of(expr));
+    }
     IrValue value;
     value.kind = IrValue::Kind::Undef;
     return value;
@@ -1492,6 +1677,24 @@ IrValue Lowerer::lower_call(const CallExpr& expr) {
             inst.args.push_back(lower_expression(expr.arguments[0].get()));
         }
         inst.dest = make_temp(ir_list(ir_i64()));
+        emit(inst);
+        return inst.dest;
+    }
+
+    if (const auto found = semantic_.record_constructors.find(&expr); found != semantic_.record_constructors.end()) {
+        IrInst inst;
+        inst.op = IrOp::RecordNew;
+        inst.name = "record";
+        for (const auto& record : semantic_.records) {
+            if (record.id == found->second) {
+                inst.name = record.identity;
+                break;
+            }
+        }
+        for (const auto& argument : expr.arguments) {
+            inst.args.push_back(lower_expression(argument.get()));
+        }
+        inst.dest = make_temp(ir_record(found->second));
         emit(inst);
         return inst.dest;
     }

@@ -47,6 +47,10 @@ The caches and the allocation tracker are **not locked**. The 0.11 compiler refu
 
 `yukt_reduce_i64` / `yukt_reduce_f64` combine chunk partials under a mutex. Signed integer overflow in the combine is undefined (C `int64_t`). Float combines follow the language rule: association and rounding may differ by chunking and CPU count. See `docs/LANGUAGE_SPEC.md` (Numerical semantics).
 
+## Record list elements (0.13.1)
+
+`YuktList.kind == 5` stores record values packed at `YuktList.stride` bytes per element. Payload allocation still uses the size-class cache and 16-byte alignment. Index get/set copies `stride` bytes and traps on an out-of-range index. This does not change allocator caps, slot counts, or parallelization rules. Record values themselves are not heap objects.
+
 ## Standard-library primitives (0.12.1)
 
 `std/str`, `std/list`, `std/sort`, `std/math`, and empty-list traps in `std/stat` call C helpers in this runtime. They use the same tracker and size-class caches. They do not free during `yukt_main`. Generated programs link `-lm` for libm.

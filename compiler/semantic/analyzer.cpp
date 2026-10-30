@@ -4,9 +4,12 @@
 #include "lexer/token.hpp"
 
 #include <algorithm>
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <ostream>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace yukt {
@@ -41,6 +44,7 @@ enum class ConstraintKind {
     Plus,
     Comparable,
     NumericList,
+    Field,
 };
 
 struct Constraint {
@@ -48,6 +52,8 @@ struct Constraint {
     ConstraintKind kind = ConstraintKind::Numeric;
     SourceLocation location;
     std::string operator_text;
+    std::string field_name;
+    Type field_type;
 };
 
 struct NonVoidUse {
@@ -66,7 +72,11 @@ public:
 
 private:
     void collect_functions();
+    void collect_records();
     void collect_aliases();
+    void resolve_record_fields();
+    void compute_record_layouts();
+    void check_shared_signatures();
     void analyze_functions();
     std::string ir_name_for(int module_index, const FunctionDecl& function) const;
     const Program* module_program(int index) const;
@@ -77,10 +87,12 @@ private:
     void require_main();
     void require_non_void(Type type, SourceLocation location, std::string detail, std::string suggestion);
     void add_constraint(Type type, ConstraintKind kind, SourceLocation location, std::string operator_text);
+    void add_field_constraint(Type object, std::string field, Type field_type, SourceLocation location);
     void analyze_function(FunctionSymbol& function);
     void analyze_statement(const Stmt* stmt);
     void analyze_assignment(const AssignStmt& stmt);
     void analyze_index_assign(const IndexAssignStmt& stmt);
+    void analyze_field_assign(const FieldAssignStmt& stmt);
     void analyze_say(const SayStmt& stmt);
     void analyze_give(const GiveStmt& stmt);
     void analyze_expr_stmt(const ExprStmt& stmt);
@@ -91,8 +103,16 @@ private:
     Type analyze_unary(const UnaryExpr& expr);
     Type analyze_binary(const BinaryExpr& expr);
     Type analyze_call(const CallExpr& expr, bool result_used);
+    Type analyze_constructor(RecordInfo& record, const CallExpr& expr);
     Type analyze_stdlib_call(FunctionSymbol& function, const CallExpr& expr, bool result_used);
     Type analyze_list(const ListExpr& expr);
+    Type analyze_field(const FieldExpr& expr);
+    Type resolve_type_name(const TypeName& name, int module_index, bool in_shared_record);
+    RecordInfo* lookup_record(int module_index, const std::string& name);
+    RecordInfo* lookup_shared_record(int module_index, const std::string& name);
+    bool type_contains_private_record(Type type, int module_index);
+    static std::int64_t align_up(std::int64_t n, std::int64_t a);
+    bool field_abi(Type type, std::int64_t& size, std::int64_t& align);
 
     bool declare_local(const std::string& name, Type type, SourceLocation location, bool iterator);
     Symbol* lookup_local(const std::string& name);
@@ -113,6 +133,9 @@ private:
     TypeContext types_;
     std::unordered_map<std::string, std::unique_ptr<FunctionSymbol>> functions_;
     std::vector<std::unordered_map<std::string, FunctionSymbol*>> module_lookup_;
+    std::vector<std::unordered_map<std::string, int>> module_records_;
+    std::vector<RecordInfo> records_;
+    std::unordered_map<const CallExpr*, int> record_constructors_;
     std::vector<std::unordered_map<std::string, int>> aliases_;
     std::unordered_map<const FunctionDecl*, std::string> function_ir_names_;
     std::unordered_map<const CallExpr*, std::string> call_ir_names_;
@@ -146,6 +169,7 @@ bool is_arithmetic(TokenKind op) {
 Analyzer::Analyzer(const Program& program, DiagnosticEngine& diagnostics)
     : program_(program), diagnostics_(diagnostics), single_file_(true) {
     module_lookup_.emplace_back();
+    module_records_.emplace_back();
     aliases_.emplace_back();
 }
 
@@ -153,13 +177,18 @@ Analyzer::Analyzer(const ModuleGraph& graph, DiagnosticEngine& diagnostics)
     : program_(*graph.modules.at(0).program), graph_(&graph), diagnostics_(diagnostics),
       single_file_(graph.modules.size() <= 1 && !graph.has_uses()) {
     module_lookup_.resize(graph.modules.size());
+    module_records_.resize(graph.modules.size());
     aliases_.resize(graph.modules.size());
 }
 
 SemanticInfo Analyzer::run() {
     collect_functions();
+    collect_records();
     collect_aliases();
+    resolve_record_fields();
+    compute_record_layouts();
     analyze_functions();
+    check_shared_signatures();
     check_constraints();
     finalize_functions();
     check_non_void_uses();
@@ -168,6 +197,8 @@ SemanticInfo Analyzer::run() {
     SemanticInfo info;
     info.function_ir_names = function_ir_names_;
     info.call_ir_names = call_ir_names_;
+    info.record_constructors = record_constructors_;
+    info.records = records_;
     const int module_count = graph_ == nullptr ? 1 : static_cast<int>(graph_->modules.size());
     for (int module_index = 0; module_index < module_count; ++module_index) {
         const Program* program = module_program(module_index);
@@ -292,6 +323,70 @@ void Analyzer::collect_functions() {
     }
 }
 
+bool is_builtin_type_name(const std::string& name) {
+    return name == "integer" || name == "float" || name == "boolean" || name == "string" || name == "list";
+}
+
+void Analyzer::collect_records() {
+    const int module_count = graph_ == nullptr ? 1 : static_cast<int>(graph_->modules.size());
+    for (int module_index = 0; module_index < module_count; ++module_index) {
+        const Program* program = module_program(module_index);
+        if (program == nullptr) {
+            continue;
+        }
+        std::string prefix;
+        if (graph_ != nullptr && static_cast<std::size_t>(module_index) < graph_->modules.size()) {
+            prefix = graph_->modules[static_cast<std::size_t>(module_index)].mangle_prefix;
+        }
+        for (const auto& record : program->records) {
+            if (record == nullptr) {
+                continue;
+            }
+            if (is_builtin_type_name(record->name)) {
+                error(record->name_location, "Invalid record",
+                      "Record `" + record->name + "` collides with a builtin type name.",
+                      "Choose a different record name.");
+                continue;
+            }
+            if (record->name == "count" || record->name == "zeros") {
+                error(record->name_location, "Name collision",
+                      "Record `" + record->name + "` collides with a compiler builtin.",
+                      "Choose a different record name.");
+                continue;
+            }
+            if (module_lookup_[static_cast<std::size_t>(module_index)].contains(record->name)) {
+                error(record->name_location, "Name collision",
+                      "Record `" + record->name + "` collides with a function in this file.",
+                      "Choose a different name.");
+                continue;
+            }
+            if (module_records_[static_cast<std::size_t>(module_index)].contains(record->name)) {
+                error(record->name_location, "Duplicate record",
+                      "A record named `" + record->name + "` is already defined.",
+                      "Give this record a different name.");
+                continue;
+            }
+            RecordInfo info;
+            info.id = static_cast<int>(records_.size());
+            info.module_index = module_index;
+            info.shared = record->shared;
+            info.name = record->name;
+            info.identity = prefix.empty() ? record->name : prefix + "$" + record->name;
+            info.decl = record.get();
+            std::unordered_set<std::string> field_names;
+            for (const auto& field : record->fields) {
+                if (!field_names.insert(field.name).second) {
+                    error(field.name_location, "Duplicate field",
+                          "Field `" + field.name + "` is already declared on `" + record->name + "`.",
+                          "Give this field a different name.");
+                }
+            }
+            module_records_[static_cast<std::size_t>(module_index)].emplace(record->name, info.id);
+            records_.push_back(std::move(info));
+        }
+    }
+}
+
 void Analyzer::collect_aliases() {
     const int module_count = graph_ == nullptr ? 1 : static_cast<int>(graph_->modules.size());
     for (int module_index = 0; module_index < module_count; ++module_index) {
@@ -317,6 +412,12 @@ void Analyzer::collect_aliases() {
                       "Choose a different alias with `as`.");
                 continue;
             }
+            if (module_records_[static_cast<std::size_t>(module_index)].contains(use.alias)) {
+                error(use.alias_location, "Name collision",
+                      "Alias `" + use.alias + "` collides with a record in this file.",
+                      "Choose a different alias with `as`.");
+                continue;
+            }
             if (aliases_[static_cast<std::size_t>(module_index)].contains(use.alias)) {
                 error(use.alias_location, "Duplicate alias",
                       "Alias `" + use.alias + "` is already used in this file.",
@@ -332,6 +433,276 @@ void Analyzer::collect_aliases() {
             }
             aliases_[static_cast<std::size_t>(module_index)].emplace(use.alias, target);
         }
+    }
+}
+
+RecordInfo* Analyzer::lookup_record(int module_index, const std::string& name) {
+    if (module_index < 0 || static_cast<std::size_t>(module_index) >= module_records_.size()) {
+        return nullptr;
+    }
+    auto found = module_records_[static_cast<std::size_t>(module_index)].find(name);
+    if (found == module_records_[static_cast<std::size_t>(module_index)].end()) {
+        return nullptr;
+    }
+    if (found->second < 0 || static_cast<std::size_t>(found->second) >= records_.size()) {
+        return nullptr;
+    }
+    return &records_[static_cast<std::size_t>(found->second)];
+}
+
+RecordInfo* Analyzer::lookup_shared_record(int module_index, const std::string& name) {
+    RecordInfo* record = lookup_record(module_index, name);
+    if (record == nullptr || !record->shared) {
+        return nullptr;
+    }
+    return record;
+}
+
+std::int64_t Analyzer::align_up(std::int64_t n, std::int64_t a) {
+    if (a <= 1) {
+        return n;
+    }
+    return (n + a - 1) & ~(a - 1);
+}
+
+Type Analyzer::resolve_type_name(const TypeName& name, int module_index, bool in_shared_record) {
+    if (name.name.empty()) {
+        return types_.fresh_variable();
+    }
+    if (name.qualifier.empty()) {
+        if (name.name == "integer") {
+            return integer_type();
+        }
+        if (name.name == "float") {
+            return float_type();
+        }
+        if (name.name == "boolean") {
+            return boolean_type();
+        }
+        if (name.name == "string" || name.name == "list") {
+            error(name.name_location, "Invalid record",
+                  "Field type `" + name.name + "` is a heap type and is not allowed on records in 0.13.1.",
+                  "Use `integer`, `float`, `boolean`, or a nested record. Heap fields wait for 0.13.2.");
+            return types_.fresh_variable();
+        }
+        RecordInfo* record = lookup_record(module_index, name.name);
+        if (record == nullptr) {
+            error(name.name_location, "Unknown name",
+                  "`" + name.name + "` is not a type in this file.",
+                  "Use `integer`, `float`, `boolean`, or a record declared in this file.");
+            return types_.fresh_variable();
+        }
+        if (in_shared_record && !record->shared) {
+            error(name.name_location, "Private type",
+                  "Shared record fields cannot use private record `" + record->name + "`.",
+                  "Export `" + record->name + "` with `share record`, or keep both records private.");
+        }
+        return record_type(record->id, record->name);
+    }
+
+    const auto alias = aliases_[static_cast<std::size_t>(module_index)].find(name.qualifier);
+    if (alias == aliases_[static_cast<std::size_t>(module_index)].end()) {
+        error(name.dot_location.line == 0 ? name.name_location : name.dot_location, "Unknown module",
+              "`" + name.qualifier + "` is not an imported module.",
+              "Add `use " + name.qualifier + "` or fix the alias.");
+        return types_.fresh_variable();
+    }
+    RecordInfo* record = lookup_record(alias->second, name.name);
+    if (record == nullptr) {
+        error(name.name_location, "Unknown name",
+              "`" + name.qualifier + "." + name.name + "` is not a record.",
+              "Import a module that shares this record.");
+        return types_.fresh_variable();
+    }
+    if (!record->shared) {
+        error(name.name_location, "Private type",
+              "`" + name.qualifier + "." + name.name + "` is a private record.",
+              "Export it with `share record " + name.name + "`.");
+        return types_.fresh_variable();
+    }
+    return record_type(record->id, record->name);
+}
+
+void Analyzer::resolve_record_fields() {
+    for (auto& record : records_) {
+        if (record.decl == nullptr) {
+            continue;
+        }
+        record.fields.clear();
+        for (const auto& field : record.decl->fields) {
+            RecordFieldInfo info;
+            info.name = field.name;
+            info.location = field.name_location;
+            info.type = resolve_type_name(field.type, record.module_index, record.shared);
+            record.fields.push_back(std::move(info));
+        }
+    }
+}
+
+bool Analyzer::field_abi(Type type, std::int64_t& size, std::int64_t& align) {
+    type = types_.prune(type);
+    switch (type.kind) {
+        case TypeKind::Integer:
+        case TypeKind::Float:
+            size = 8;
+            align = 8;
+            return true;
+        case TypeKind::Boolean:
+            size = 1;
+            align = 1;
+            return true;
+        case TypeKind::Record:
+            if (type.record_id < 0 || static_cast<std::size_t>(type.record_id) >= records_.size()) {
+                return false;
+            }
+            if (!records_[static_cast<std::size_t>(type.record_id)].layout_ready) {
+                return false;
+            }
+            size = records_[static_cast<std::size_t>(type.record_id)].size;
+            align = records_[static_cast<std::size_t>(type.record_id)].align;
+            return true;
+        default:
+            return false;
+    }
+}
+
+void Analyzer::compute_record_layouts() {
+    const int n = static_cast<int>(records_.size());
+    std::vector<std::vector<int>> edges(static_cast<std::size_t>(n));
+    std::vector<std::vector<int>> field_edge(static_cast<std::size_t>(n));
+    for (int i = 0; i < n; ++i) {
+        for (int f = 0; f < static_cast<int>(records_[static_cast<std::size_t>(i)].fields.size()); ++f) {
+            const Type field_type = types_.prune(records_[static_cast<std::size_t>(i)].fields[static_cast<std::size_t>(f)].type);
+            if (field_type.kind == TypeKind::Record && field_type.record_id >= 0 && field_type.record_id < n) {
+                edges[static_cast<std::size_t>(i)].push_back(field_type.record_id);
+                field_edge[static_cast<std::size_t>(i)].push_back(f);
+            }
+        }
+    }
+
+    enum class Color { White, Gray, Black };
+    std::vector<Color> color(static_cast<std::size_t>(n), Color::White);
+    std::vector<int> parent(static_cast<std::size_t>(n), -1);
+    std::vector<int> parent_field(static_cast<std::size_t>(n), -1);
+    std::vector<int> order;
+    bool cyclic = false;
+
+    std::function<void(int)> dfs = [&](int node) {
+        color[static_cast<std::size_t>(node)] = Color::Gray;
+        for (std::size_t e = 0; e < edges[static_cast<std::size_t>(node)].size(); ++e) {
+            const int next = edges[static_cast<std::size_t>(node)][e];
+            if (color[static_cast<std::size_t>(next)] == Color::Gray) {
+                cyclic = true;
+                const int field_i = field_edge[static_cast<std::size_t>(node)][e];
+                SourceLocation loc = records_[static_cast<std::size_t>(node)].decl != nullptr
+                                         ? records_[static_cast<std::size_t>(node)].decl->name_location
+                                         : SourceLocation{};
+                if (field_i >= 0 && static_cast<std::size_t>(field_i) < records_[static_cast<std::size_t>(node)].fields.size()) {
+                    loc = records_[static_cast<std::size_t>(node)].fields[static_cast<std::size_t>(field_i)].location;
+                }
+                std::string cycle = records_[static_cast<std::size_t>(next)].name;
+                int walk = node;
+                std::vector<std::string> parts;
+                parts.push_back(records_[static_cast<std::size_t>(node)].name);
+                while (walk >= 0 && walk != next) {
+                    parts.push_back(records_[static_cast<std::size_t>(walk)].name);
+                    walk = parent[static_cast<std::size_t>(walk)];
+                    if (static_cast<int>(parts.size()) > n + 1) {
+                        break;
+                    }
+                }
+                parts.push_back(records_[static_cast<std::size_t>(next)].name);
+                std::string listed;
+                for (int p = static_cast<int>(parts.size()) - 1; p >= 0; --p) {
+                    if (!listed.empty()) {
+                        listed += " -> ";
+                    }
+                    listed += parts[static_cast<std::size_t>(p)];
+                }
+                error(loc, "Recursive record",
+                      "Record types cannot form a cycle.",
+                      "Remove the recursive field.",
+                      {{loc, "cycle: " + (listed.empty() ? cycle : listed)}});
+            } else if (color[static_cast<std::size_t>(next)] == Color::White) {
+                parent[static_cast<std::size_t>(next)] = node;
+                parent_field[static_cast<std::size_t>(next)] = field_edge[static_cast<std::size_t>(node)][e];
+                dfs(next);
+            }
+        }
+        color[static_cast<std::size_t>(node)] = Color::Black;
+        order.push_back(node);
+    };
+
+    for (int i = 0; i < n; ++i) {
+        if (color[static_cast<std::size_t>(i)] == Color::White) {
+            dfs(i);
+        }
+    }
+    if (cyclic) {
+        return;
+    }
+
+    for (int node : order) {
+        RecordInfo& record = records_[static_cast<std::size_t>(node)];
+        std::int64_t offset = 0;
+        std::int64_t rec_align = 1;
+        bool ok = true;
+        for (auto& field : record.fields) {
+            std::int64_t size = 0;
+            std::int64_t align = 1;
+            if (!field_abi(field.type, size, align)) {
+                ok = false;
+                break;
+            }
+            offset = align_up(offset, align);
+            field.offset = offset;
+            field.size = size;
+            field.align = align;
+            offset += size;
+            if (align > rec_align) {
+                rec_align = align;
+            }
+        }
+        if (!ok) {
+            continue;
+        }
+        record.align = rec_align < 1 ? 1 : rec_align;
+        record.size = align_up(offset, record.align);
+        record.layout_ready = true;
+    }
+}
+
+bool Analyzer::type_contains_private_record(Type type, int module_index) {
+    type = types_.prune(type);
+    if (type.kind == TypeKind::List && type.element != nullptr) {
+        return type_contains_private_record(*type.element, module_index);
+    }
+    if (type.kind != TypeKind::Record || type.record_id < 0 ||
+        static_cast<std::size_t>(type.record_id) >= records_.size()) {
+        return false;
+    }
+    const RecordInfo& record = records_[static_cast<std::size_t>(type.record_id)];
+    (void)module_index;
+    return !record.shared;
+}
+
+void Analyzer::check_shared_signatures() {
+    for (const auto& [ir_name, symbol] : functions_) {
+        if (symbol == nullptr || symbol->decl == nullptr || !symbol->decl->shared) {
+            continue;
+        }
+        auto check_type = [&](Type type, SourceLocation location, const std::string& where) {
+            if (type_contains_private_record(type, symbol->module_index)) {
+                error(location, "Private type",
+                      "Shared function `" + symbol->decl->name + "` " + where + " a private record.",
+                      "Export the record with `share record`, or keep the function private.");
+            }
+        };
+        for (std::size_t i = 0; i < symbol->parameters.size(); ++i) {
+            SourceLocation loc = symbol->decl->name_location;
+            check_type(symbol->parameters[i], loc, "uses");
+        }
+        check_type(symbol->return_type, symbol->decl->name_location, "gives");
     }
 }
 
@@ -444,6 +815,47 @@ void Analyzer::check_constraints() {
                 error(constraint.location, "Type mismatch",
                       "`sort` requires a list of integers or floats, not " + types_.to_string(resolved) + ".",
                       "Pass `list[integer]` or `list[float]`.");
+                break;
+            }
+            case ConstraintKind::Field: {
+                if (resolved.kind == TypeKind::Variable) {
+                    error(constraint.location, "Cannot infer type",
+                          "`.` is used on a value whose type was never inferred.",
+                          "Construct a record, or pass a record into this function.");
+                    break;
+                }
+                if (resolved.kind != TypeKind::Record || resolved.record_id < 0 ||
+                    static_cast<std::size_t>(resolved.record_id) >= records_.size()) {
+                    error(constraint.location, "Invalid expression",
+                          "`.` is field access or a module call, not valid on " + types_.to_string(resolved) + ".",
+                          "Access a field of a record, for example `point.x`.");
+                    break;
+                }
+                const RecordInfo& record = records_[static_cast<std::size_t>(resolved.record_id)];
+                const RecordFieldInfo* field = nullptr;
+                std::string known;
+                for (const auto& candidate : record.fields) {
+                    if (!known.empty()) {
+                        known += ", ";
+                    }
+                    known += candidate.name;
+                    if (candidate.name == constraint.field_name) {
+                        field = &candidate;
+                    }
+                }
+                if (field == nullptr) {
+                    error(constraint.location, "Unknown field",
+                          "`" + record.name + "` has no field `" + constraint.field_name + "`.",
+                          known.empty() ? "Check the record declaration." : "Known fields: " + known + ".");
+                    break;
+                }
+                if (!types_.unify(constraint.field_type, field->type)) {
+                    error(constraint.location, "Type mismatch",
+                          "Field `" + record.name + "." + constraint.field_name + "` has type " +
+                              types_.to_string(field->type) + ", but this use has type " +
+                              types_.to_string(constraint.field_type) + ".",
+                          "Use a value of type " + types_.to_string(field->type) + ".");
+                }
                 break;
             }
         }
@@ -566,6 +978,10 @@ void Analyzer::analyze_statement(const Stmt* stmt) {
         analyze_index_assign(*index_assign);
         return;
     }
+    if (const auto* field_assign = dynamic_cast<const FieldAssignStmt*>(stmt)) {
+        analyze_field_assign(*field_assign);
+        return;
+    }
     if (const auto* say = dynamic_cast<const SayStmt*>(stmt)) {
         analyze_say(*say);
         return;
@@ -593,6 +1009,13 @@ void Analyzer::analyze_assignment(const AssignStmt& stmt) {
         error(stmt.name_location, "Name collision",
               "`" + stmt.name + "` is a function and cannot be assigned.",
               "Use a different variable name.");
+        analyze_expression(stmt.value.get());
+        return;
+    }
+    if (lookup_record(current_module_, stmt.name) != nullptr) {
+        error(stmt.name_location, "Name collision",
+              "`" + stmt.name + "` is a record type and cannot be assigned.",
+              "Construct it with `" + stmt.name + "(...)`, or choose a different variable name.");
         analyze_expression(stmt.value.get());
         return;
     }
@@ -644,6 +1067,49 @@ void Analyzer::analyze_index_assign(const IndexAssignStmt& stmt) {
         error(stmt.span.start, "Type mismatch",
               "Cannot store " + types_.to_string(value) + " in a list of " + types_.to_string(element) + ".",
               "Store a value that matches the list element type.");
+    }
+}
+
+void Analyzer::analyze_field_assign(const FieldAssignStmt& stmt) {
+    const Type object = analyze_expression(stmt.object.get());
+    const Type value = analyze_expression(stmt.value.get());
+    const Type resolved = types_.prune(object);
+    if (resolved.kind == TypeKind::Variable) {
+        add_field_constraint(object, stmt.field, value, stmt.field_location);
+        return;
+    }
+    if (resolved.kind != TypeKind::Record) {
+        error(stmt.field_location, "Invalid expression",
+              "`.` is field access or a module call, not valid on " + types_.to_string(object) + ".",
+              "Access a field of a record, for example `point.x = 1`.");
+        return;
+    }
+    if (resolved.record_id < 0 || static_cast<std::size_t>(resolved.record_id) >= records_.size()) {
+        return;
+    }
+    const RecordInfo& record = records_[static_cast<std::size_t>(resolved.record_id)];
+    const RecordFieldInfo* field = nullptr;
+    std::string known;
+    for (const auto& candidate : record.fields) {
+        if (!known.empty()) {
+            known += ", ";
+        }
+        known += candidate.name;
+        if (candidate.name == stmt.field) {
+            field = &candidate;
+        }
+    }
+    if (field == nullptr) {
+        error(stmt.field_location, "Unknown field",
+              "`" + record.name + "` has no field `" + stmt.field + "`.",
+              known.empty() ? "Check the record declaration." : "Known fields: " + known + ".");
+        return;
+    }
+    if (!types_.unify(value, field->type)) {
+        error(stmt.span.start, "Type mismatch",
+              "Field `" + record.name + "." + stmt.field + "` has type " + types_.to_string(field->type) +
+                  ", but this assignment has type " + types_.to_string(value) + ".",
+              "Assign a value of type " + types_.to_string(field->type) + ".");
     }
 }
 
@@ -709,6 +1175,11 @@ void Analyzer::analyze_repeat(const RepeatStmt& stmt) {
               "`" + stmt.iterator + "` is a function and cannot be a loop variable.",
               "Choose a different loop variable name.");
     }
+    if (lookup_record(current_module_, stmt.iterator) != nullptr) {
+        error(stmt.iterator_location, "Name collision",
+              "`" + stmt.iterator + "` is a record type and cannot be a loop variable.",
+              "Choose a different loop variable name.");
+    }
 
     push_scope();
     if (!declare_local(stmt.iterator, integer_type(), stmt.iterator_location, true)) {
@@ -759,6 +1230,19 @@ Type Analyzer::analyze_expression_body(const Expr* expr) {
                   "Write `" + name->name + "(...)`.");
             return types_.fresh_variable();
         }
+        if (lookup_record(current_module_, name->name) != nullptr) {
+            error(name->span.start, "Invalid expression",
+                  "`" + name->name + "` is a record type. Construct it with `()`.",
+                  "Write `" + name->name + "(...)`.");
+            return types_.fresh_variable();
+        }
+        if (current_module_ >= 0 && static_cast<std::size_t>(current_module_) < aliases_.size() &&
+            aliases_[static_cast<std::size_t>(current_module_)].contains(name->name)) {
+            error(name->span.start, "Invalid expression",
+                  "`" + name->name + "` is a module, not a value.",
+                  "Call a shared name such as `" + name->name + ".name(...)`.");
+            return types_.fresh_variable();
+        }
         error(name->span.start, "Unknown name",
               "`" + name->name + "` is not defined in this scope.",
               "Assign it before use, or check for a typo.");
@@ -794,7 +1278,58 @@ Type Analyzer::analyze_expression_body(const Expr* expr) {
         }
         return element;
     }
+    if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
+        return analyze_field(*field);
+    }
     return types_.fresh_variable();
+}
+
+Type Analyzer::analyze_field(const FieldExpr& expr) {
+    if (const auto* name = dynamic_cast<const IdentifierExpr*>(expr.object.get())) {
+        if (lookup_local(name->name) == nullptr &&
+            current_module_ >= 0 && static_cast<std::size_t>(current_module_) < aliases_.size() &&
+            aliases_[static_cast<std::size_t>(current_module_)].contains(name->name)) {
+            error(expr.field_location, "Invalid expression",
+                  "`" + name->name + "` is a module, not a value.",
+                  "Call a shared name such as `" + name->name + "." + expr.field + "(...)`.");
+            return types_.fresh_variable();
+        }
+    }
+    const Type object = analyze_expression(expr.object.get());
+    const Type resolved = types_.prune(object);
+    if (resolved.kind != TypeKind::Record) {
+        if (resolved.kind == TypeKind::Variable) {
+            Type result = types_.fresh_variable();
+            add_field_constraint(object, expr.field, result, expr.field_location);
+            return result;
+        }
+        error(expr.field_location, "Invalid expression",
+              "`.` is field access or a module call, not valid on " + types_.to_string(object) + ".",
+              "Access a field of a record, for example `point.x`.");
+        return types_.fresh_variable();
+    }
+    if (resolved.record_id < 0 || static_cast<std::size_t>(resolved.record_id) >= records_.size()) {
+        return types_.fresh_variable();
+    }
+    const RecordInfo& record = records_[static_cast<std::size_t>(resolved.record_id)];
+    const RecordFieldInfo* field = nullptr;
+    std::string known;
+    for (const auto& candidate : record.fields) {
+        if (!known.empty()) {
+            known += ", ";
+        }
+        known += candidate.name;
+        if (candidate.name == expr.field) {
+            field = &candidate;
+        }
+    }
+    if (field == nullptr) {
+        error(expr.field_location, "Unknown field",
+              "`" + record.name + "` has no field `" + expr.field + "`.",
+              known.empty() ? "Check the record declaration." : "Known fields: " + known + ".");
+        return types_.fresh_variable();
+    }
+    return field->type;
 }
 
 Type Analyzer::analyze_unary(const UnaryExpr& expr) {
@@ -884,13 +1419,68 @@ Type Analyzer::analyze_binary(const BinaryExpr& expr) {
     return types_.fresh_variable();
 }
 
+Type Analyzer::analyze_constructor(RecordInfo& record, const CallExpr& expr) {
+    record_constructors_[&expr] = record.id;
+    if (expr.arguments.size() != record.fields.size()) {
+        error(expr.callee_location, "Wrong number of arguments",
+              "`" + record.name + "` takes " + std::to_string(record.fields.size()) + " field" +
+                  (record.fields.size() == 1 ? "" : "s") + ", but this constructor passes " +
+                  std::to_string(expr.arguments.size()) + ".",
+              "Pass each field in declaration order.");
+    }
+    const std::size_t count = std::min(expr.arguments.size(), record.fields.size());
+    for (std::size_t i = 0; i < count; ++i) {
+        const Type argument = analyze_expression(expr.arguments[i].get());
+        if (!types_.unify(argument, record.fields[i].type)) {
+            error(expr.arguments[i] != nullptr ? expr.arguments[i]->span.start : expr.callee_location, "Type mismatch",
+                  "Field `" + record.fields[i].name + "` of `" + record.name + "` has type " +
+                      types_.to_string(record.fields[i].type) + ", but this constructor passes " +
+                      types_.to_string(argument) + ".",
+                  "Pass a value of type " + types_.to_string(record.fields[i].type) + ".");
+        }
+    }
+    for (std::size_t i = count; i < expr.arguments.size(); ++i) {
+        analyze_expression(expr.arguments[i].get());
+    }
+    return record_type(record.id, record.name);
+}
+
 Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
     if (!expr.qualifier.empty()) {
         const auto alias = aliases_[static_cast<std::size_t>(current_module_)].find(expr.qualifier);
         if (alias == aliases_[static_cast<std::size_t>(current_module_)].end()) {
-            error(expr.dot_location.line == 0 ? expr.callee_location : expr.dot_location, "Unknown module",
-                  "`" + expr.qualifier + "` is not an imported module.",
-                  "Add `use " + expr.qualifier + "` or fix the alias.");
+            if (auto* local = lookup_local(expr.qualifier)) {
+                const Type resolved = types_.prune(local->type);
+                if (resolved.kind == TypeKind::Record) {
+                    error(expr.dot_location.line == 0 ? expr.callee_location : expr.dot_location, "Invalid expression",
+                          "`" + expr.qualifier + "." + expr.callee + "(...)` is a method call. Records have no methods.",
+                          "Read or assign a field, for example `" + expr.qualifier + ".x`.");
+                } else {
+                    error(expr.dot_location.line == 0 ? expr.callee_location : expr.dot_location, "Invalid expression",
+                          "`.` is field access or a module call, not valid on " + types_.to_string(local->type) + ".",
+                          "Call a function or access a record field.");
+                }
+                for (const auto& argument : expr.arguments) {
+                    analyze_expression(argument.get());
+                }
+                return types_.fresh_variable();
+            }
+            error(expr.dot_location.line == 0 ? expr.callee_location : expr.dot_location, "Unknown name",
+                  "`" + expr.qualifier + "` is not defined in this scope.",
+                  "Assign it before use, or add `use " + expr.qualifier + "`.");
+            for (const auto& argument : expr.arguments) {
+                analyze_expression(argument.get());
+            }
+            return types_.fresh_variable();
+        }
+        if (RecordInfo* record = lookup_shared_record(alias->second, expr.callee)) {
+            return analyze_constructor(*record, expr);
+        }
+        if (RecordInfo* private_record = lookup_record(alias->second, expr.callee);
+            private_record != nullptr && !private_record->shared) {
+            error(expr.callee_location, "Private type",
+                  "`" + expr.qualifier + "." + expr.callee + "` is a private record.",
+                  "Export it with `share record " + expr.callee + "`.");
             for (const auto& argument : expr.arguments) {
                 analyze_expression(argument.get());
             }
@@ -899,7 +1489,7 @@ Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
         FunctionSymbol* function = lookup_shared(alias->second, expr.callee);
         const Program* imported = module_program(alias->second);
         if (function == nullptr || function->decl == nullptr || !function->decl->shared) {
-            std::string shared_list = "this module shares no functions";
+            std::string shared_list = "this module shares no functions or records";
             if (imported != nullptr) {
                 std::string names;
                 for (const auto& fn : imported->functions) {
@@ -910,13 +1500,21 @@ Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
                         names += fn->name;
                     }
                 }
+                for (const auto& rec : imported->records) {
+                    if (rec != nullptr && rec->shared) {
+                        if (!names.empty()) {
+                            names += ", ";
+                        }
+                        names += rec->name;
+                    }
+                }
                 if (!names.empty()) {
                     shared_list = "shared: " + names;
                 }
             }
             error(expr.dot_location.line == 0 ? expr.callee_location : expr.dot_location, "Unknown function",
-                  "`" + expr.qualifier + "." + expr.callee + "` is not a shared function.",
-                  "Export it with `share create " + expr.callee + "`, or call a shared name.",
+                  "`" + expr.qualifier + "." + expr.callee + "` is not a shared function or record.",
+                  "Export it with `share create` or `share record`, or call a shared name.",
                   {{expr.dot_location, shared_list}});
             for (const auto& argument : expr.arguments) {
                 analyze_expression(argument.get());
@@ -988,6 +1586,10 @@ Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
                         "Type mismatch", "`zeros` expects an integer length.", "Write `zeros(256)`.");
         }
         return list_type(integer_type());
+    }
+
+    if (RecordInfo* record = lookup_record(current_module_, expr.callee)) {
+        return analyze_constructor(*record, expr);
     }
 
     auto* function = lookup_function(expr.callee);
@@ -1151,6 +1753,10 @@ Type Analyzer::analyze_stdlib_call(FunctionSymbol& function, const CallExpr& exp
         expect_type(analyze_arg(1), elem, arg_location(1), "Type mismatch",
                     "`" + display + "` requires a value that matches the list element type.",
                     "Pass a value of the same type as the list elements.");
+        if (types_.prune(elem).kind == TypeKind::Record) {
+            error(arg_location(0), "Type mismatch", "`" + display + "` cannot fill a list of records.",
+                  "Assign each element with `items[i] = value`.");
+        }
         return finish(void_type());
     }
     if (ir == "std$list$reverse") {
@@ -1287,6 +1893,12 @@ bool Analyzer::declare_local(const std::string& name, Type type, SourceLocation 
         (void)existing;
         return false;
     }
+    if (lookup_record(current_module_, name) != nullptr) {
+        error(location, "Name collision",
+              "`" + name + "` is a record type and cannot be a variable.",
+              "Choose a different name.");
+        return false;
+    }
 
     if (iterator) {
         scopes_.back().emplace(name, Symbol{type, location, true, true});
@@ -1337,7 +1949,22 @@ void Analyzer::error(SourceLocation location, std::string title, std::string det
 }
 
 void Analyzer::add_constraint(Type type, ConstraintKind kind, SourceLocation location, std::string operator_text) {
-    constraints_.push_back(Constraint{type, kind, location, std::move(operator_text)});
+    Constraint constraint;
+    constraint.type = std::move(type);
+    constraint.kind = kind;
+    constraint.location = location;
+    constraint.operator_text = std::move(operator_text);
+    constraints_.push_back(std::move(constraint));
+}
+
+void Analyzer::add_field_constraint(Type object, std::string field, Type field_type, SourceLocation location) {
+    Constraint constraint;
+    constraint.type = std::move(object);
+    constraint.kind = ConstraintKind::Field;
+    constraint.location = location;
+    constraint.field_name = std::move(field);
+    constraint.field_type = std::move(field_type);
+    constraints_.push_back(std::move(constraint));
 }
 
 void Analyzer::require_non_void(Type type, SourceLocation location, std::string detail, std::string suggestion) {
@@ -1384,6 +2011,43 @@ SemanticInfo analyze_semantics(const ModuleGraph& graph, DiagnosticEngine& diagn
 }
 
 void print_types(const SemanticInfo& info, std::ostream& out) {
+    auto field_type_name = [](const Type& type) -> std::string {
+        if (!type.record_name.empty()) {
+            return type.record_name;
+        }
+        switch (type.kind) {
+            case TypeKind::Integer:
+                return "integer";
+            case TypeKind::Float:
+                return "float";
+            case TypeKind::Boolean:
+                return "boolean";
+            case TypeKind::String:
+                return "string";
+            case TypeKind::List:
+                return "list";
+            case TypeKind::Record:
+                return "record";
+            case TypeKind::Void:
+                return "void";
+            case TypeKind::Variable:
+                return "?";
+        }
+        return "?";
+    };
+    for (const auto& record : info.records) {
+        if (record.shared) {
+            out << "share ";
+        }
+        out << "record " << record.name;
+        if (!record.identity.empty() && record.identity != record.name) {
+            out << " [" << record.identity << "]";
+        }
+        out << " size " << record.size << " align " << record.align << '\n';
+        for (const auto& field : record.fields) {
+            out << "  " << field.name << ": " << field_type_name(field.type) << " @" << field.offset << '\n';
+        }
+    }
     for (const auto& function : info.functions) {
         out << "create " << function.name << '(';
         for (std::size_t i = 0; i < function.parameters.size(); ++i) {

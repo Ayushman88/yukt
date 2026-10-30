@@ -5,29 +5,37 @@
 namespace yukt {
 
 Type integer_type() {
-    return Type{TypeKind::Integer, -1, nullptr};
+    return Type{.kind = TypeKind::Integer};
 }
 
 Type float_type() {
-    return Type{TypeKind::Float, -1, nullptr};
+    return Type{.kind = TypeKind::Float};
 }
 
 Type boolean_type() {
-    return Type{TypeKind::Boolean, -1, nullptr};
+    return Type{.kind = TypeKind::Boolean};
 }
 
 Type string_type() {
-    return Type{TypeKind::String, -1, nullptr};
+    return Type{.kind = TypeKind::String};
 }
 
 Type void_type() {
-    return Type{TypeKind::Void, -1, nullptr};
+    return Type{.kind = TypeKind::Void};
 }
 
 Type list_type(Type element) {
     Type type;
     type.kind = TypeKind::List;
     type.element = std::make_shared<Type>(std::move(element));
+    return type;
+}
+
+Type record_type(int record_id, std::string record_name) {
+    Type type;
+    type.kind = TypeKind::Record;
+    type.record_id = record_id;
+    type.record_name = std::move(record_name);
     return type;
 }
 
@@ -86,6 +94,10 @@ bool TypeContext::unify(Type left, Type right) {
         return unify(*left.element, *right.element);
     }
 
+    if (left.kind == TypeKind::Record) {
+        return left.record_id == right.record_id;
+    }
+
     return true;
 }
 
@@ -115,6 +127,9 @@ bool TypeContext::same(Type left, Type right) const {
         }
         return same(*left.element, *right.element);
     }
+    if (left.kind == TypeKind::Record) {
+        return left.record_id == right.record_id;
+    }
     return true;
 }
 
@@ -133,6 +148,8 @@ std::string TypeContext::to_string(Type type) const {
             return "void";
         case TypeKind::List:
             return "list[" + (type.element != nullptr ? to_string(*type.element) : "?") + "]";
+        case TypeKind::Record:
+            return type.record_name.empty() ? "record" : type.record_name;
         case TypeKind::Variable:
             return "?";
     }

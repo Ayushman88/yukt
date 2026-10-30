@@ -121,6 +121,12 @@ void IndexExpr::print(std::ostream& out, int indent) const {
     print_child(out, index.get(), indent + 1);
 }
 
+void FieldExpr::print(std::ostream& out, int indent) const {
+    pad(out, indent);
+    out << "Field " << field << '\n';
+    print_child(out, object.get(), indent + 1);
+}
+
 void AssignStmt::print(std::ostream& out, int indent) const {
     pad(out, indent);
     out << "Assign " << name << '\n';
@@ -132,6 +138,13 @@ void IndexAssignStmt::print(std::ostream& out, int indent) const {
     out << "IndexAssign\n";
     print_child(out, collection.get(), indent + 1);
     print_child(out, index.get(), indent + 1);
+    print_child(out, value.get(), indent + 1);
+}
+
+void FieldAssignStmt::print(std::ostream& out, int indent) const {
+    pad(out, indent);
+    out << "FieldAssign " << field << '\n';
+    print_child(out, object.get(), indent + 1);
     print_child(out, value.get(), indent + 1);
 }
 
@@ -199,6 +212,22 @@ void UseDecl::print(std::ostream& out, int indent) const {
     out << '\n';
 }
 
+void RecordDecl::print(std::ostream& out, int indent) const {
+    pad(out, indent);
+    if (shared) {
+        out << "Share ";
+    }
+    out << "Record " << name << '\n';
+    for (const auto& field : fields) {
+        pad(out, indent + 1);
+        out << "Field " << field.name << ": ";
+        if (!field.type.qualifier.empty()) {
+            out << field.type.qualifier << '.';
+        }
+        out << field.type.name << '\n';
+    }
+}
+
 void FunctionDecl::print(std::ostream& out, int indent) const {
     pad(out, indent);
     if (shared) {
@@ -222,6 +251,14 @@ void Program::print(std::ostream& out, int indent) const {
     out << "Program\n";
     for (const auto& use : uses) {
         use.print(out, indent + 1);
+    }
+    for (const auto& record : records) {
+        if (record == nullptr) {
+            pad(out, indent + 1);
+            out << "<missing record>\n";
+            continue;
+        }
+        record->print(out, indent + 1);
     }
     for (const auto& function : functions) {
         if (function == nullptr) {

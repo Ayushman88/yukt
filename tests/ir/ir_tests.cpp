@@ -300,5 +300,31 @@ int main() {
         REQUIRE(main_fn != nullptr && !has_op(*main_fn, yukt::IrOp::ParallelFor));
     }
 
+    {
+        const auto module = ir_from(
+            "record Point:\n"
+            "    x: integer\n"
+            "    y: integer\n"
+            "\n"
+            "create main:\n"
+            "    p = Point(1, 2)\n"
+            "    say p.x\n"
+            "    p.y = 9\n"
+            "    points = [p]\n"
+            "    say points[0]\n");
+        REQUIRE(module.records.size() == 1);
+        REQUIRE(module.records[0].name == "Point");
+        REQUIRE(module.records[0].size == 16);
+        const auto* main_fn = function_named(module, "main");
+        REQUIRE(main_fn != nullptr);
+        REQUIRE(main_fn != nullptr && has_op(*main_fn, yukt::IrOp::RecordNew));
+        REQUIRE(main_fn != nullptr && has_op(*main_fn, yukt::IrOp::FieldGet));
+        REQUIRE(main_fn != nullptr && has_op(*main_fn, yukt::IrOp::FieldSet));
+        REQUIRE(main_fn != nullptr && has_op(*main_fn, yukt::IrOp::List));
+        std::ostringstream printed;
+        yukt::print_ir(module, printed);
+        REQUIRE(printed.str().find("record Point") != std::string::npos);
+    }
+
     return yukt::test::summary("ir");
 }

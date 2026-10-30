@@ -1,0 +1,12 @@
+record Point:
+    x: integer
+    y: integer
+
+record Box:
+    origin: Point
+    w: integer
+
+create main:
+    say Box(Point(1, 2), 3) == Box(Point(1, 2), 3)
+    say Box(Point(1, 2), 3) == Box(Point(1, 9), 3)
+    say Box(Point(1, 2), 3) != Box(Point(1, 2), 4)

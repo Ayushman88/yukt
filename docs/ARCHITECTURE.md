@@ -1,6 +1,6 @@
 # YUKT Architecture
 
-Version: 0.12
+Version: 0.13.1
 
 ## Pipeline
 
@@ -56,7 +56,7 @@ The lexer is indentation-aware:
 - Tabs are rejected.
 - `1..5` is recognized as a range, not a float.
 - Every token stores a 1-based line, column, and file path.
-- `use`, `share`, and `as` are keywords. `.` is a token; `1..5` and `3.14` are unchanged.
+- `use`, `share`, `as`, and `record` are keywords. `.` is a token; `1..5` and `3.14` are unchanged.
 
 Invalid characters and unterminated strings produce diagnostics and do not crash the lexer.
 
@@ -95,12 +95,13 @@ Color is used only when stderr is a TTY and `NO_COLOR` is unset. The compiler ex
 `compiler/semantic` walks a parsed program and does not depend on LLVM.
 
 1. Collect every `create` declaration, keyed by module and mangled IR name.
-2. Bind `use` aliases; default-private unless `share create`.
-3. Give each parameter and return type a fresh type variable in one TypeContext.
-4. Analyze each body: unqualified names are the current file; `alias.name` is a shared export.
-5. Apply deferred numeric/string constraints after all call sites have been seen.
-6. Require parameterless `create main` only on the entry module.
-7. Report unresolved parameters, empty lists, and return types that never become concrete.
+2. Collect `record` / `share record` declarations, then resolve field types and host layouts (DAG, no recursion).
+3. Bind `use` aliases; default-private unless `share create` or `share record`.
+4. Give each parameter and return type a fresh type variable in one TypeContext.
+5. Analyze each body: unqualified names are the current file; `alias.name` is a shared export or constructor.
+6. Apply deferred numeric/string/field constraints after all call sites have been seen.
+7. Require parameterless `create main` only on the entry module.
+8. Report unresolved parameters, empty lists, and return types that never become concrete.
 
 `--tokens` and `--ast` stop before this pass so an ill-typed program can still be inspected. `yukt file.yukt` and `yukt --types file.yukt` run it. Code generation runs only after type checking succeeds.
 
@@ -111,7 +112,7 @@ Color is used only when stderr is a TTY and `NO_COLOR` is unset. The compiler ex
 - named locals
 - typed temporaries
 - arithmetic, comparison, and string concatenation
-- calls, lists, index get/set, `count`, `zeros`, and `say`
+- calls, lists, index get/set, `count`, `zeros`, `say`, record construction, and field get/set
 - `if` / `otherwise` and inclusive `repeat` control flow
 - `parallel_for` when independence analysis accepts a loop
 
@@ -144,7 +145,7 @@ The runtime implements `say`, string concatenation, lists, heap release, and the
 | `yukt run file.yukt` | Compile, link, and execute |
 | `yukt file.yukt` | Parse and type-check |
 | `yukt --help` | Usage |
-| `yukt --version` | `0.12` |
+| `yukt --version` | `0.13.1` |
 
 `build` and `run` fail if type checking fails. They do not interpret the program.
 
@@ -160,8 +161,10 @@ CTest runs frontend, IR, and native suites:
 - `yukt_module_tests`
 - `yukt_native_tests`
 - `yukt_stdlib_tests`
+- `yukt_record_tests`
 - `yukt --tokens`, `--ast`, `--types`, `--emit-ir`, `--explain`, type-check, and `run` of `examples/hello.yukt`
 - `yukt run` of `tests/modules/ok/app.yukt` and nested imports
 - `yukt run` of `tests/stdlib/str_basic.yukt` and `tests/stdlib/all_modules.yukt`
+- `yukt run` of `tests/records/basic.yukt` and `tests/records/import/app.yukt`
 
 Native tests execute compiled binaries and compare stdout.

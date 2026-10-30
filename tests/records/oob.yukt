@@ -1,0 +1,7 @@
+record Point:
+    x: integer
+    y: integer
+
+create main:
+    points = [Point(1, 2)]
+    say points[2]

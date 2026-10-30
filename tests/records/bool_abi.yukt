@@ -1,0 +1,11 @@
+record Flag:
+    on: boolean
+    n: integer
+
+create main:
+    f = Flag(true, 4)
+    say f
+    say f.on
+    f.on = false
+    say f
+    say f == Flag(false, 4)

@@ -1,0 +1,6 @@
+use geom
+
+create main:
+    p = geom.Point(1, 2)
+    say p
+    say geom.origin()

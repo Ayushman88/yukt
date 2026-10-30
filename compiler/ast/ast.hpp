@@ -82,6 +82,13 @@ struct IndexExpr final : Expr {
     void print(std::ostream& out, int indent) const override;
 };
 
+struct FieldExpr final : Expr {
+    std::unique_ptr<Expr> object;
+    std::string field;
+    SourceLocation field_location;
+    void print(std::ostream& out, int indent) const override;
+};
+
 struct AssignStmt final : Stmt {
     std::string name;
     SourceLocation name_location;
@@ -92,6 +99,14 @@ struct AssignStmt final : Stmt {
 struct IndexAssignStmt final : Stmt {
     std::unique_ptr<Expr> collection;
     std::unique_ptr<Expr> index;
+    std::unique_ptr<Expr> value;
+    void print(std::ostream& out, int indent) const override;
+};
+
+struct FieldAssignStmt final : Stmt {
+    std::unique_ptr<Expr> object;
+    std::string field;
+    SourceLocation field_location;
     std::unique_ptr<Expr> value;
     void print(std::ostream& out, int indent) const override;
 };
@@ -136,6 +151,31 @@ struct UseDecl {
     void print(std::ostream& out, int indent) const;
 };
 
+struct TypeName {
+    std::string qualifier;
+    SourceLocation qualifier_location;
+    SourceLocation dot_location;
+    std::string name;
+    SourceLocation name_location;
+    SourceSpan span;
+};
+
+struct FieldDecl {
+    SourceSpan span;
+    std::string name;
+    SourceLocation name_location;
+    TypeName type;
+};
+
+struct RecordDecl {
+    SourceSpan span;
+    bool shared = false;
+    std::string name;
+    SourceLocation name_location;
+    std::vector<FieldDecl> fields;
+    void print(std::ostream& out, int indent) const;
+};
+
 struct FunctionDecl {
     SourceSpan span;
     bool shared = false;
@@ -149,6 +189,7 @@ struct FunctionDecl {
 struct Program {
     SourceSpan span;
     std::vector<UseDecl> uses;
+    std::vector<std::unique_ptr<RecordDecl>> records;
     std::vector<std::unique_ptr<FunctionDecl>> functions;
     void print(std::ostream& out, int indent = 0) const;
 };

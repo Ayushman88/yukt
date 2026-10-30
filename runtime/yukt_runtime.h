@@ -16,6 +16,7 @@ typedef struct YuktList {
     int64_t length;
     int64_t kind;
     void* data;
+    int64_t stride;
 } YuktList;
 
 void yukt_say_i64(int64_t value);
@@ -23,6 +24,14 @@ void yukt_say_f64(double value);
 void yukt_say_bool(int8_t value);
 void yukt_say_cstr(const char* value);
 void yukt_say_list(const YuktList* list);
+void yukt_print_i64(int64_t value);
+void yukt_print_f64(double value);
+void yukt_print_bool(int8_t value);
+void yukt_print_cstr(const char* value);
+
+YuktList* yukt_list_new_rec(int64_t length, int64_t stride) __attribute__((malloc));
+void yukt_list_set_rec(YuktList* list, int64_t index, const void* src, int64_t stride);
+void yukt_list_get_rec(const YuktList* list, int64_t index, void* dest, int64_t stride);
 
 char* yukt_str_concat(const char* left, const char* right);
 int64_t yukt_str_len(const char* s);

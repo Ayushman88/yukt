@@ -349,5 +349,140 @@ int main() {
         REQUIRE(printed.str().find("error: Missing entry point") != std::string::npos);
     }
 
+    {
+        const auto result = check(
+            "record Point:\n"
+            "    x: integer\n"
+            "    y: integer\n"
+            "\n"
+            "create main:\n"
+            "    p = Point(1, 2)\n"
+            "    say p.x\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        REQUIRE(result.semantic.records.size() == 1);
+        REQUIRE(result.semantic.records[0].name == "Point");
+        REQUIRE(result.semantic.records[0].size == 16);
+        REQUIRE(result.semantic.records[0].align == 8);
+        const auto* main_fn = function_named(result.semantic, "main");
+        REQUIRE(main_fn != nullptr && !main_fn->locals.empty());
+        REQUIRE(main_fn->locals[0].type == "Point");
+    }
+
+    {
+        const auto result = check(
+            "record Box:\n"
+            "    origin: Point\n"
+            "    w: integer\n"
+            "\n"
+            "record Point:\n"
+            "    x: integer\n"
+            "    y: integer\n"
+            "\n"
+            "create main:\n"
+            "    say Box(Point(1, 2), 3)\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        REQUIRE(result.semantic.records.size() == 2);
+    }
+
+    {
+        const auto result = check(
+            "record Point:\n"
+            "    x: integer\n"
+            "    y: integer\n"
+            "\n"
+            "create main:\n"
+            "    p = Point(1, 2)\n"
+            "    say p.z\n");
+        REQUIRE(has_title(result, "Unknown field"));
+    }
+
+    {
+        const auto result = check(
+            "record Point:\n"
+            "    x: integer\n"
+            "    y: integer\n"
+            "\n"
+            "record Size:\n"
+            "    w: integer\n"
+            "    h: integer\n"
+            "\n"
+            "create main:\n"
+            "    say Point(1, 2) == Size(1, 2)\n");
+        REQUIRE(has_title(result, "Type mismatch"));
+    }
+
+    {
+        const auto result = check(
+            "record Bad:\n"
+            "    s: string\n"
+            "\n"
+            "create main:\n"
+            "    say 1\n");
+        REQUIRE(has_title(result, "Invalid record"));
+    }
+
+    {
+        const auto result = check(
+            "record A:\n"
+            "    b: B\n"
+            "\n"
+            "record B:\n"
+            "    a: A\n"
+            "\n"
+            "create main:\n"
+            "    say 1\n");
+        REQUIRE(has_title(result, "Recursive record"));
+    }
+
+    {
+        const auto result = check(
+            "record Point:\n"
+            "    x: integer\n"
+            "    y: integer\n"
+            "\n"
+            "create main:\n"
+            "    p = Point(1, 2)\n"
+            "    p.add(1)\n");
+        REQUIRE(has_title(result, "Invalid expression"));
+    }
+
+    {
+        const auto result = check(
+            "record Point:\n"
+            "    x: integer\n"
+            "    y: integer\n"
+            "\n"
+            "create main:\n"
+            "    n = 1\n"
+            "    say n.x\n");
+        REQUIRE(has_title(result, "Invalid expression"));
+    }
+
+    {
+        const auto result = check(
+            "record Point:\n"
+            "    x: integer\n"
+            "    y: integer\n"
+            "\n"
+            "create main:\n"
+            "    p = Point(1)\n");
+        REQUIRE(has_title(result, "Wrong number of arguments"));
+    }
+
+    {
+        const auto result = check(
+            "record Flag:\n"
+            "    on: boolean\n"
+            "    n: integer\n"
+            "\n"
+            "create main:\n"
+            "    say Flag(true, 1)\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        REQUIRE(result.semantic.records.size() == 1);
+        REQUIRE(result.semantic.records[0].size == 16);
+        REQUIRE(result.semantic.records[0].fields[0].offset == 0);
+        REQUIRE(result.semantic.records[0].fields[1].offset == 8);
+    }
+
     return yukt::test::summary("semantic");
 }

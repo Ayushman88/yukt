@@ -1,9 +1,9 @@
 # YUKT Language Specification
 
-Version: 0.12 (module system implemented). 0.11 remains tagged `v0.11.0`.  
-Status: 0.11 language plus modules and imports as specified below. Numerical semantics for signed overflow and float rounding are unchanged. Standard-library APIs (maps, files, JSON) are not part of this milestone.
+Version: 0.13.1 (records implemented on this tree; no `v0.13.1` tag yet). 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`.  
+Status: 0.12 language plus **records** as specified in [0.13.1 — Records](#0131--records). Ownership, `ref`, `foreign`, error values, and 0.13 stdlib expansion are **not** part of this slice. Numerical semantics for signed overflow and float rounding are unchanged.
 
-This document is the source of truth for YUKT syntax. If the compiler and this file disagree, that is a bug.
+This document is the source of truth for YUKT syntax. **0.13.1 is implemented.** If the compiler and this file disagree, that is a bug.
 
 ## Design
 
@@ -12,6 +12,7 @@ YUKT is an English-inspired, statically typed, compiled language. The first synt
 - indentation defines blocks
 - assignments introduce names
 - `create` declares functions
+- `record` / `share record` declares a named product type (0.13.1)
 - `say` writes output
 - `give` returns a value
 - `repeat` iterates a range
@@ -28,16 +29,17 @@ The compiler does not invent additional syntax beyond this document.
 - Indentation: spaces only. Tabs are an error.
 - Columns are counted in bytes, 1-based.
 
-A program is a sequence of function declarations. There is no executable top-level code outside `create`.
+A program is `use` lines, then a sequence of `record` declarations and `create` functions, in any order. There is no executable top-level code outside `create`. Records are types, not executable declarations.
 
 ## Reserved words
 
 ```
 create  say  if  otherwise  repeat  in  give  true  false
 use  share  as
+record
 ```
 
-These cannot be used as variable names, parameter names, aliases, `repeat` iterators, or function names, with one exception: **`repeat`** may be a function name after `create` / `share create` and after `.` in a qualified call, so `std/str` can export `str.repeat(...)`. `create if` and `math.give(...)` remain errors. Statement position is unchanged: `repeat i in 1..5:` is still a loop. `use`, `share`, and `as` are reserved from 0.12.
+These cannot be used as variable names, parameter names, aliases, `repeat` iterators, record names, field names, or function names, with one exception: **`repeat`** may be a function name after `create` / `share create` and after `.` in a qualified call, so `std/str` can export `str.repeat(...)`. `create if`, `record if`, and `math.give(...)` remain errors. Statement position is unchanged: `repeat i in 1..5:` is still a loop. `use`, `share`, and `as` are reserved from 0.12. `record` is reserved from 0.13.1. `ref`, `foreign`, `ok`, and `fail` are **not** reserved in this slice.
 
 ## Lexical tokens
 
@@ -53,7 +55,7 @@ These cannot be used as variable names, parameter names, aliases, `repeat` itera
 | Range | `..` |
 | Layout | `NEWLINE`, `INDENT`, `DEDENT` |
 
-`1..5` is tokenized as integer `1`, `..`, integer `5`. A single `.` that is not part of a float is a `DOT` token (module qualification). `3.14` is still a float.
+`1..5` is tokenized as integer `1`, `..`, integer `5`. A single `.` that is not part of a float is a `DOT` token (module qualification or, from 0.13.1, field access). `3.14` is still a float.
 
 Unterminated strings, unknown characters, tabs, and indentation that does not match an open block are lexer errors.
 
@@ -71,10 +73,15 @@ Blocks are introduced by `:` at the end of a clause, a newline, and an indented 
 ## Grammar
 
 ```
-program        ::= { use_stmt } { function }
+program        ::= { use_stmt } { item }
+item           ::= record_decl | function
 
 use_stmt       ::= "use" module_path [ "as" IDENT ] NEWLINE
 module_path    ::= IDENT { "/" IDENT }
+
+record_decl    ::= [ "share" ] "record" IDENT ":" NEWLINE INDENT field_decl { field_decl } DEDENT
+field_decl     ::= IDENT ":" type_name NEWLINE
+type_name      ::= IDENT | IDENT "." IDENT
 
 function_name  ::= IDENT | "repeat"
 function       ::= [ "share" ] "create" function_name [ "(" [ IDENT { "," IDENT } ] ")" ] ":" suite
@@ -82,7 +89,7 @@ function       ::= [ "share" ] "create" function_name [ "(" [ IDENT { "," IDENT 
 suite          ::= NEWLINE INDENT { statement } DEDENT
 
 statement      ::= assignment
-                 | index_assign
+                 | place_assign
                  | call_stmt
                  | say_stmt
                  | give_stmt
@@ -90,7 +97,9 @@ statement      ::= assignment
                  | repeat_stmt
 
 assignment     ::= IDENT "=" expression NEWLINE
-index_assign   ::= postfix "=" expression NEWLINE
+place_assign   ::= place "=" expression NEWLINE
+place          ::= primary ( "[" expression "]" | "." IDENT )
+                   { "[" expression "]" | "." IDENT }
 call_stmt      ::= call NEWLINE
 say_stmt       ::= "say" expression NEWLINE
 give_stmt      ::= "give" expression NEWLINE
@@ -106,7 +115,7 @@ comparison     ::= term { ( "<" | ">" | "<=" | ">=" ) term }
 term           ::= factor { ( "+" | "-" ) factor }
 factor         ::= unary { ( "*" | "/" | "%" ) unary }
 unary          ::= [ "-" ] unary | postfix
-postfix        ::= primary { "[" expression "]" }
+postfix        ::= primary { "[" expression "]" | "." IDENT }
 primary        ::= INTEGER | FLOAT | STRING | "true" | "false"
                  | IDENT | call | list | "(" expression ")"
 call           ::= callee "(" [ expression { "," expression } ] ")"
@@ -114,16 +123,22 @@ callee         ::= IDENT | IDENT "." function_name
 list           ::= "[" [ expression { "," expression } ] "]"
 ```
 
+`place_assign` is index assignment or field assignment. It requires at least one `[]` or `.` so `name = value` stays `assignment`.
+
+Record construction uses the existing `call` form. `Point(1, 2)` and `geom.Point(1, 2)` parse as calls; semantic analysis decides whether the callee is a function or a record type. There is no separate constructor token. A callee is only an unqualified name or `alias.name`. `point.origin.move(1)` is not a call: YUKT has no methods, and constructors are not chained through field access.
+
+`type_name` is an identifier or a qualified name. `integer`, `float`, and `boolean` are builtin type names in this position. They are **not** reserved words. A later identifier in the same file may still be named `integer` as a variable. A **record** must not be named `integer`, `float`, `boolean`, `string`, or `list`.
+
 Operator precedence, highest first:
 
-1. index `[]`
+1. index `[]` and field `.` (postfix, left-to-right: `a.b.c` is `(a.b).c`, `points[i].x` is `(points[i]).x`)
 2. unary `-`
 3. `* / %`
 4. `+ -`
 5. `< > <= >=`
 6. `== !=`
 
-All binary operators are left-associative.
+All binary operators are left-associative. Field access and indexing are postfix operators, not binary `.` at the same level as `+`.
 
 ## Features in 0.01
 
@@ -136,7 +151,7 @@ ready = true
 items = [1, 2, 3]
 ```
 
-Assignment is the only name-binding form. There is no `let`, `var`, or type annotation syntax yet.
+Assignment is the only name-binding form. There is no `let` or `var`. Type names appear only on `record` fields (0.13.1); function parameters remain names only.
 
 ### Output
 
@@ -187,7 +202,7 @@ say items[0]
 items[1] = 21
 ```
 
-`items[i]` reads one element. `items[i] = value` replaces one element. The collection must be a list. The index must be an integer. The first element is at index `0`.
+`items[i]` reads one element. `items[i] = value` replaces one element. The collection must be a list. The index must be an integer. The first element is at index `0`. From 0.13.1, `point.x = value` assigns a record field; see [Dot resolution](#dot-resolution).
 
 Lists do not grow. `items = []` still cannot be filled later. Use `zeros(n)` to allocate a list of `n` integer zeros, then assign slots.
 
@@ -219,7 +234,7 @@ create answer:
 
 ## Types
 
-YUKT is statically typed. Milestone 0.02 infers types from literals, operators, assignments, and calls. There are no type annotations.
+YUKT is statically typed. Milestone 0.02 infers types from literals, operators, assignments, and calls. Function parameters and bodies still have no type annotations. **0.13.1 adds type names only on `record` fields.**
 
 | Literal / form | Type |
 | --- | --- |
@@ -228,6 +243,7 @@ YUKT is statically typed. Milestone 0.02 infers types from literals, operators, 
 | `"Hello"` | string |
 | `true` / `false` | boolean |
 | `[1, 2, 3]` | list[integer] |
+| `Point(1, 2)` when `Point` is a record | that record type (nominal) |
 | function with no `give` | void |
 
 There is no implicit conversion. `1 + 1.5` is an error. `"age " + 21` is an error.
@@ -243,20 +259,25 @@ There is no implicit conversion. `1 + 1.5` is an error. `"age " + 21` is an erro
 | `< > <= >=` | both operands the same numeric type | boolean |
 | `== !=` | both operands the same type | boolean |
 
+Record types are **nominal**. Two records with the same field names and field types are different types if they have different declarations. `<` `>` `<=` `>=` are not defined on records. `==` / `!=` on records are specified in [Record equality](#record-equality).
+
 ### Inference
 
 - A variable's type is the type of its first assignment. Later assignments must match.
 - Assignments bind in the enclosing function, not in `if` / `otherwise` blocks.
 - A name may be used only after an assignment appears earlier in that function.
-- Parameter types are inferred from uses in the body and from argument types at call sites.
+- Parameter types are inferred from uses in the body and from argument types at call sites, including record types.
 - If a parameter or empty list never gets a concrete type, the compiler reports `Cannot infer type`.
-- All `give` expressions in a function must have the same type. That type is the function's return type.
+- All `give` expressions in a function must have the same type. That type is the function's return type. A function may `give` a record.
 - A function with no `give` returns void and cannot be used as an expression.
+- Record field types are written and are not inferred.
 
 ### Scopes
 
-- Function names are global. Duplicate function names are an error.
-- Variables cannot reuse a function name.
+- Function names are global to the file. Duplicate function names are an error.
+- Record names are global to the file. Duplicate record names are an error.
+- A record name must not collide with a `create` name, a `use` alias, `count`, or `zeros` in that file.
+- Variables cannot reuse a function name or a record name.
 - `repeat` iterators are scoped to the loop body.
 - A loop variable cannot be reassigned and cannot collide with an existing name.
 
@@ -264,23 +285,25 @@ There is no implicit conversion. `1 + 1.5` is an error. `"age " + 21` is an erro
 
 - `if` conditions must be boolean. Integers are not treated as true or false.
 - `repeat` bounds must be integers.
-- `say` accepts any non-void value.
-- Call argument count and types must match the callee.
-- A list index must be an integer. Only lists can be indexed.
-- `count` takes one list. `zeros` takes one integer.
+- `say` accepts any non-void value, including records ([Printing records](#printing-records)).
+- Call argument count and types must match the callee. Record constructors are checked the same way: arity and types must match the field list.
+- A list index must be an integer. Only lists can be indexed. Record values cannot be indexed.
+- Field assignment `place.field = value` requires a record place and a field of that record; the value type must match the field type.
+- `count` takes one list. `zeros` takes one integer. `zeros` cannot allocate a list of records.
 
 ## Memory
 
 - Integers, floats, and booleans are stack values. LLVM `mem2reg` promotes them when it can.
+- 0.13.1 records of scalars and nested records are stack values. Assignment and `give` copy `size` bytes ([Record layout](#record-layout-host-abi)). There is nothing to free. Heap-typed record fields are not part of this slice.
 - Lists and strings live on the heap. List payloads are 16-byte aligned. The runtime releases them when `main` returns. Size-class reuse is bounded and not thread-safe; allocating loops stay sequential. Exact bins, slot limits, and retained bytes are in `docs/RUNTIME.md`.
-- Function calls use the native C convention after name mangling: `create add` becomes `yukt_add`.
+- Function calls use the native C convention after name mangling: `create add` becomes `yukt_add`. Record values passed or returned by value use the host C ABI of that record’s layout.
 
 ## Automatic parallelization
 
 The compiler may run a `repeat` loop on several cores when every iteration is independent:
 
 - the body has no `say`, `give`, or user function call
-- list writes use an index that mentions the loop iterator
+- list writes use an index that mentions the loop iterator (including 0.13.1 field writes through that element, such as `points[i].x = ...`)
 - estimated work (trip count × body cost) is at least 1_000_000 operations, or the trip count is not a compile-time constant
 - a loop nested inside another `repeat` only parallelizes when its trip count is a compile-time constant of at least 1_000_000
 - unknown nested inner trip counts are estimated as 256 iterations for cost
@@ -329,17 +352,20 @@ If `main` gives an integer, that value is the process exit code. Other return ty
 
 ## Out of scope
 
-The following are **not** part of YUKT 0.12 and must not be parsed as if they were:
+The following are **not** part of YUKT 0.13.1 and must not be parsed as if they were:
 
-- classes or structs
+- classes, inheritance, or methods (`point.greet()` is an error; `.` is module qualification or field access, not `list.len`)
+- heap-typed record fields (`string`, `list`, maps) — those wait for 0.13.2
+- `ref`, `foreign`, `ok`, `fail`, ownership, and error values
+- named-field construction (`Point(x: 1)`)
+- recursive records, including indirect cycles
 - `and` / `or` / `not`
 - bitwise operators
 - `for`, `while`, `break`, `continue`
-- type annotations
-- methods or other member access (`.` is only module qualification, not `list.len`)
+- type annotations on functions, parameters, or locals (field types on `record` are the only annotations)
 - an interpreter or bytecode VM
 - package versions, remotes, or a package manager
-- maps, JSON, and file I/O (stdlib APIs after the module system)
+- maps, JSON, and file I/O (stdlib APIs after 0.13.1–0.13.5)
 
 ## 0.12 — Modules and imports
 
@@ -347,7 +373,7 @@ The following are **not** part of YUKT 0.12 and must not be parsed as if they we
 
 ### Purpose
 
-A program is still one native executable. The entry file has `create main`. Other `.yukt` files are modules. A module is a file of functions. There is no executable top-level code.
+A program is still one native executable. The entry file has `create main`. Other `.yukt` files are modules. A module is a file of functions and, from 0.13.1, record declarations. There is no executable top-level code.
 
 ### New reserved words
 
@@ -355,37 +381,25 @@ A program is still one native executable. The entry file has `create main`. Othe
 use  share  as
 ```
 
-These cannot be used as names.
+These cannot be used as names. 0.13.1 also reserves `record` (see [Reserved words](#reserved-words)).
 
 ### Grammar additions
 
-`use` lines come first, then functions. A `use` after a `create` is an error.
+`use` lines come first, then items. A `use` after a `create` or `record` is an error. The complete grammar is at the top of this document. 0.12 added `use` / `share` / qualified calls. 0.13.1 adds `record_decl` as an `item` beside `function`.
 
-```
-program        ::= { use_stmt } { function }
-
-use_stmt       ::= "use" module_path [ "as" IDENT ] NEWLINE
-
-module_path    ::= IDENT { "/" IDENT }
-
-function_name  ::= IDENT | "repeat"
-function       ::= [ "share" ] "create" function_name [ "(" [ IDENT { "," IDENT } ] ")" ] ":" suite
-
-call           ::= callee "(" [ expression { "," expression } ] ")"
-callee         ::= IDENT | IDENT "." function_name
-```
-
-`/` in a `use` path is a path separator, not division. `.` between two identifiers in a callee is **module qualification**, not a float and not a method. A single `.` that is not part of a float literal becomes a token in 0.12. `math.sqrt` without `(` is an error: YUKT has no first-class function values.
+`/` in a `use` path is a path separator, not division. `.` between two identifiers in a callee is **module qualification**, not a float and not a method. A single `.` that is not part of a float literal is a token (0.12). `math.sqrt` without `(` is an error unless the left side is a record value (0.13.1 field access). YUKT has no first-class function values. Field vs module resolution is in [Dot resolution](#dot-resolution).
 
 ### Visibility
 
 - `create name` is **private** to its source file. Other files cannot call it.
 - `share create name` is **exported**. Importers call it as `alias.name(...)`.
-- `share` is only valid immediately before `create`. `share` on any other form is an error.
+- `record Name` is **private** to its source file. Other files cannot name it, construct it, or use it as a field type ([Imported record visibility](#imported-record-visibility)).
+- `share record Name` is **exported**. Importers name it `alias.Name` and construct it as `alias.Name(...)`.
+- `share` is only valid immediately before `create` or, from 0.13.1, `record`. `share` on any other form is an error.
 - `create main` cannot be `share`. `share create main` is an error.
 - Only the **entry file** (the path passed to `yukt build` / `yukt run`) may define `create main`. A library module that contains `main` is an error.
 - The whole program still has exactly one `create main`, with no parameters.
-- There are no module-level variables. Only functions are bindable across files.
+- There are no module-level variables. Only functions and (from 0.13.1) records are bindable across files.
 - Compiler builtins `count` and `zeros` remain visible in every file without `use`, as in 0.11.
 
 ```yukt
@@ -411,12 +425,12 @@ create main:
 
 - `use a/b` binds the **last path component** as the alias (`b`), unless `as` names a different alias.
 - `use std/math` binds `math`. `use std/math as m` binds `m`.
-- The alias is a namespace, not a value. It is only valid as the left side of `alias.name(...)`. An unqualified `alias` in an expression is a local or parameter if one exists; it is not a namespace value.
+- The alias is a namespace, not a value. It is valid as the left side of `alias.name(...)` (shared function or shared record constructor) and of `alias.Name` in a field `type_name`. An unqualified `alias` in an expression is a local or parameter if one exists; it is not a namespace value. `alias.field` without `(...)` is an error: a namespace is not a record value.
 - Two `use` lines in the same file that bind the same alias are an error, even if they resolve to the same file.
-- An alias must not collide with a `create` name in that file or with `count` / `zeros`.
-- Unqualified `name(...)` looks up functions in the **current file** and builtins. It does not search imported modules. `use` is **not transitive**: if A uses B and B uses C, A cannot call C without its own `use`.
-- `alias.name` looks up `name` only among **shared** functions of that module. Unknown or private names are errors at the `.` (file, line, column, and a note of what is shared).
-- Exported function types are inferred from the defining body **and** all call sites in the program (one type context). Conflicting sites are type errors.
+- An alias must not collide with a `create` name, a record name in that file, or with `count` / `zeros`.
+- Unqualified `name(...)` looks up functions and records in the **current file**, then builtins. It does not search imported modules. `use` is **not transitive**: if A uses B and B uses C, A cannot call C (or construct C’s records) without its own `use`.
+- `alias.name` looks up `name` only among **shared** functions and **shared** records of that module. Unknown or private names are errors at the `.` (file, line, column, and a note of what is shared). A private record is not constructible as `alias.Name(...)`.
+- Exported function types are inferred from the defining body **and** all call sites in the program (one type context). Conflicting sites are type errors. A **shared** function must not mention a private record in a parameter type or `give` type (inferred or written). That would leak a private type across the module boundary.
 
 ### Dependency resolution
 
@@ -466,14 +480,278 @@ note: a.yukt -> b.yukt -> a.yukt
 
 ### Diagnostics
 
-Every module error has file, line, and column of the `use`, `share`, or qualified call. `SourceLocation` carries a file path. Missing modules, private access, alias collisions, reserved `std` misuse, and cycles must not be ignored.
+Every module error has file, line, and column of the `use`, `share`, or qualified call. `SourceLocation` carries a file path. Missing modules, private access (including private records), alias collisions, reserved `std` misuse, and cycles must not be ignored.
 
 ### Non-goals for this design
 
 - Selective import (`use add from math`) and glob import (`use math.*`)
 - Re-export (`share use math`)
 - First-class function values
-- Method call / field access
+- Method call (`point.greet()`). Field access is 0.13.1, not 0.12
 - Separate compilation to `.o` per module as a user feature
 - Package versions, lockfiles, or downloads
+
+## 0.13.1 — Records
+
+**Status: implemented.** This section is the source of truth for records. It is independently releasable: programs that do not use records keep 0.12 meaning. Ownership, `ref`, `foreign`, `ok` / `fail`, and heap-typed fields are **not** in this slice.
+
+0.13.1 records are named product types of **scalars and nested records**. Copying a record copies bits. There is nothing to free.
+
+### Shape
+
+```yukt
+record Point:
+    x: integer
+    y: integer
+
+share record Size:
+    w: integer
+    h: integer
+
+create main:
+    p = Point(1, 2)
+    say p.x
+    p.y = p.y + 1
+```
+
+- Field types are written. Function bodies still infer.
+- Allowed field types in **0.13.1**: `integer`, `float`, `boolean`, and other record types in scope (same file, or `alias.Name` for an imported `share record`).
+- `string`, `list`, `ref`, maps, and other heap types are **not** valid field types in this slice. `record Person: name: string` is an error: heap fields wait for 0.13.2.
+- Record types are **nominal**. `Point` is not `Size` even if both have two integers.
+- No inheritance, methods, generics, default field values, packed layout, or named-field construction.
+- Zero-field records are an error (no empty product yet).
+- A record must have at least one `field_decl`. An empty suite is an error, as for other blocks.
+- Duplicate field names in one record are an error.
+- Field names follow the reserved-word rules for identifiers.
+- A record must not be named `integer`, `float`, `boolean`, `string`, or `list`.
+
+Records are ordinary types. They may appear as locals, parameters, `give` types, list elements (`[Point(1, 2), Point(3, 4)]`), and nested record fields. `zeros(n)` still allocates `list[integer]` only. Indexing a list of records is checked: an out-of-range index traps, like boolean, string, and nested-list indexes.
+
+### Record declaration ordering
+
+Record declarations in one file may refer to records declared **later** in that file.
+
+```yukt
+record Box:
+    size: Size
+
+record Size:
+    w: integer
+    h: integer
+```
+
+This is valid. The compiler must:
+
+1. Collect every `record` / `share record` in the file (and every imported `share record` reachable from `use`).
+2. Resolve each field `type_name` against builtin types and those collected records.
+3. Then validate the record-type graph and compute layouts.
+
+Source order of `record` vs `create` does not restrict field types. A function may construct a record declared later in the same file (same collect-then-analyze rule as 0.12 function calls).
+
+### Recursion
+
+**No recursive records**, including indirect cycles. The record-type graph is a DAG.
+
+- `record Node: next: Node` is an error.
+- `record A: b: B` plus `record B: a: A` is an error, reported on the **edge that closes the cycle**, with a note listing one cycle as record names.
+
+A record may nest another record that does not path back to it.
+
+### Visibility
+
+Same model as functions.
+
+```yukt
+record Point:
+    x: integer
+    y: integer
+
+share record Size:
+    w: integer
+    h: integer
+```
+
+- `record` is **private** to the source file.
+- `share record` is **exported**. Importers name it `alias.Size`.
+- `share` is only valid immediately before `record` or `create`.
+
+### Imported record visibility
+
+Construction of an imported record is `geom.Point(1, 2)`, not unqualified `Point`, unless this file also defines `Point`.
+
+A **private** record cannot be used from another module in any of these ways, even if a caller could guess the field types:
+
+- `alias.Name(...)` construction
+- `alias.Name` as a field `type_name`
+- mentioning it in a `share create` parameter type or `give` type
+- mentioning it as a field of a `share record`
+
+```yukt
+# geom.yukt
+record Hidden:
+    x: integer
+    y: integer
+
+share record Point:
+    x: integer
+    y: integer
+
+share create origin:
+    give Point(0, 0)
+    # give Hidden(0, 0) is an error: private record escaping through share create
+```
+
+```yukt
+# app.yukt
+use geom
+
+create main:
+    p = geom.Point(1, 2)
+    # geom.Hidden(1, 2) is an error: Hidden is private
+    # h = Hidden(1, 2) is an error: no glob import; Hidden is not in this file
+```
+
+A `share record` field type must be a builtin 0.13.1 field type or a `share record` (same file or imported). A private record must not appear in a shared record’s fields.
+
+### Construction
+
+Positional only, **declaration order**.
+
+- `Point(1, 2)` is valid when `Point` is a record in this file with two fields of those types.
+- Missing fields, extra fields, or a type mismatch: compile error at the constructor, naming the record and the expected fields.
+- No named-field construction (`Point(x: 1)`) in 0.13.
+- Unqualified `Point(...)` does not search imports.
+
+Boolean fields are stored as specified in [Boolean ABI](#boolean-abi).
+
+### Dot resolution
+
+`.` already means **module qualification** on callees: `math.add(1, 2)` requires `(...)`.
+
+0.13.1 adds **field access** on values: `point.x` has no call parentheses. Resolution uses the **symbol’s actual kind and type**, not spelling:
+
+1. If the left name is a `use` alias in this file, it is a **namespace**. `alias.field` without `(...)` is an error (`math` is a module, not a value). `alias.name(...)` looks up a **shared** function or **shared** record constructor. Unknown or private names error at `.` with a note of what is shared (0.12 rule).
+2. If the form is `expr.name` without `(...)` and `expr` has a record type, the right name is a **field**. A missing field names the type and the known fields.
+3. If the form is `expr.name(...)` and `expr` is a record value (not a `use` alias), that is a method-call error. No methods in 0.13. `point.add(1)` is this error, not field access.
+4. If the left side is a known non-record, non-namespace value, error: `` `.` is field access or a module call, not valid on integer `` (or the actual type).
+5. If the left name is unknown, keep the 0.12 `Unknown name` diagnostic. Do not guess “maybe a module.”
+
+Field assignment: `point.x = 3`. Nested places are allowed: `box.size.w = 1`, `points[i].x = 1`. Assigning a nested field mutates that field in place inside the outer record or list element. `origin = widget.origin` copies bits; later `origin.x = 1` does not change `widget`.
+
+No methods (`point.greet()` waits).
+
+### Record equality
+
+`==` and `!=` on records are fieldwise, in declaration order, using the existing per-type equality of each field. They yield boolean. Equality does **not** compare padding bytes.
+
+- Same record type, corresponding fields equal → `==` is true.
+- `Point(1, 2) == Point(1, 2)` → true.
+- `Point(1, 2) == Point(1, 3)` → false.
+- Nested records compare fieldwise recursively.
+- `!=` is the negation of `==`.
+
+Float fields use **existing IEEE equality**, including NaN:
+
+- Language `==` on float is ordered equality (`NaN == NaN` is false). A record that contains NaN is therefore not equal to itself.
+- Example: if `s` is a `Sample` whose float field is NaN, then `s == s` is false. `0.0` and `-0.0` compare equal, as they do for float `==`.
+- Sort’s NaN total order (`-Inf < finite < +Inf < NaN`) is a `std/sort` rule. It does **not** apply to record `==`.
+
+Records of **different types** cannot be compared. That is a type error, not a false result:
+
+```yukt
+# Point(1, 2) == Size(1, 2) is an error, even if both have two integers
+# Point(1, 2) == 1 is an error
+```
+
+This is the same 0.12 rule that both sides of `==` / `!=` must have the same type. Distinct record declarations do not unify.
+
+### Record layout (host ABI)
+
+Field order is declaration order. Layout matches a C struct of the corresponding types on the **host** triple (the only triple 0.12/0.13 compile). Not packed.
+
+| YUKT field | C stand-in | Size | Align |
+| --- | --- | --- | --- |
+| `integer` | `int64_t` | 8 | 8 |
+| `float` | `double` | 8 | 8 |
+| `boolean` | `int8_t` 0 or 1 | 1 | 1 |
+| nested record | that record’s layout | its size | its align |
+
+Offsets:
+
+1. `offset_0 = 0`
+2. `offset_i = align_up(offset_{i-1} + size_{i-1}, align_i)`
+3. Record alignment = max of field alignments (at least 1)
+4. Record size = `align_up(end of last field, record alignment)`
+
+`align_up(n, a) = (n + a - 1) & ~(a - 1)` for power-of-two `a`.
+
+Examples:
+
+- `Point` with two integers: offsets 0 and 8, size 16, align 8.
+- `on: boolean` then `n: integer`: `on` at 0, seven bytes of padding, `n` at 8, size 16, align 8.
+
+This is the layout 0.13.4 will pass to C for scalar records. Changing it later is an ABI break; do not “optimize” padding in the compiler.
+
+Copy is memcpy of `size` bytes. Padding bytes are unspecified; they are copied with the record and ignored by `==`.
+
+### Boolean ABI
+
+Every YUKT boolean **field** occupies one `int8_t` and is **normalized to 0 or 1** on construction and on field assignment:
+
+- `false` is stored as `0`
+- `true` is stored as `1`
+
+No other byte value is a valid representation of a boolean field after a YUKT write. SSA booleans in the 0.12 LLVM lowering may still be `i1`; converting `i1` to `i8` `{0,1}` at a record field store is a lowering duty, not a language conversion. List boolean elements already use `int8_t` in the runtime; this slice does not change list layout.
+
+This keeps the C ABI of a boolean field predictable for 0.13.4. It is not implicit conversion between YUKT types.
+
+### Printing records
+
+`say` of a record prints the **declared** record name, then field values in declaration order, in constructor form, with `", "` between fields. Internal type identity stays module-qualified (`prefix$Name`); printing does not use that identity, so two imported `Point` types both print as `Point`:
+
+```text
+Point(1, 2)
+```
+
+Nested records print recursively. A list of records uses the existing list format with each element printed as a record, for example `[Point(1, 2), Point(3, 4)]`. Booleans print `true` / `false`. Integers and floats use the same formatting as `say` of those types. There is no trailing comma.
+
+### Diagnostics
+
+Every record error has file, line, and column. Required diagnostics:
+
+| Situation | Requirement |
+| --- | --- |
+| Unknown field | Error at `.`; name the record type and list known fields |
+| Module used as a value | `alias.field` without `(...)`; `math` is a namespace |
+| Value used as a module | Non-record left of a qualified call, or `.` on a known non-record |
+| Constructor arity or type | Error at the call; name expected fields and types |
+| Zero-field record | Error on the `record` line |
+| Heap field type in 0.13.1 | Error on the field; heap fields wait for 0.13.2 |
+| Cycle in record types | Error on the edge that closes the cycle; note one cycle |
+| Private record constructed or named from another module | Error at `.` or at the constructor; note that the record is private |
+| Private record escaping through `share create` or `share record` fields | Error on the shared declaration |
+| `==` / `!=` of different record types | Same-type error; do not compare structurally |
+| Methods | `point.add(1)` is not a field and not a call |
+| Unknown left name | 0.12 `Unknown name`; do not guess a module |
+
+### Architecture notes (0.12 compiler)
+
+These clarifications do **not** conflict with the 0.12 architecture. They extend it:
+
+- The analyzer already collects every `create` before checking bodies. Record declarations use the same collect-then-validate order so later records can appear in earlier field lists.
+- `==` already requires both operands to unify as one type. Distinct record names are distinct types (nominal), so different records cannot be compared.
+- LLVM currently materializes SSA booleans as `i1` and list booleans as `int8_t`. Record boolean fields follow the list/C `int8_t` ABI and normalize to 0 or 1 on store. That is a lowering mapping, not a change to language `true` / `false`.
+- Private records follow private functions: lookup is per-module, default hidden, `share` exports.
+
+Implementation must not mix record layout with heap drop. 0.13.1 has no destructors and does not call `yukt_release` for records.
+
+### Regression gate (0.13.1)
+
+This slice is implemented. The gate is:
+
+- Entire 0.12 CTest suite green, including `tests/stdlib/`.
+- New tests: private vs `share record`; import `alias.Point(...)`; rejection of `alias.Hidden(...)`; field get/set; constructor arity/types; later-declared nested records; cycle rejection; `.` on integer; `.` on a module without `(...)`; `Point(1, 2) == Point(1, 2)`; NaN field `==`; `Point == Size` type error; boolean field stored as 0 or 1; `std/list.fill` on `list[record]` is a type mismatch and must not emit LLVM.
+- `file` of a native binary still matches the host architecture.
+- No change to allocator caps, 0.11 benches, or `v0.12.1` behavior of programs that contain no records.
+
 

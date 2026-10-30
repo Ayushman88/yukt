@@ -30,6 +30,7 @@ enum class TokenKind {
     KwUse,
     KwShare,
     KwAs,
+    KwRecord,
 
     Plus,
     Minus,
@@ -102,6 +103,8 @@ inline constexpr std::string_view token_kind_name(TokenKind kind) {
             return "SHARE";
         case TokenKind::KwAs:
             return "AS";
+        case TokenKind::KwRecord:
+            return "RECORD";
         case TokenKind::Plus:
             return "PLUS";
         case TokenKind::Minus:
@@ -197,7 +200,8 @@ inline constexpr bool is_keyword(TokenKind kind) {
     return kind == TokenKind::KwCreate || kind == TokenKind::KwSay || kind == TokenKind::KwIf ||
            kind == TokenKind::KwOtherwise || kind == TokenKind::KwRepeat || kind == TokenKind::KwIn ||
            kind == TokenKind::KwGive || kind == TokenKind::KwTrue || kind == TokenKind::KwFalse ||
-           kind == TokenKind::KwUse || kind == TokenKind::KwShare || kind == TokenKind::KwAs;
+           kind == TokenKind::KwUse || kind == TokenKind::KwShare || kind == TokenKind::KwAs ||
+           kind == TokenKind::KwRecord;
 }
 
 }  // namespace yukt

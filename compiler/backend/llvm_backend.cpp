@@ -1,6 +1,7 @@
 #include "backend/llvm_backend.hpp"
 #include "driver/module.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -25,7 +26,9 @@
 #include <llvm/Analysis/CGSCCPassManager.h>
 #include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/IR/Attributes.h>
+#include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
+#include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/LegacyPassManager.h>
@@ -129,6 +132,8 @@ llvm::Type* llvm_type(llvm::LLVMContext& context, const IrType& type) {
         case IrTypeKind::String:
         case IrTypeKind::List:
             return llvm::PointerType::getUnqual(context);
+        case IrTypeKind::Record:
+            return llvm::PointerType::getUnqual(context);
         case IrTypeKind::Void:
             return llvm::Type::getVoidTy(context);
     }
@@ -161,6 +166,22 @@ private:
     llvm::StructType* list_struct_type();
     llvm::Value* list_data_pointer(llvm::Value* list);
     void attach_loop_metadata(llvm::Instruction* latch, const std::string& iterator);
+    llvm::Type* type_of(const IrType& type);
+    const IrRecord* find_record(int id) const;
+    llvm::StructType* record_type(int id);
+    unsigned record_llvm_index(int record_id, int field_index);
+    llvm::Type* stored_field_type(const IrType& type);
+    llvm::Value* to_stored_field(llvm::Value* value, const IrType& type);
+    llvm::Value* from_stored_field(llvm::Value* value, const IrType& type);
+    llvm::Value* emit_record_eq(llvm::Value* left, llvm::Value* right, int record_id);
+    bool type_has_record(const IrType& type) const;
+    std::int64_t record_byte_size(int id) const;
+    llvm::Value* cstr_ptr(const std::string& text);
+    void print_cstr(const std::string& text);
+    llvm::Value* list_get_value(llvm::Value* list, llvm::Value* index, const IrType& elem);
+    void emit_print_value(llvm::Value* value, const IrType& type);
+    void emit_print_record(llvm::Value* value, int record_id);
+    void emit_print_list(llvm::Value* list, const IrType& type);
 
     const IrModule& ir_;
     llvm::LLVMContext context_;
@@ -173,6 +194,8 @@ private:
     std::unordered_map<std::string, llvm::AllocaInst*> locals_;
     llvm::Function* current_fn_ = nullptr;
     int next_thunk_ = 0;
+    std::unordered_map<int, llvm::StructType*> record_types_;
+    std::unordered_map<int, std::vector<unsigned>> record_llvm_indices_;
 };
 
 LlvmEmitter::LlvmEmitter(const IrModule& ir)
@@ -313,6 +336,13 @@ void LlvmEmitter::declare_runtime() {
     runtime_["yukt_say_list"] = module_.getOrInsertFunction("yukt_say_list", void_ty, ptr);
     runtime_["yukt_str_concat"] = module_.getOrInsertFunction("yukt_str_concat", ptr, ptr, ptr);
     runtime_["yukt_list_new"] = module_.getOrInsertFunction("yukt_list_new", ptr, i64, i64);
+    runtime_["yukt_list_new_rec"] = module_.getOrInsertFunction("yukt_list_new_rec", ptr, i64, i64);
+    runtime_["yukt_list_set_rec"] = module_.getOrInsertFunction("yukt_list_set_rec", void_ty, ptr, i64, ptr, i64);
+    runtime_["yukt_list_get_rec"] = module_.getOrInsertFunction("yukt_list_get_rec", void_ty, ptr, i64, ptr, i64);
+    runtime_["yukt_print_i64"] = module_.getOrInsertFunction("yukt_print_i64", void_ty, i64);
+    runtime_["yukt_print_f64"] = module_.getOrInsertFunction("yukt_print_f64", void_ty, f64);
+    runtime_["yukt_print_bool"] = module_.getOrInsertFunction("yukt_print_bool", void_ty, i8);
+    runtime_["yukt_print_cstr"] = module_.getOrInsertFunction("yukt_print_cstr", void_ty, ptr);
     runtime_["yukt_list_set_i64"] = module_.getOrInsertFunction("yukt_list_set_i64", void_ty, ptr, i64, i64);
     runtime_["yukt_list_set_f64"] = module_.getOrInsertFunction("yukt_list_set_f64", void_ty, ptr, i64, f64);
     runtime_["yukt_list_set_bool"] = module_.getOrInsertFunction("yukt_list_set_bool", void_ty, ptr, i64, i8);
@@ -390,9 +420,9 @@ void LlvmEmitter::declare_functions() {
         std::vector<llvm::Type*> params;
         params.reserve(function.params.size());
         for (const auto& param : function.params) {
-            params.push_back(llvm_type(context_, param.second));
+            params.push_back(type_of(param.second));
         }
-        auto* type = llvm::FunctionType::get(llvm_type(context_, function.return_type), params, false);
+        auto* type = llvm::FunctionType::get(type_of(function.return_type), params, false);
         const auto linkage =
             function.name == "main" ? llvm::Function::ExternalLinkage : llvm::Function::InternalLinkage;
         auto* llvm_fn = llvm::Function::Create(type, linkage, mangle(function.name), module_);
@@ -443,7 +473,7 @@ void LlvmEmitter::emit_function(const IrFunction& function) {
 
     builder_.SetInsertPoint(blocks.at("entry"));
     for (const auto& local : function.locals) {
-        locals_[local.first] = builder_.CreateAlloca(llvm_type(context_, local.second), nullptr, local.first);
+        locals_[local.first] = builder_.CreateAlloca(type_of(local.second), nullptr, local.first);
     }
 
     unsigned index = 0;
@@ -492,7 +522,7 @@ llvm::Value* LlvmEmitter::materialize(const IrValue& value) {
         case IrValue::Kind::Temp:
             return temps_.at(value.id);
         case IrValue::Kind::Local:
-            return builder_.CreateLoad(llvm_type(context_, value.type), locals_.at(value.name));
+            return builder_.CreateLoad(type_of(value.type), locals_.at(value.name));
         case IrValue::Kind::ConstI64:
             return llvm::ConstantInt::get(llvm::Type::getInt64Ty(context_), static_cast<uint64_t>(value.i64), true);
         case IrValue::Kind::ConstF64:
@@ -505,7 +535,7 @@ llvm::Value* LlvmEmitter::materialize(const IrValue& value) {
             return builder_.CreateInBoundsGEP(text->getValueType(), text, {zero, zero});
         }
         case IrValue::Kind::Undef:
-            return llvm::PoisonValue::get(llvm_type(context_, value.type));
+            return llvm::PoisonValue::get(type_of(value.type));
     }
     return llvm::PoisonValue::get(llvm::Type::getInt64Ty(context_));
 }
@@ -516,7 +546,7 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
             builder_.CreateStore(materialize(inst.args[0]), locals_.at(inst.name));
             return nullptr;
         case IrOp::Load:
-            return builder_.CreateLoad(llvm_type(context_, inst.dest.type), locals_.at(inst.name));
+            return builder_.CreateLoad(type_of(inst.dest.type), locals_.at(inst.name));
         case IrOp::Un: {
             llvm::Value* operand = materialize(inst.args[0]);
             if (inst.args[0].type.kind == IrTypeKind::F64) {
@@ -527,6 +557,14 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
         case IrOp::Bin: {
             llvm::Value* left = materialize(inst.args[0]);
             llvm::Value* right = materialize(inst.args[1]);
+            if ((inst.bin == IrBinOp::Eq || inst.bin == IrBinOp::Ne) &&
+                inst.args[0].type.kind == IrTypeKind::Record) {
+                llvm::Value* eq = emit_record_eq(left, right, inst.args[0].type.record_id);
+                if (inst.bin == IrBinOp::Ne) {
+                    return builder_.CreateNot(eq);
+                }
+                return eq;
+            }
             const bool floating = inst.args[0].type.kind == IrTypeKind::F64;
             switch (inst.bin) {
                 case IrBinOp::Add:
@@ -575,6 +613,12 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
         case IrOp::List: {
             llvm::Value* length = materialize(inst.args[0]);
             const int kind = inst.dest.type.element != nullptr ? list_elem_kind(*inst.dest.type.element) : 0;
+            if (kind == 5 && inst.dest.type.element != nullptr) {
+                const std::int64_t stride = record_byte_size(inst.dest.type.element->record_id);
+                llvm::Value* stride_value =
+                    llvm::ConstantInt::get(llvm::Type::getInt64Ty(context_), static_cast<uint64_t>(stride));
+                return builder_.CreateCall(runtime("yukt_list_new_rec"), {length, stride_value});
+            }
             llvm::Value* kind_value =
                 llvm::ConstantInt::get(llvm::Type::getInt64Ty(context_), static_cast<uint64_t>(kind));
             return builder_.CreateCall(runtime("yukt_list_new"), {length, kind_value});
@@ -585,7 +629,7 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
             llvm::Value* value = materialize(inst.args[2]);
             const IrType elem = inst.args[2].type;
             if (elem.kind == IrTypeKind::I64 || elem.kind == IrTypeKind::F64) {
-                llvm::Type* elem_ty = llvm_type(context_, elem);
+                llvm::Type* elem_ty = type_of(elem);
                 llvm::Value* data = list_data_pointer(list);
                 llvm::Value* slot = builder_.CreateInBoundsGEP(elem_ty, data, index);
                 builder_.CreateStore(value, slot);
@@ -594,6 +638,13 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
                                     {list, index, builder_.CreateZExt(value, llvm::Type::getInt8Ty(context_))});
             } else if (elem.kind == IrTypeKind::String) {
                 builder_.CreateCall(runtime("yukt_list_set_cstr"), {list, index, value});
+            } else if (elem.kind == IrTypeKind::Record) {
+                llvm::Type* rec_ty = type_of(elem);
+                llvm::Value* tmp = builder_.CreateAlloca(rec_ty);
+                builder_.CreateStore(value, tmp);
+                llvm::Value* stride = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context_),
+                                                             static_cast<uint64_t>(record_byte_size(elem.record_id)));
+                builder_.CreateCall(runtime("yukt_list_set_rec"), {list, index, tmp, stride});
             } else {
                 builder_.CreateCall(runtime("yukt_list_set_list"), {list, index, value});
             }
@@ -602,21 +653,7 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
         case IrOp::ListGet: {
             llvm::Value* list = materialize(inst.args[0]);
             llvm::Value* index = materialize(inst.args[1]);
-            const IrType elem = inst.dest.type;
-            if (elem.kind == IrTypeKind::I64 || elem.kind == IrTypeKind::F64) {
-                llvm::Type* elem_ty = llvm_type(context_, elem);
-                llvm::Value* data = list_data_pointer(list);
-                llvm::Value* slot = builder_.CreateInBoundsGEP(elem_ty, data, index);
-                return builder_.CreateLoad(elem_ty, slot);
-            }
-            if (elem.kind == IrTypeKind::Bool) {
-                llvm::Value* raw = builder_.CreateCall(runtime("yukt_list_get_bool"), {list, index});
-                return builder_.CreateTrunc(raw, llvm::Type::getInt1Ty(context_));
-            }
-            if (elem.kind == IrTypeKind::String) {
-                return builder_.CreateCall(runtime("yukt_list_get_cstr"), {list, index});
-            }
-            return builder_.CreateCall(runtime("yukt_list_get_list"), {list, index});
+            return list_get_value(list, index, inst.dest.type);
         }
         case IrOp::ListLen: {
             llvm::Value* list = materialize(inst.args[0]);
@@ -636,7 +673,7 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
             field_types.reserve(inst.args.size() > 2 ? inst.args.size() - 1 : 1);
             for (std::size_t i = 2; i < inst.args.size(); ++i) {
                 captures.push_back(materialize(inst.args[i]));
-                field_types.push_back(llvm_type(context_, inst.args[i].type));
+                field_types.push_back(type_of(inst.args[i].type));
             }
             const bool reducing = !inst.reduce_local.empty();
             if (reducing) {
@@ -689,7 +726,10 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
         case IrOp::Say: {
             const IrValue& value = inst.args[0];
             llvm::Value* materialized = materialize(value);
-            if (value.type.kind == IrTypeKind::I64) {
+            if (value.type.kind == IrTypeKind::Record || type_has_record(value.type)) {
+                emit_print_value(materialized, value.type);
+                print_cstr("\n");
+            } else if (value.type.kind == IrTypeKind::I64) {
                 builder_.CreateCall(runtime("yukt_say_i64"), {materialized});
             } else if (value.type.kind == IrTypeKind::F64) {
                 builder_.CreateCall(runtime("yukt_say_f64"), {materialized});
@@ -702,6 +742,46 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
                 builder_.CreateCall(runtime("yukt_say_list"), {materialized});
             }
             return nullptr;
+        }
+        case IrOp::RecordNew: {
+            const int record_id = inst.dest.type.record_id;
+            const IrRecord* record = find_record(record_id);
+            llvm::Type* rec_ty = type_of(inst.dest.type);
+            llvm::Value* rec = llvm::UndefValue::get(rec_ty);
+            if (record != nullptr) {
+                const std::size_t count = std::min(inst.args.size(), record->fields.size());
+                for (std::size_t i = 0; i < count; ++i) {
+                    llvm::Value* stored = to_stored_field(materialize(inst.args[i]), record->fields[i].type);
+                    rec = builder_.CreateInsertValue(rec, stored, {record_llvm_index(record_id, static_cast<int>(i))});
+                }
+            }
+            return rec;
+        }
+        case IrOp::FieldGet: {
+            const IrType object_type = inst.args[0].type;
+            llvm::Value* object = materialize(inst.args[0]);
+            llvm::Value* loaded =
+                builder_.CreateExtractValue(object, {record_llvm_index(object_type.record_id, inst.field_index)});
+            const IrRecord* record = find_record(object_type.record_id);
+            IrType field_type = inst.dest.type;
+            if (record != nullptr && inst.field_index >= 0 &&
+                static_cast<std::size_t>(inst.field_index) < record->fields.size()) {
+                field_type = record->fields[static_cast<std::size_t>(inst.field_index)].type;
+            }
+            return from_stored_field(loaded, field_type);
+        }
+        case IrOp::FieldSet: {
+            const IrType object_type = inst.args[0].type;
+            llvm::Value* object = materialize(inst.args[0]);
+            const IrRecord* record = find_record(object_type.record_id);
+            IrType field_type = inst.args.size() > 1 ? inst.args[1].type : ir_i64();
+            if (record != nullptr && inst.field_index >= 0 &&
+                static_cast<std::size_t>(inst.field_index) < record->fields.size()) {
+                field_type = record->fields[static_cast<std::size_t>(inst.field_index)].type;
+            }
+            llvm::Value* stored = to_stored_field(materialize(inst.args[1]), field_type);
+            return builder_.CreateInsertValue(object, stored,
+                                              {record_llvm_index(object_type.record_id, inst.field_index)});
         }
     }
     return nullptr;
@@ -864,7 +944,7 @@ llvm::Value* LlvmEmitter::emit_stdlib_call(const IrInst& inst) {
     if (name == "std$stat$mean_f") {
         return call_runtime("yukt_stat_mean_f", {args.at(0)});
     }
-    return llvm::PoisonValue::get(llvm_type(context_, inst.dest.type));
+    return llvm::PoisonValue::get(type_of(inst.dest.type));
 }
 
 llvm::FunctionCallee LlvmEmitter::runtime(const std::string& name) const {
@@ -874,7 +954,246 @@ llvm::FunctionCallee LlvmEmitter::runtime(const std::string& name) const {
 llvm::StructType* LlvmEmitter::list_struct_type() {
     return llvm::StructType::get(context_,
                                  {llvm::Type::getInt64Ty(context_), llvm::Type::getInt64Ty(context_),
-                                  llvm::PointerType::getUnqual(context_)});
+                                  llvm::PointerType::getUnqual(context_), llvm::Type::getInt64Ty(context_)});
+}
+
+llvm::Type* LlvmEmitter::type_of(const IrType& type) {
+    if (type.kind == IrTypeKind::Record) {
+        return record_type(type.record_id);
+    }
+    return llvm_type(context_, type);
+}
+
+const IrRecord* LlvmEmitter::find_record(int id) const {
+    for (const auto& record : ir_.records) {
+        if (record.id == id) {
+            return &record;
+        }
+    }
+    return nullptr;
+}
+
+std::int64_t LlvmEmitter::record_byte_size(int id) const {
+    const IrRecord* record = find_record(id);
+    return record != nullptr && record->size > 0 ? record->size : 0;
+}
+
+bool LlvmEmitter::type_has_record(const IrType& type) const {
+    if (type.kind == IrTypeKind::Record) {
+        return true;
+    }
+    if (type.kind == IrTypeKind::List && type.element != nullptr) {
+        return type_has_record(*type.element);
+    }
+    return false;
+}
+
+llvm::StructType* LlvmEmitter::record_type(int id) {
+    if (const auto found = record_types_.find(id); found != record_types_.end()) {
+        return found->second;
+    }
+    const IrRecord* record = find_record(id);
+    const std::string name = record != nullptr
+                                 ? (record->identity.empty() ? record->name : record->identity)
+                                 : ("anon" + std::to_string(id));
+    auto* st = llvm::StructType::create(context_, "yukt.rec." + name);
+    record_types_[id] = st;
+    std::vector<llvm::Type*> elems;
+    std::vector<unsigned> indices;
+    if (record != nullptr) {
+        elems.reserve(record->fields.size());
+        indices.reserve(record->fields.size());
+        for (std::size_t i = 0; i < record->fields.size(); ++i) {
+            indices.push_back(static_cast<unsigned>(elems.size()));
+            elems.push_back(stored_field_type(record->fields[i].type));
+        }
+    }
+    st->setBody(elems, false);
+    record_llvm_indices_[id] = std::move(indices);
+    return st;
+}
+
+unsigned LlvmEmitter::record_llvm_index(int record_id, int field_index) {
+    record_type(record_id);
+    const auto found = record_llvm_indices_.find(record_id);
+    if (found == record_llvm_indices_.end() || field_index < 0 ||
+        static_cast<std::size_t>(field_index) >= found->second.size()) {
+        return field_index < 0 ? 0 : static_cast<unsigned>(field_index);
+    }
+    return found->second[static_cast<std::size_t>(field_index)];
+}
+
+llvm::Type* LlvmEmitter::stored_field_type(const IrType& type) {
+    if (type.kind == IrTypeKind::Bool) {
+        return llvm::Type::getInt8Ty(context_);
+    }
+    return type_of(type);
+}
+
+llvm::Value* LlvmEmitter::to_stored_field(llvm::Value* value, const IrType& type) {
+    if (type.kind == IrTypeKind::Bool) {
+        return builder_.CreateZExt(value, llvm::Type::getInt8Ty(context_));
+    }
+    return value;
+}
+
+llvm::Value* LlvmEmitter::from_stored_field(llvm::Value* value, const IrType& type) {
+    if (type.kind == IrTypeKind::Bool) {
+        return builder_.CreateTrunc(value, llvm::Type::getInt1Ty(context_));
+    }
+    return value;
+}
+
+llvm::Value* LlvmEmitter::emit_record_eq(llvm::Value* left, llvm::Value* right, int record_id) {
+    const IrRecord* record = find_record(record_id);
+    llvm::Value* acc = llvm::ConstantInt::getTrue(context_);
+    if (record == nullptr) {
+        return acc;
+    }
+    for (int i = 0; i < static_cast<int>(record->fields.size()); ++i) {
+        const IrType& field = record->fields[static_cast<std::size_t>(i)].type;
+        const unsigned index = record_llvm_index(record_id, i);
+        llvm::Value* l = builder_.CreateExtractValue(left, {index});
+        llvm::Value* r = builder_.CreateExtractValue(right, {index});
+        llvm::Value* cmp = nullptr;
+        if (field.kind == IrTypeKind::Record) {
+            cmp = emit_record_eq(l, r, field.record_id);
+        } else if (field.kind == IrTypeKind::F64) {
+            cmp = builder_.CreateFCmpOEQ(l, r);
+        } else {
+            cmp = builder_.CreateICmpEQ(l, r);
+        }
+        acc = builder_.CreateAnd(acc, cmp);
+    }
+    return acc;
+}
+
+llvm::Value* LlvmEmitter::cstr_ptr(const std::string& text) {
+    llvm::GlobalVariable* text_global = builder_.CreateGlobalString(text);
+    llvm::Value* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context_), 0);
+    return builder_.CreateInBoundsGEP(text_global->getValueType(), text_global, {zero, zero});
+}
+
+void LlvmEmitter::print_cstr(const std::string& text) {
+    builder_.CreateCall(runtime("yukt_print_cstr"), {cstr_ptr(text)});
+}
+
+llvm::Value* LlvmEmitter::list_get_value(llvm::Value* list, llvm::Value* index, const IrType& elem) {
+    if (elem.kind == IrTypeKind::I64 || elem.kind == IrTypeKind::F64) {
+        llvm::Type* elem_ty = type_of(elem);
+        llvm::Value* data = list_data_pointer(list);
+        llvm::Value* slot = builder_.CreateInBoundsGEP(elem_ty, data, index);
+        return builder_.CreateLoad(elem_ty, slot);
+    }
+    if (elem.kind == IrTypeKind::Bool) {
+        llvm::Value* raw = builder_.CreateCall(runtime("yukt_list_get_bool"), {list, index});
+        return builder_.CreateTrunc(raw, llvm::Type::getInt1Ty(context_));
+    }
+    if (elem.kind == IrTypeKind::String) {
+        return builder_.CreateCall(runtime("yukt_list_get_cstr"), {list, index});
+    }
+    if (elem.kind == IrTypeKind::Record) {
+        llvm::Type* rec_ty = type_of(elem);
+        llvm::Value* tmp = builder_.CreateAlloca(rec_ty);
+        llvm::Value* stride = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context_),
+                                                     static_cast<uint64_t>(record_byte_size(elem.record_id)));
+        builder_.CreateCall(runtime("yukt_list_get_rec"), {list, index, tmp, stride});
+        return builder_.CreateLoad(rec_ty, tmp);
+    }
+    return builder_.CreateCall(runtime("yukt_list_get_list"), {list, index});
+}
+
+void LlvmEmitter::emit_print_value(llvm::Value* value, const IrType& type) {
+    switch (type.kind) {
+        case IrTypeKind::I64:
+            builder_.CreateCall(runtime("yukt_print_i64"), {value});
+            return;
+        case IrTypeKind::F64:
+            builder_.CreateCall(runtime("yukt_print_f64"), {value});
+            return;
+        case IrTypeKind::Bool:
+            builder_.CreateCall(runtime("yukt_print_bool"),
+                                {builder_.CreateZExt(value, llvm::Type::getInt8Ty(context_))});
+            return;
+        case IrTypeKind::String:
+            builder_.CreateCall(runtime("yukt_print_cstr"), {value});
+            return;
+        case IrTypeKind::Record:
+            emit_print_record(value, type.record_id);
+            return;
+        case IrTypeKind::List:
+            emit_print_list(value, type);
+            return;
+        case IrTypeKind::Void:
+            return;
+    }
+}
+
+void LlvmEmitter::emit_print_record(llvm::Value* value, int record_id) {
+    const IrRecord* record = find_record(record_id);
+    print_cstr(record != nullptr ? record->name : "record");
+    print_cstr("(");
+    if (record != nullptr) {
+        for (int i = 0; i < static_cast<int>(record->fields.size()); ++i) {
+            if (i != 0) {
+                print_cstr(", ");
+            }
+            llvm::Value* field =
+                builder_.CreateExtractValue(value, {record_llvm_index(record_id, i)});
+            emit_print_value(from_stored_field(field, record->fields[static_cast<std::size_t>(i)].type),
+                             record->fields[static_cast<std::size_t>(i)].type);
+        }
+    }
+    print_cstr(")");
+}
+
+void LlvmEmitter::emit_print_list(llvm::Value* list, const IrType& type) {
+    print_cstr("[");
+    auto* fn = current_fn_;
+    if (fn == nullptr) {
+        print_cstr("]");
+        return;
+    }
+    llvm::Value* is_null =
+        builder_.CreateICmpEQ(list, llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(context_)));
+    auto* nonempty = llvm::BasicBlock::Create(context_, "rec.list.nonempty", fn);
+    auto* loop = llvm::BasicBlock::Create(context_, "rec.list.loop", fn);
+    auto* body = llvm::BasicBlock::Create(context_, "rec.list.body", fn);
+    auto* comma = llvm::BasicBlock::Create(context_, "rec.list.comma", fn);
+    auto* elem = llvm::BasicBlock::Create(context_, "rec.list.elem", fn);
+    auto* done = llvm::BasicBlock::Create(context_, "rec.list.done", fn);
+    builder_.CreateCondBr(is_null, done, nonempty);
+
+    builder_.SetInsertPoint(nonempty);
+    llvm::Value* length_ptr = builder_.CreateStructGEP(list_struct_type(), list, 0);
+    llvm::Value* length = builder_.CreateLoad(llvm::Type::getInt64Ty(context_), length_ptr);
+    llvm::Value* index_ptr = builder_.CreateAlloca(llvm::Type::getInt64Ty(context_));
+    builder_.CreateStore(llvm::ConstantInt::get(llvm::Type::getInt64Ty(context_), 0), index_ptr);
+    builder_.CreateBr(loop);
+
+    builder_.SetInsertPoint(loop);
+    llvm::Value* index = builder_.CreateLoad(llvm::Type::getInt64Ty(context_), index_ptr);
+    llvm::Value* more = builder_.CreateICmpSLT(index, length);
+    builder_.CreateCondBr(more, body, done);
+
+    builder_.SetInsertPoint(body);
+    llvm::Value* first = builder_.CreateICmpEQ(index, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context_), 0));
+    builder_.CreateCondBr(first, elem, comma);
+
+    builder_.SetInsertPoint(comma);
+    print_cstr(", ");
+    builder_.CreateBr(elem);
+
+    builder_.SetInsertPoint(elem);
+    const IrType element = type.element != nullptr ? *type.element : ir_i64();
+    llvm::Value* item = list_get_value(list, index, element);
+    emit_print_value(item, element);
+    builder_.CreateStore(builder_.CreateAdd(index, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context_), 1)),
+                         index_ptr);
+    builder_.CreateBr(loop);
+
+    builder_.SetInsertPoint(done);
+    print_cstr("]");
 }
 
 llvm::Value* LlvmEmitter::list_data_pointer(llvm::Value* list) {

@@ -1,0 +1,16 @@
+record Point:
+    x: integer
+    y: integer
+
+create main:
+    p = Point(1, 2)
+    say p
+    say p.x
+    p.x = 3
+    say p
+    q = p
+    q.y = 9
+    say p
+    say q
+    say p == Point(3, 2)
+    say p != q

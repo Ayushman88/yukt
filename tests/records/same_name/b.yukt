@@ -1,0 +1,5 @@
+share record Point:
+    n: integer
+
+share create make:
+    give Point(9)

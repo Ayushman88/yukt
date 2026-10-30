@@ -1,0 +1,8 @@
+record Sample:
+    v: float
+
+create main:
+    n = 0.0 / 0.0
+    s = Sample(n)
+    say s == s
+    say s != s

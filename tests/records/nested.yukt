@@ -1,0 +1,14 @@
+record Box:
+    origin: Point
+    w: integer
+
+record Point:
+    x: integer
+    y: integer
+
+create main:
+    b = Box(Point(1, 2), 5)
+    say b
+    b.origin.x = 8
+    say b.origin.x
+    say b

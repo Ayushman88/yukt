@@ -43,7 +43,7 @@ std::unique_ptr<Program> Parser::parse_program() {
         program->span.start = peek().location;
     }
 
-    bool seen_function = false;
+    bool seen_item = false;
     while (!is_at_end()) {
         const std::size_t before = current_;
         skip_newlines();
@@ -51,22 +51,44 @@ std::unique_ptr<Program> Parser::parse_program() {
             break;
         }
         if (check(TokenKind::KwUse)) {
-            if (seen_function) {
+            if (seen_item) {
                 error_at(peek(), "Unexpected token",
-                         "`use` must appear before any `create` in this file.",
+                         "`use` must appear before any `create` or `record` in this file.",
                          "Move this `use` to the top of the file.");
                 synchronize();
             } else {
                 program->uses.push_back(parse_use());
             }
-        } else if (check(TokenKind::KwShare) || check(TokenKind::KwCreate)) {
-            seen_function = true;
-            if (auto function = parse_function()) {
+        } else if (check(TokenKind::KwShare) || check(TokenKind::KwCreate) || check(TokenKind::KwRecord)) {
+            seen_item = true;
+            bool shared = false;
+            if (match(TokenKind::KwShare)) {
+                shared = true;
+                if (check(TokenKind::KwRecord)) {
+                    if (auto record = parse_record(true)) {
+                        program->records.push_back(std::move(record));
+                    }
+                } else if (check(TokenKind::KwCreate)) {
+                    if (auto function = parse_function(true)) {
+                        program->functions.push_back(std::move(function));
+                    }
+                } else {
+                    error_at(peek(), "Unexpected token",
+                             "`share` is only valid immediately before `create` or `record`.",
+                             "Write `share create name:` or `share record Name:`.");
+                    synchronize();
+                }
+                (void)shared;
+            } else if (check(TokenKind::KwRecord)) {
+                if (auto record = parse_record(false)) {
+                    program->records.push_back(std::move(record));
+                }
+            } else if (auto function = parse_function(false)) {
                 program->functions.push_back(std::move(function));
             }
         } else {
             error_at(peek(), "Unexpected token",
-                     "Top-level code must start with `use` or a `create` function declaration. Found " +
+                     "Top-level code must start with `use`, `record`, or a `create` function declaration. Found " +
                          token_description(peek()) + ".",
                      "Wrap this code in `create main:` or move it into an existing function.");
             synchronize();
@@ -78,6 +100,8 @@ std::unique_ptr<Program> Parser::parse_program() {
 
     if (!program->functions.empty()) {
         program->span.end = program->functions.back()->span.end;
+    } else if (!program->records.empty()) {
+        program->span.end = program->records.back()->span.end;
     }
     return program;
 }
@@ -129,21 +153,140 @@ UseDecl Parser::parse_use() {
     return use;
 }
 
-std::unique_ptr<FunctionDecl> Parser::parse_function() {
+std::unique_ptr<RecordDecl> Parser::parse_record(bool shared) {
+    const Token start = peek();
+    auto record = std::make_unique<RecordDecl>();
+    record->span.start = start.location;
+    record->shared = shared;
+
+    if (!consume(TokenKind::KwRecord, "Unexpected token",
+                 "Expected `record` to start a record declaration.",
+                 "Write `record Name:` or `share record Name:`.")) {
+        synchronize();
+        return nullptr;
+    }
+
+    if (!check(TokenKind::Identifier)) {
+        if (is_keyword(peek().kind)) {
+            error_at(peek(), "Reserved word",
+                     "`" + peek().lexeme + "` is reserved and cannot be a record name.",
+                     "Choose a different record name.");
+        } else {
+            error_at(peek(), "Unexpected token",
+                     "Expected a record name after `record`. Found " + token_description(peek()) + ".",
+                     "Write `record Point:`.");
+        }
+        synchronize();
+        return nullptr;
+    }
+    const Token name = advance();
+    record->name = name.lexeme;
+    record->name_location = name.location;
+
+    if (!consume(TokenKind::Colon, "Unexpected token",
+                 "Expected `:` after the record name.",
+                 "Write `record Point:` and indent the fields.")) {
+        synchronize();
+        return nullptr;
+    }
+    if (!consume(TokenKind::Newline, "Unexpected token",
+                 "Expected a newline after `record " + record->name + ":`.",
+                 "Put fields on the following indented lines.")) {
+        synchronize();
+        return nullptr;
+    }
+    if (!consume(TokenKind::Indent, "Unexpected token",
+                 "Expected an indented field list after `record " + record->name + ":`.",
+                 "Indent the fields, for example `    x: integer`.")) {
+        synchronize();
+        return nullptr;
+    }
+
+    while (!is_at_end() && !check(TokenKind::Dedent) && !check(TokenKind::EndOfFile)) {
+        skip_newlines();
+        if (check(TokenKind::Dedent) || is_at_end()) {
+            break;
+        }
+        if (!check(TokenKind::Identifier)) {
+            error_at(peek(), "Unexpected token",
+                     "Expected a field name. Found " + token_description(peek()) + ".",
+                     "Write `name: integer`.");
+            synchronize();
+            break;
+        }
+        FieldDecl field;
+        const Token field_name = advance();
+        field.name = field_name.lexeme;
+        field.name_location = field_name.location;
+        field.span.start = field_name.location;
+        if (!consume(TokenKind::Colon, "Unexpected token",
+                     "Expected `:` after field `" + field.name + "`.",
+                     "Write `" + field.name + ": integer`.")) {
+            synchronize();
+            break;
+        }
+        field.type = parse_type_name();
+        field.span.end = previous().location;
+        expect_newline("after this field");
+        record->fields.push_back(std::move(field));
+    }
+
+    if (!consume(TokenKind::Dedent, "Unexpected token",
+                 "Expected the field list to end.",
+                 "Dedent after the last field.")) {
+        synchronize();
+    }
+    record->span.end = previous().location;
+    if (record->fields.empty()) {
+        error_at(name, "Invalid record",
+                 "Record `" + record->name + "` has no fields.",
+                 "Add at least one field, for example `x: integer`.");
+    }
+    return record;
+}
+
+TypeName Parser::parse_type_name() {
+    TypeName type;
+    if (!check(TokenKind::Identifier)) {
+        error_at(peek(), "Unexpected token",
+                 "Expected a type name. Found " + token_description(peek()) + ".",
+                 "Use `integer`, `float`, `boolean`, or a record name.");
+        return type;
+    }
+    const Token first = advance();
+    type.span.start = first.location;
+    if (check(TokenKind::Dot)) {
+        type.qualifier = first.lexeme;
+        type.qualifier_location = first.location;
+        type.dot_location = peek().location;
+        advance();
+        if (!check(TokenKind::Identifier)) {
+            error_at(peek(), "Unexpected token",
+                     "Expected a record name after `" + type.qualifier + ".`. Found " +
+                         token_description(peek()) + ".",
+                     "Write a qualified type such as `geom.Point`.");
+            type.name = first.lexeme;
+            type.name_location = first.location;
+            type.span.end = first.location;
+            return type;
+        }
+        const Token second = advance();
+        type.name = second.lexeme;
+        type.name_location = second.location;
+        type.span.end = second.location;
+        return type;
+    }
+    type.name = first.lexeme;
+    type.name_location = first.location;
+    type.span.end = first.location;
+    return type;
+}
+
+std::unique_ptr<FunctionDecl> Parser::parse_function(bool shared) {
     const Token start = peek();
     auto function = std::make_unique<FunctionDecl>();
     function->span.start = start.location;
-
-    if (match(TokenKind::KwShare)) {
-        function->shared = true;
-        if (!check(TokenKind::KwCreate)) {
-            error_at(peek(), "Unexpected token",
-                     "`share` is only valid immediately before `create`.",
-                     "Write `share create name:`.");
-            synchronize();
-            return nullptr;
-        }
-    }
+    function->shared = shared;
 
     if (!consume(TokenKind::KwCreate, "Unexpected token",
                  "Expected `create` to start a function declaration.",
@@ -254,10 +397,10 @@ std::unique_ptr<Stmt> Parser::parse_statement() {
         synchronize();
         return nullptr;
     }
-    if (check(TokenKind::KwCreate)) {
+    if (check(TokenKind::KwCreate) || check(TokenKind::KwRecord) || check(TokenKind::KwShare)) {
         error_at(peek(), "Unexpected token",
-                 "`create` cannot start a statement inside a function.",
-                 "Move this function to the top level.");
+                 "`" + peek().lexeme + "` cannot start a statement inside a function.",
+                 "Move this declaration to the top level.");
         synchronize();
         return nullptr;
     }
@@ -273,72 +416,63 @@ std::unique_ptr<Stmt> Parser::parse_statement() {
 }
 
 std::unique_ptr<Stmt> Parser::parse_assignment_or_call() {
-    if (check_next(TokenKind::LBracket)) {
-        auto target = parse_postfix();
-        auto* index = dynamic_cast<IndexExpr*>(target.get());
-        if (index == nullptr || !consume(TokenKind::Equal, "Unexpected token",
-                                         "Expected `=` after this list index.",
-                                         "Write `items[i] = value`.")) {
-            synchronize();
-            return nullptr;
-        }
-        auto stmt = std::make_unique<IndexAssignStmt>();
-        stmt->span.start = target->span.start;
-        stmt->collection = std::move(index->collection);
-        stmt->index = std::move(index->index);
-        stmt->value = parse_expression();
-        expect_newline("after this indexed assignment");
-        stmt->span.end = previous().location;
-        return stmt;
+    auto target = parse_postfix();
+    if (target == nullptr) {
+        synchronize();
+        return nullptr;
     }
 
-    const Token name = advance();
     if (match(TokenKind::Equal)) {
-        auto stmt = std::make_unique<AssignStmt>();
-        stmt->name = name.lexeme;
-        stmt->name_location = name.location;
-        stmt->span.start = name.location;
-        stmt->value = parse_expression();
-        expect_newline("after this assignment");
-        stmt->span.end = previous().location;
-        return stmt;
+        if (auto* ident = dynamic_cast<IdentifierExpr*>(target.get())) {
+            auto stmt = std::make_unique<AssignStmt>();
+            stmt->name = ident->name;
+            stmt->name_location = ident->span.start;
+            stmt->span.start = ident->span.start;
+            stmt->value = parse_expression();
+            expect_newline("after this assignment");
+            stmt->span.end = previous().location;
+            return stmt;
+        }
+        if (auto* index = dynamic_cast<IndexExpr*>(target.get())) {
+            auto stmt = std::make_unique<IndexAssignStmt>();
+            stmt->span.start = target->span.start;
+            stmt->collection = std::move(index->collection);
+            stmt->index = std::move(index->index);
+            stmt->value = parse_expression();
+            expect_newline("after this indexed assignment");
+            stmt->span.end = previous().location;
+            return stmt;
+        }
+        if (auto* field = dynamic_cast<FieldExpr*>(target.get())) {
+            auto stmt = std::make_unique<FieldAssignStmt>();
+            stmt->span.start = target->span.start;
+            stmt->object = std::move(field->object);
+            stmt->field = field->field;
+            stmt->field_location = field->field_location;
+            stmt->value = parse_expression();
+            expect_newline("after this field assignment");
+            stmt->span.end = previous().location;
+            return stmt;
+        }
+        error_at(previous(), "Unexpected token",
+                 "This expression cannot be assigned.",
+                 "Assign a name, a list index, or a record field.");
+        synchronize();
+        return nullptr;
     }
 
-    if (check(TokenKind::LParen)) {
+    if (dynamic_cast<CallExpr*>(target.get()) != nullptr) {
         auto stmt = std::make_unique<ExprStmt>();
-        stmt->span.start = name.location;
-        stmt->expr = parse_call_from_name(name);
-        expect_newline("after this function call");
-        stmt->span.end = previous().location;
-        return stmt;
-    }
-
-    if (check(TokenKind::Dot)) {
-        const Token dot = advance();
-        Token callee;
-        if (!take_function_name(callee, ".")) {
-            synchronize();
-            return nullptr;
-        }
-        if (!check(TokenKind::LParen)) {
-            error_at(peek(), "Unexpected token",
-                     "Qualified names must be called. Found " + token_description(peek()) + " after `" + name.lexeme +
-                         "." + callee.lexeme + "`.",
-                     "Write `" + name.lexeme + "." + callee.lexeme + "(...)`.");
-            synchronize();
-            return nullptr;
-        }
-        auto stmt = std::make_unique<ExprStmt>();
-        stmt->span.start = name.location;
-        stmt->expr = parse_call_from_tokens(name, callee, dot.location);
+        stmt->span.start = target->span.start;
+        stmt->expr = std::move(target);
         expect_newline("after this function call");
         stmt->span.end = previous().location;
         return stmt;
     }
 
     error_at(peek(), "Unexpected token",
-             "Expected `=` or `(` after `" + name.lexeme + "`. Found " + token_description(peek()) + ".",
-             "Write `" + name.lexeme + " = value` or `" + name.lexeme + "(...)`.");
+             "Expected `=` after this expression. Found " + token_description(peek()) + ".",
+             "Write an assignment or a function call.");
     synchronize();
     return nullptr;
 }
@@ -496,15 +630,37 @@ std::unique_ptr<Expr> Parser::parse_unary() {
 
 std::unique_ptr<Expr> Parser::parse_postfix() {
     auto expr = parse_primary();
-    while (match(TokenKind::LBracket)) {
-        auto index = std::make_unique<IndexExpr>();
-        index->span.start = expr != nullptr ? expr->span.start : previous().location;
-        index->collection = std::move(expr);
-        index->index = parse_expression();
-        consume(TokenKind::RBracket, "Unexpected token", "Expected `]` after this index.",
-                "Close the index, for example `items[i]`.");
-        index->span.end = previous().location;
-        expr = std::move(index);
+    while (true) {
+        if (match(TokenKind::LBracket)) {
+            auto index = std::make_unique<IndexExpr>();
+            index->span.start = expr != nullptr ? expr->span.start : previous().location;
+            index->collection = std::move(expr);
+            index->index = parse_expression();
+            consume(TokenKind::RBracket, "Unexpected token", "Expected `]` after this index.",
+                    "Close the index, for example `items[i]`.");
+            index->span.end = previous().location;
+            expr = std::move(index);
+            continue;
+        }
+        if (match(TokenKind::Dot)) {
+            const Token dot = previous();
+            if (!check(TokenKind::Identifier)) {
+                error_at(peek(), "Unexpected token",
+                         "Expected a field name after `.`. Found " + token_description(peek()) + ".",
+                         "Write `point.x`.");
+                return expr;
+            }
+            const Token field = advance();
+            auto access = std::make_unique<FieldExpr>();
+            access->span.start = expr != nullptr ? expr->span.start : dot.location;
+            access->object = std::move(expr);
+            access->field = field.lexeme;
+            access->field_location = field.location;
+            access->span.end = field.location;
+            expr = std::move(access);
+            continue;
+        }
+        break;
     }
     return expr;
 }
@@ -564,19 +720,18 @@ std::unique_ptr<Expr> Parser::parse_primary() {
         if (check(TokenKind::LParen)) {
             return parse_call_from_name(name);
         }
-        if (check(TokenKind::Dot)) {
-            const Token dot = advance();
-            Token callee;
-            if (!take_function_name(callee, ".")) {
-                return nullptr;
+        if (check(TokenKind::Dot) && current_ + 2 < tokens_.size() &&
+            tokens_[current_ + 2].kind == TokenKind::LParen) {
+            const TokenKind name_kind = tokens_[current_ + 1].kind;
+            const bool name_ok =
+                name_kind == TokenKind::Identifier || name_kind == TokenKind::KwRepeat || is_keyword(name_kind);
+            if (name_ok) {
+                const Token dot = advance();
+                Token callee;
+                if (take_function_name(callee, ".")) {
+                    return parse_call_from_tokens(name, callee, dot.location);
+                }
             }
-            if (!check(TokenKind::LParen)) {
-                error_at(peek(), "Unexpected token",
-                         "`" + name.lexeme + "." + callee.lexeme + "` is not a value. Call it with `()`.",
-                         "Write `" + name.lexeme + "." + callee.lexeme + "(...)`.");
-                return nullptr;
-            }
-            return parse_call_from_tokens(name, callee, dot.location);
         }
         auto expr = std::make_unique<IdentifierExpr>();
         expr->span.start = name.location;
@@ -761,7 +916,7 @@ void Parser::synchronize() {
         }
         if (peek().kind == TokenKind::Dedent || peek().kind == TokenKind::KwCreate ||
             peek().kind == TokenKind::KwShare || peek().kind == TokenKind::KwUse ||
-            peek().kind == TokenKind::KwSay || peek().kind == TokenKind::KwIf ||
+            peek().kind == TokenKind::KwRecord || peek().kind == TokenKind::KwSay || peek().kind == TokenKind::KwIf ||
             peek().kind == TokenKind::KwRepeat || peek().kind == TokenKind::KwGive) {
             return;
         }

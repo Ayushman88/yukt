@@ -2,7 +2,7 @@
 
 YUKT is an English-inspired, statically typed, compiled programming language. This repository contains its compiler, language specification, and tests.
 
-The current release is **0.12.1**. 0.11 remains tagged `v0.11.0`. 0.12.0 is the module-system tag. `yukt build` and `yukt run` produce **host-native** binaries (Apple Silicon macOS and Linux x86-64) optimized at LLVM O3, including multi-file programs linked through `use`. Independent `repeat` loops and simple `+`/`*` reductions may run in parallel when estimated work is large; the runtime can still sequentialize a call that is not worth dispatching. `yukt --explain` reports those decisions only when they appear in generated LLVM IR. See `docs/YUKT_011_DESIGN.md`, `docs/YUKT_012_DESIGN.md`, `docs/EXECUTION_ENGINE.md`, `docs/RUNTIME.md`, and `docs/STDLIB.md`. Shipped library modules: `std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`.
+The current public tags are **v0.12.1** and **v0.11.0**. 0.13.1 records are **implemented on this tree**; there is no `v0.13.1` tag yet, and 0.13.2 has not started. `yukt build` and `yukt run` produce **host-native** binaries optimized at LLVM O3, including multi-file programs linked through `use`. Independent `repeat` loops and simple `+`/`*` reductions may run in parallel when estimated work is large; the runtime can still sequentialize a call that is not worth dispatching. `yukt --explain` reports those decisions only when they appear in generated LLVM IR. See `docs/YUKT_011_DESIGN.md`, `docs/YUKT_012_DESIGN.md`, `docs/YUKT_013_DESIGN.md`, `docs/EXECUTION_ENGINE.md`, `docs/RUNTIME.md`, and `docs/STDLIB.md`. Shipped library modules: `std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`. This 0.13.1 records slice has been verified on Apple Silicon macOS; Linux x86-64 CI is the 0.11/0.12 host-native gate and has not been re-run for this untagged tree.
 
 ## Example
 
@@ -47,13 +47,14 @@ YUKT is running!
 | Automatic parallelization | Implemented (conservative + simple +/* reductions) |
 | SIMD / loop vectorize | Implemented via LLVM |
 | C++ / Rust benches | `benches/` and `docs/BENCHMARKS.md` (per-host) |
-| Host-native CI | macOS arm64 and Ubuntu x86-64 |
+| Host-native CI | macOS arm64 and Ubuntu x86-64 (0.11/0.12). 0.13.1 records are unverified on Linux |
 | Performance engineering | Implemented (0.08); see `docs/PERFORMANCE_ANALYSIS_0.08.md` |
 | Compiler optimization | Implemented (0.09); see `docs/PERFORMANCE_ANALYSIS_0.09.md` |
 | Intelligent execution engine | Implemented (0.10); see `docs/PERFORMANCE_ANALYSIS_0.10.md` |
 | Portability / intelligence | Frozen (0.11); see `docs/YUKT_011_AUDIT.md` |
 | Modules (`use` / `share` / `as`) | Implemented (0.12); see `docs/LANGUAGE_SPEC.md` |
 | Standard library APIs | `std/str`, `std/list`, `std/sort`, `std/math`, `std/stat` |
+| Records (`record` / `share record`) | Implemented on this tree (0.13.1, untagged); see `docs/LANGUAGE_SPEC.md` |
 
 `yukt file.yukt` type-checks. `yukt build` and `yukt run` generate native code through LLVM.
 
@@ -128,6 +129,7 @@ std/         Standard library modules (`str`, `list`, `sort`, `math`, `stat`)
 tests/       CTest suites
 examples/    Sample YUKT programs
 docs/        Language and compiler documentation
+scripts/     Release verification (`verify-release.sh`)
 tools/       Reserved for developer tools
 ```
 

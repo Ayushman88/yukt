@@ -1,0 +1,9 @@
+share record Point:
+    x: integer
+    y: integer
+
+record Hidden:
+    n: integer
+
+share create origin:
+    give Point(0, 0)

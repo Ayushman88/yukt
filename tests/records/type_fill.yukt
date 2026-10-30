@@ -1,0 +1,10 @@
+use std/list as list
+
+record Point:
+    x: integer
+    y: integer
+
+create main:
+    points = [Point(1, 2), Point(3, 4)]
+    list.fill(points, Point(9, 8))
+    say points

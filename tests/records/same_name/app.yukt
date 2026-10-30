@@ -1,0 +1,6 @@
+use a
+use b
+
+create main:
+    say a.make()
+    say b.make()

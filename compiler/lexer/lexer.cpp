@@ -55,6 +55,9 @@ TokenKind keyword_kind(std::string_view text) {
     if (text == "as") {
         return TokenKind::KwAs;
     }
+    if (text == "record") {
+        return TokenKind::KwRecord;
+    }
     return TokenKind::Identifier;
 }
 

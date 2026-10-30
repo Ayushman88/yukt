@@ -112,7 +112,7 @@ Implementation: **YUKT** for integer and float lists that only read/write existi
 | --- | --- | --- | --- | --- | --- |
 | `list.len(items)` | integer | no | no | — | Same as `count(items)`. |
 | `list.copy(src)` | list | no | yes | — | New list, same length and element type, elementwise copy. Numeric OOB does not apply (full length). |
-| `list.fill(dest, value)` | void | dest | no | type mismatch is a compile error | Every slot becomes `value`. `value` must match the element type. |
+| `list.fill(dest, value)` | void | dest | no | type mismatch is a compile error | Every slot becomes `value`. `value` must match the element type. Lists of records are a type mismatch; record fill is not implemented. Assign with `items[i] = value`. |
 | `list.reverse(dest)` | void | dest | no | — | Reverse in place. |
 | `list.slice(src, start, end)` | list | no | yes | **trap** if `start < 0`, `end < start`, or `end > count(src)` | New list of length `end - start` (end exclusive), elementwise copy of that range. |
 

@@ -1,0 +1,6 @@
+share record Point:
+    x: integer
+    y: integer
+
+share create make:
+    give Point(1, 2)

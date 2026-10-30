@@ -74,7 +74,7 @@ int main() {
 
     {
         auto result = load("nont/a.yukt");
-        REQUIRE(has_title(result, "Unknown module"));
+        REQUIRE(has_title(result, "Unknown name"));
     }
 
     {
