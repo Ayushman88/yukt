@@ -37,4 +37,4 @@ Runtime support only where the language cannot express it (I/O syscalls, maps th
 
 ## Allocator contract for 0.12
 
-List payloads and string buffers are 16-byte aligned where required. Size-class free lists in the runtime are the backing store 0.12 collections should reuse. Intra-function frees wait for 0.13 ownership.
+List payloads and string buffers are 16-byte aligned where required. Size-class free lists in the runtime are the backing store 0.12 collections should reuse. Intra-function frees wait for 0.13 ownership. Frozen 0.11 bounds (six classes, four slots, 8,948,352-byte cap) are in `docs/RUNTIME.md`.

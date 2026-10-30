@@ -124,9 +124,9 @@ Color is used only when stderr is a TTY and `NO_COLOR` is unset. The compiler ex
 3. Emit a host object file with a `TargetMachine` for the host CPU.
 4. Link with `clang` and `libyukt_runtime.a`.
 
-Integer and float list elements are accessed with GEPs through `YuktList.data` so LLVM can vectorize. Counted `repeat` loops lower to `k < niter` so LLVM sees a canonical trip count. Independent loops with estimated work ≥ 1e6 become an outlined range callback plus `yukt_parallel_for(..., work_per_iter)`. Simple `+`/`*` reductions may outline the same way and combine partials. The runtime may still sequentialize small live trip counts. List payloads are 16-byte aligned. Heap lists and concatenated strings are released when `yukt_main` returns; size-class payloads may be reused by the next allocation. Loop decisions are recorded on YUKT IR and printed by `yukt --explain`. The object file targets the **host** triple and CPU; linking uses the LLVM clang the compiler was built against when it exists.
+Integer and float list elements are accessed with GEPs through `YuktList.data` so LLVM can vectorize. Counted `repeat` loops lower to `k < niter` so LLVM sees a canonical trip count. Independent loops with estimated work ≥ 1e6 become an outlined range callback plus `yukt_parallel_for(..., work_per_iter)`. Simple `+`/`*` reductions may outline the same way and combine partials. The runtime may still sequentialize small live trip counts. List payloads are 16-byte aligned. Heap lists and concatenated strings are released when `yukt_main` returns; size-class payloads may be reused by the next allocation (see `docs/RUNTIME.md`). Loop decisions are recorded on YUKT IR and printed by `yukt --explain`. The object file targets the **host** triple and CPU; linking uses the LLVM clang the compiler was built against when it exists.
 
-The runtime implements `say`, string concatenation, lists, heap release, and the parallel loop helper. YUKT functions are emitted as `yukt_<name>`. A C `main` wrapper calls `yukt_main`.
+The runtime implements `say`, string concatenation, lists, heap release, and the parallel loop helper. YUKT functions are emitted as `yukt_<name>`. A C `main` wrapper calls `yukt_main`. Signed overflow is undefined; float reduction rounding may change with chunking and CPU count (`docs/LANGUAGE_SPEC.md`).
 
 ## CLI
 

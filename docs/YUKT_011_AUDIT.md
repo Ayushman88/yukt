@@ -8,7 +8,7 @@ Audit of the four freeze areas. 0.12 is not started.
 
 **Integer `+`/`*` without overflow:** associative. Chunk partials plus a mutex combine match a sequential fold.
 
-**Float `+`/`*`:** not associative. Parallel chunking (one partial per CPU, then combine) may differ from a left-to-right sequential fold and may differ when `ncpu` changes. LLVM vectorization of a sequential float loop may also change association. This is specified in `docs/LANGUAGE_SPEC.md` (Numerical semantics). It is not a bug.
+**Float `+`/`*`:** not associative. Parallel chunking (one partial per CPU, then combine) may produce **different rounding results** than a left-to-right sequential fold, and may differ when chunking or CPU count changes. LLVM vectorization of a sequential float loop may also change association and rounding. This is specified in `docs/LANGUAGE_SPEC.md` (Numerical semantics). It is not a bug.
 
 **Tests:** `tests/ir/ir_tests.cpp` (1e6 integer reduction outlines); `tests/backend/native_tests.cpp` (sum of 1e6 ones = 1000000; sum of 1e6 `1.0` values prints `1000000` because 1e6 is exact in f64).
 
@@ -18,7 +18,7 @@ Audit of the four freeze areas. 0.12 is not started.
 
 **Thread safety:** caches and `yukt_allocs` are not locked. 0.11 **refuses to parallelize** a `repeat` whose body allocates (`zeros`, list literals, string concat). Parallel fills only write existing payloads. Parallel reductions combine through `yukt_reduce_mu`.
 
-**Retention:** after `yukt_main` returns, at most 4 slots × sum(bin sizes) per cache remain. That is the warmup-reuse path for the bench harness. Not a GC.
+**Retention:** after `yukt_main` returns, at most four slots per class remain in each of the two caches. Maximum retained payload memory is **8,948,352 bytes**. See `docs/RUNTIME.md`. That is the warmup-reuse path for the bench harness. Not a GC.
 
 **Tests:** native reuse (`zeros` after `yukt_runtime_release` is zeroed); IR: 1e6-trip `tmp = zeros(1)` stays sequential with reason `allocates`.
 

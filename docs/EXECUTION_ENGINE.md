@@ -31,7 +31,7 @@ acc = acc * expr
 
 or the commuting `expr + acc` / `expr * acc`, and `expr` does not mention `acc`. Each outlined chunk starts from the operator identity (0 for `+`, 1 for `*`) and combines into `acc` with a mutex after the chunk. `-`, multiple accumulators, reductions inside `if`, and loops that allocate (`zeros`, list literals, string concat) stay sequential.
 
-Integer overflow is undefined (`nsw` in LLVM). Integer `+`/`*` without overflow match sequential results. **Float `+`/`*` reductions are not bitwise stable:** parallel chunking (and LLVM vectorization) may change association. That is specified, not a bug. See `docs/LANGUAGE_SPEC.md` (Numerical semantics).
+Signed integer overflow is undefined (`nsw` in LLVM). YUKT does not wrap. Integer `+`/`*` without overflow match sequential results. **Float `+`/`*` reductions are not bitwise stable:** parallel chunking (one partial per CPU, then combine) and LLVM vectorization may change association and therefore **rounding**. Results may differ by chunking and CPU count. That is specified, not a bug. See `docs/LANGUAGE_SPEC.md` (Numerical semantics).
 
 ## Compile-time parallel plan
 
@@ -79,7 +79,7 @@ LLVM’s vectorizer then either produces `vector.body` / `llvm.vector.reduce` or
 
 Lists are heap `YuktList { length, kind, data }`. `data` is `aligned_alloc(16)` and zeroed.
 
-When `yukt_main` returns, `yukt_runtime_release` frees every tracked object but keeps size-class payloads (six bins: 16, 64, 256, 4096, 65536, 1048576 bytes; four slots per bin, lists and strings separate) for the next `zeros`/`list`/string concat that fits. Buffers are allocated at bin capacity and zeroed on reuse. Retention is bounded: at most 4 × (16+…+1MiB) per cache, twice (list + string). Larger allocations are not cached.
+When `yukt_main` returns, `yukt_runtime_release` frees every tracked object but keeps size-class payloads for the next `zeros`/`list`/string concat that fits. Buffers are allocated at bin capacity and zeroed on reuse. See `docs/RUNTIME.md` for the six size classes, four-slot limit, and the 8,948,352-byte retention cap.
 
 The size-class cache and the allocation tracker are **not thread-safe**. Loops that allocate stay sequential so only the calling thread touches them. Reduction combine uses a mutex; list *payload writes* in an independent parallel fill do not allocate.
 

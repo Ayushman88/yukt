@@ -1,5 +1,7 @@
 # YUKT benchmarks
 
+Frozen **0.11** baseline. The numbers below and `benchmarks/results-0.11.json` / `benchmarks/results-0.11.csv` must not be overwritten in place. Later milestones add a new section or a new `benchmarks/results-<milestone>.json`.
+
 These numbers are **in-process kernel time**, not process startup. Each binary discards one warmup call, then times the second call with a monotonic clock (`compute_ns` on stderr). The table is the median of 15 process runs.
 
 Host tables are **not interchangeable**. The table below is Apple M2, arm64 Darwin. Publish Linux x86-64 as a separate section after measuring on that machine. `benchmarks/results.json` records `os`, `arch`, `cpu`, `llvm_version`, and `clang_path`.

@@ -30,6 +30,9 @@ static YuktAlloc* yukt_allocs = NULL;
 
 enum { YUKT_BIN_COUNT = 6, YUKT_BIN_SLOTS = 4 };
 
+/* Size classes: 16, 64, 256, 4096, 65536, 1048576.
+ * Four slots per class. List and string caches are separate.
+ * Max retained payloads: 4 * 1118544 * 2 = 8948352 bytes. docs/RUNTIME.md */
 static const size_t yukt_bin_limits[YUKT_BIN_COUNT] = {16, 64, 256, 4096, 65536, 1048576};
 
 typedef struct {

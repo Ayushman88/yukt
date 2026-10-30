@@ -1,5 +1,11 @@
 #pragma once
 
+/* Size-class payload cache (0.11, frozen). See docs/RUNTIME.md.
+ * Six classes: 16, 64, 256, 4096, 65536, 1048576 bytes.
+ * Four slots per class; list and string caches are separate.
+ * Max retained after yukt_runtime_release: 8,948,352 bytes.
+ * Caches are not thread-safe. */
+
 #include <stdint.h>
 
 #ifdef __cplusplus

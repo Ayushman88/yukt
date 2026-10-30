@@ -266,7 +266,7 @@ There is no implicit conversion. `1 + 1.5` is an error. `"age " + 21` is an erro
 ## Memory
 
 - Integers, floats, and booleans are stack values. LLVM `mem2reg` promotes them when it can.
-- Lists and strings live on the heap. List payloads are 16-byte aligned. The runtime releases them when `main` returns. Size-class reuse is bounded and not thread-safe; allocating loops stay sequential.
+- Lists and strings live on the heap. List payloads are 16-byte aligned. The runtime releases them when `main` returns. Size-class reuse is bounded and not thread-safe; allocating loops stay sequential. Exact bins, slot limits, and retained bytes are in `docs/RUNTIME.md`.
 - Function calls use the native C convention after name mangling: `create add` becomes `yukt_add`.
 
 ## Automatic parallelization
@@ -286,10 +286,15 @@ A simple reduction of the form `acc = acc + expr` or `acc = acc * expr` (or the 
 
 ## Numerical semantics
 
-- **Integer overflow** is **undefined**, sequential or parallel. LLVM lowering uses `nsw` add/mul. Do not rely on wraparound.
-- **Integer `+` and `*` reductions** that do not overflow are associative. Parallel and sequential results match.
-- **Floating-point `+` and `*` are not associative.** A parallel float reduction may use a different association than a left-to-right sequential fold, and may differ across CPU counts. LLVM vectorization of a sequential float loop may also change association. YUKT does not promise bitwise-identical float reduction results.
-- **Division** of integers truncates toward zero. Division by zero is undefined.
+Integers are signed 64-bit (`i64`). Floats are IEEE-754 binary64 (`f64`).
+
+**Signed integer overflow is undefined behavior.** This applies to `+`, `-`, `*`, unary `-`, sequential code, parallel code, and reduction combines. LLVM lowering uses `nsw` add/mul. The runtime combine (`yukt_reduce_i64`) uses C `int64_t` `+=` / `*=`, which is also undefined on overflow. YUKT does **not** wrap around (two’s complement wrap), saturate, or trap. A program that overflows a signed integer is invalid; the result is not a language-level wrapping integer.
+
+**Integer `+` and `*` reductions that do not overflow** are associative. Parallel chunk partials combined with `+` or `*` match a sequential left fold.
+
+**Floating-point `+` and `*` are not associative.** A parallel reduction splits the trip into one chunk per CPU, folds each chunk, then combines the partials. That association — and therefore the **rounding result** — may differ from a left-to-right sequential fold, and may differ when **chunking or CPU count** changes. LLVM vectorization of a sequential float loop may also change association and rounding. YUKT does not promise bitwise-identical float results across sequential vs parallel execution, CPU counts, or LLVM versions. Different rounding is specified behavior, not a bug.
+
+**Division** of integers truncates toward zero. Division by zero is undefined.
 
 `yukt --explain file.yukt` prints the host triple, each loop’s sequential / parallel plan, and only reports parallelization or vectorization as successful when those facts appear in generated LLVM IR.
 
