@@ -1,0 +1,6 @@
+create main:
+    names = ["a", "b"]
+    names[0] = names[1]
+    names[0] = "x"
+    say names[0]
+    say names[1]

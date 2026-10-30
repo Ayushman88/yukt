@@ -1156,9 +1156,11 @@ void Analyzer::analyze_assignment(const AssignStmt& stmt) {
 }
 
 void Analyzer::analyze_index_assign(const IndexAssignStmt& stmt) {
+    // RHS first so a call that moves the collection is Use after move on the place,
+    // matching field assign (`names[0] = take(names)`).
+    const Type value = analyze_expression(stmt.value.get());
     const Type collection = analyze_expression(stmt.collection.get());
     const Type index = analyze_expression(stmt.index.get());
-    const Type value = analyze_expression(stmt.value.get());
     expect_type(index, integer_type(), stmt.span.start, "Type mismatch",
                 "List indexes must be integers, not " + types_.to_string(index) + ".",
                 "Use an integer index, for example `items[0]`.");
@@ -1177,7 +1179,10 @@ void Analyzer::analyze_index_assign(const IndexAssignStmt& stmt) {
               "Store a value that matches the list element type.");
     }
     if (type_owns_heap(types_, value, &records_)) {
-        consume_heap_expr(stmt.value.get());
+        // Index reads stay borrows. Cloning the slot happens in lowering.
+        if (dynamic_cast<const IndexExpr*>(stmt.value.get()) == nullptr) {
+            consume_heap_expr(stmt.value.get());
+        }
     }
 }
 

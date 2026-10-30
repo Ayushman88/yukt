@@ -1005,32 +1005,42 @@ void yukt_list_fill_bool(YuktList* dest, int8_t value) {
 
 void yukt_list_fill_cstr(YuktList* dest, const char* value) {
     yukt_require_kind(dest, 3, "list fill type mismatch");
-    if (dest->data == NULL) {
+    if (dest->data == NULL || dest->length <= 0) {
         return;
     }
     const char** data = (const char**)dest->data;
+    /* Clone first so `fill(names, names[0])` cannot free the prototype. */
+    char* proto = yukt_str_clone(value);
     for (int64_t i = 0; i < dest->length; ++i) {
         if (data[i] != NULL) {
             yukt_release((void*)data[i]);
             data[i] = NULL;
         }
-        data[i] = yukt_str_from_lit(value);
     }
+    for (int64_t i = 0; i < dest->length; ++i) {
+        data[i] = yukt_str_clone(proto);
+    }
+    yukt_release(proto);
 }
 
 void yukt_list_fill_list(YuktList* dest, YuktList* value) {
     yukt_require_kind(dest, 4, "list fill type mismatch");
-    if (dest->data == NULL) {
+    if (dest->data == NULL || dest->length <= 0) {
         return;
     }
     YuktList** data = (YuktList**)dest->data;
+    /* Clone first so a dest slot used as the prototype is not released under us. */
+    YuktList* proto = yukt_list_copy(value);
     for (int64_t i = 0; i < dest->length; ++i) {
         if (data[i] != NULL) {
             yukt_release(data[i]);
             data[i] = NULL;
         }
-        data[i] = yukt_list_copy(value);
     }
+    for (int64_t i = 0; i < dest->length; ++i) {
+        data[i] = yukt_list_copy(proto);
+    }
+    yukt_release(proto);
 }
 
 void yukt_list_reverse(YuktList* dest) {

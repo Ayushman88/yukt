@@ -584,5 +584,44 @@ int main() {
         REQUIRE(result.exit_code == 0);
     }
 
+    {
+        const auto result = run_file("tests/ownership/list_fill_alias.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "x\na\n");
+        REQUIRE(result.exit_code == 0);
+    }
+
+    {
+        const auto result = run_file("tests/ownership/list_index_assign_move.yukt");
+        REQUIRE(!result.ok);
+    }
+
+    {
+        auto frontend = yukt::analyze_source(
+            "<test>",
+            "create take(xs):\n"
+            "    give \"z\"\n"
+            "\n"
+            "create main:\n"
+            "    names = [\"a\", \"b\"]\n"
+            "    names[0] = take(names)\n");
+        yukt::analyze_types(frontend);
+        REQUIRE(frontend.diagnostics->has_errors());
+    }
+
+    {
+        const auto result = run_file("tests/ownership/list_index_borrow.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "x\nb\n");
+        REQUIRE(result.exit_code == 0);
+    }
+
+    {
+        const auto result = run_file("tests/ownership/list_of_profile_nested.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "a\n");
+        REQUIRE(result.exit_code == 0);
+    }
+
     return yukt::test::summary("native");
 }

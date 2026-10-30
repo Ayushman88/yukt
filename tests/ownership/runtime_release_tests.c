@@ -84,6 +84,40 @@ int main(int argc, char** argv) {
         REQUIRE(yukt_debug_live_allocs() == 0);
     }
 
+    /* list.fill from a dest slot must clone the prototype before dropping slots. */
+    {
+        YuktList* words = yukt_list_new(2, 3);
+        yukt_list_set_cstr(words, 0, yukt_str_from_lit("a"));
+        yukt_list_set_cstr(words, 1, yukt_str_from_lit("b"));
+        yukt_list_fill_cstr(words, yukt_list_get_cstr(words, 0));
+        REQUIRE(strcmp(yukt_list_get_cstr(words, 0), "a") == 0);
+        REQUIRE(strcmp(yukt_list_get_cstr(words, 1), "a") == 0);
+        REQUIRE(yukt_list_get_cstr(words, 0) != yukt_list_get_cstr(words, 1));
+        yukt_list_set_cstr(words, 0, yukt_str_from_lit("x"));
+        REQUIRE(strcmp(yukt_list_get_cstr(words, 1), "a") == 0);
+        yukt_release(words);
+        REQUIRE(yukt_debug_live_allocs() == 0);
+    }
+
+    /* Nested list.fill from a dest slot clones the prototype before dropping. */
+    {
+        YuktList* inner0 = yukt_list_zeros(1);
+        yukt_list_set_i64(inner0, 0, 1);
+        YuktList* inner1 = yukt_list_zeros(1);
+        yukt_list_set_i64(inner1, 0, 2);
+        YuktList* nested = yukt_list_new(2, 4);
+        yukt_list_set_list(nested, 0, inner0);
+        yukt_list_set_list(nested, 1, inner1);
+        yukt_list_fill_list(nested, yukt_list_get_list(nested, 0));
+        REQUIRE(yukt_list_get_list(nested, 0) != yukt_list_get_list(nested, 1));
+        REQUIRE(yukt_list_get_i64(yukt_list_get_list(nested, 0), 0) == 1);
+        REQUIRE(yukt_list_get_i64(yukt_list_get_list(nested, 1), 0) == 1);
+        yukt_list_set_i64(yukt_list_get_list(nested, 0), 0, 9);
+        REQUIRE(yukt_list_get_i64(yukt_list_get_list(nested, 1), 0) == 1);
+        yukt_release(nested);
+        REQUIRE(yukt_debug_live_allocs() == 0);
+    }
+
     yukt_runtime_release();
     REQUIRE(yukt_debug_live_allocs() == 0);
     return fail ? 1 : 0;

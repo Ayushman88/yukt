@@ -568,5 +568,32 @@ int main() {
         REQUIRE(drops >= 2);
     }
 
+    {
+        const auto module = ir_from(
+            "record Profile:\n"
+            "    name: string\n"
+            "    n: integer\n"
+            "\n"
+            "create main:\n"
+            "    groups = [[Profile(\"a\", 1)]]\n"
+            "    say groups[0][0].n\n");
+        std::ostringstream printed;
+        yukt::print_ir(module, printed);
+        const std::string ir = printed.str();
+        REQUIRE(ir.find("drop ") != std::string::npos);
+        REQUIRE(ir.find("list_get ") != std::string::npos);
+        REQUIRE(ir.find("field ") != std::string::npos);
+        std::size_t lens = 0;
+        for (std::size_t pos = 0; (pos = ir.find("list_len ", pos)) != std::string::npos; pos += 9) {
+            ++lens;
+        }
+        REQUIRE(lens >= 2);
+        std::size_t drops = 0;
+        for (std::size_t pos = 0; (pos = ir.find("drop ", pos)) != std::string::npos; pos += 5) {
+            ++drops;
+        }
+        REQUIRE(drops >= 2);
+    }
+
     return yukt::test::summary("ir");
 }

@@ -1,0 +1,11 @@
+use std/list as list
+
+record Profile:
+    name: string
+    n: integer
+
+create main:
+    groups = [[Profile("a", 1)]]
+    copy = list.copy(groups)
+    groups[0][0].name = "b"
+    say copy[0][0].name

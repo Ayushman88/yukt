@@ -764,6 +764,7 @@ private:
     void emit_counted_loop(const IrValue& count, const std::function<void(const IrValue&)>& body_fn);
     bool list_needs_compiler_clone(const IrType& type) const;
     bool list_needs_element_drop(const IrType& type) const;
+    void emit_drop_heap_contents(const IrValue& value);
     IrValue emit_clone_value(const IrValue& value);
     IrValue emit_clone_list_range(const IrValue& src, const IrValue& start, const IrValue& length);
     void copy_records();
@@ -1018,14 +1019,22 @@ void Lowerer::lower_assignment(const AssignStmt& stmt) {
 }
 
 void Lowerer::lower_index_assign(const IndexAssignStmt& stmt) {
+    const IrValue value = lower_expression(stmt.value.get());
+    const bool heap = owns_heap(value.type);
+    const bool borrowed_element = dynamic_cast<const IndexExpr*>(stmt.value.get()) != nullptr;
+    IrValue stored = value;
+    if (heap && borrowed_element) {
+        stored = emit_clone_value(value);
+    }
     const IrValue collection = lower_expression(stmt.collection.get());
     const IrValue index = lower_expression(stmt.index.get());
-    const IrValue value = lower_expression(stmt.value.get());
-    if (owns_heap(value.type) && value.type.kind == IrTypeKind::Record) {
-        emit_drop(emit_list_get(collection, index, value.type));
+    if (heap && stored.type.kind == IrTypeKind::Record) {
+        emit_drop(emit_list_get(collection, index, stored.type));
     }
-    consume_heap_expr(stmt.value.get());
-    emit_list_set(collection, index, value);
+    if (heap && !borrowed_element) {
+        consume_heap_expr(stmt.value.get());
+    }
+    emit_list_set(collection, index, stored);
 }
 
 void Lowerer::copy_records() {
@@ -1165,8 +1174,17 @@ bool Lowerer::list_needs_compiler_clone(const IrType& type) const {
 }
 
 bool Lowerer::list_needs_element_drop(const IrType& type) const {
-    return type.kind == IrTypeKind::List && type.element != nullptr && type.element->kind == IrTypeKind::Record &&
-           owns_heap(*type.element);
+    if (type.kind != IrTypeKind::List || type.element == nullptr) {
+        return false;
+    }
+    const IrType& element = *type.element;
+    if (element.kind == IrTypeKind::Record) {
+        return owns_heap(element);
+    }
+    if (element.kind == IrTypeKind::List) {
+        return list_needs_element_drop(element);
+    }
+    return false;
 }
 
 IrValue Lowerer::emit_clone_value(const IrValue& value) {
@@ -2118,7 +2136,7 @@ void Lowerer::emit_store(const std::string& name, const IrValue& value) {
     emit(std::move(inst));
 }
 
-void Lowerer::emit_drop(const IrValue& value) {
+void Lowerer::emit_drop_heap_contents(const IrValue& value) {
     if (value.type.kind == IrTypeKind::Record) {
         const RecordInfo* record = semantic_record(value.type.record_id);
         if (record == nullptr) {
@@ -2136,12 +2154,14 @@ void Lowerer::emit_drop(const IrValue& value) {
     if (list_needs_element_drop(value.type) && value.type.element != nullptr) {
         const IrValue n = emit_list_len(value);
         emit_counted_loop(n, [this, value](const IrValue& index) {
-            emit_drop(emit_list_get(value, index, *value.type.element));
+            emit_drop_heap_contents(emit_list_get(value, index, *value.type.element));
         });
-        IrInst inst;
-        inst.op = IrOp::Drop;
-        inst.args.push_back(value);
-        emit(std::move(inst));
+    }
+}
+
+void Lowerer::emit_drop(const IrValue& value) {
+    emit_drop_heap_contents(value);
+    if (value.type.kind == IrTypeKind::Record) {
         return;
     }
     if (!ir_is_heap_pointer(value.type)) {

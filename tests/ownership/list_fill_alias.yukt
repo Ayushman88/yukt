@@ -1,0 +1,8 @@
+use std/list as list
+
+create main:
+    names = ["a", "b"]
+    list.fill(names, names[0])
+    names[0] = "x"
+    say names[0]
+    say names[1]

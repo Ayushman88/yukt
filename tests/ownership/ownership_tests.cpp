@@ -522,6 +522,30 @@ int main() {
         REQUIRE(!result.diagnostics->has_errors());
     }
 
+    // RHS that moves the list is Use after move on the index-assign place.
+    {
+        const auto result = check(
+            "create take(xs):\n"
+            "    give \"z\"\n"
+            "\n"
+            "create main:\n"
+            "    names = [\"a\", \"b\"]\n"
+            "    names[0] = take(names)\n");
+        REQUIRE(has_title(result, "Use after move"));
+        REQUIRE(has_diagnostic(result, "Use after move", "`names`", move_suggestion));
+    }
+
+    // Index-assign from another slot is a borrow, not a steal.
+    {
+        const auto result = check(
+            "create main:\n"
+            "    names = [\"a\", \"b\"]\n"
+            "    names[0] = names[1]\n"
+            "    say names[0]\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        REQUIRE(!has_title(result, "Cannot move out of list element"));
+    }
+
     // Index read of a scalar element is still a value copy.
     {
         const auto result = check(

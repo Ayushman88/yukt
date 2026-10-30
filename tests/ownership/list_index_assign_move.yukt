@@ -1,0 +1,6 @@
+create take(xs):
+    give "z"
+
+create main:
+    names = ["a", "b"]
+    names[0] = take(names)
