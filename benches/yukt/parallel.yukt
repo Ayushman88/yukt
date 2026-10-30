@@ -1,0 +1,9 @@
+create main:
+    n = 20000000
+    items = zeros(n)
+    repeat i in 0..n - 1:
+        items[i] = i * 3 + 1
+    total = 0
+    repeat i in 0..n - 1:
+        total = total + items[i]
+    say total

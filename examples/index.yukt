@@ -1,0 +1,7 @@
+create main:
+    items = zeros(5)
+    repeat i in 0..4:
+        items[i] = (i + 1) * 10
+    say count(items)
+    say items[0]
+    say items[4]

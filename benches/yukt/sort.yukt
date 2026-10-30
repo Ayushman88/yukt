@@ -1,0 +1,16 @@
+create main:
+    n = 16000
+    items = zeros(n)
+    repeat i in 0..n - 1:
+        items[i] = (n - i) * 17 + i
+    last = n - 2
+    repeat i in 0..last:
+        min = i
+        repeat j in i + 1..n - 1:
+            if items[j] < items[min]:
+                min = j
+        temp = items[i]
+        items[i] = items[min]
+        items[min] = temp
+    say items[0]
+    say items[n - 1]

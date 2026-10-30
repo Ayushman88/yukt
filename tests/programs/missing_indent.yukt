@@ -1,0 +1,2 @@
+create main:
+say "this should be indented"

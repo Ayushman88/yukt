@@ -1,0 +1,15 @@
+build/
+benches/out/
+cmake-build-*/
+.cache/
+.DS_Store
+compile_commands.json
+CMakeUserPresets.json
+*.o
+*.a
+*.dSYM/
+.idea/
+.vscode/
+*.user
+__pycache__/
+*.pyc

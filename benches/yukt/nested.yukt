@@ -1,0 +1,11 @@
+create main:
+    n = count(zeros(8000))
+    items = zeros(n)
+    last = n - 1
+    repeat i in 0..last:
+        repeat j in 0..last:
+            items[j] = items[j] + i
+    checksum = 0
+    repeat j in 0..last:
+        checksum = checksum + items[j]
+    say checksum

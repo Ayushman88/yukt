@@ -1,0 +1,200 @@
+#include "ast/ast.hpp"
+#include "driver/driver.hpp"
+#include "test_harness.hpp"
+
+#include <memory>
+#include <string>
+
+namespace {
+
+yukt::FrontendResult parse(const std::string& source) {
+    return yukt::analyze_source("<test>", source);
+}
+
+const yukt::FunctionDecl* function_named(const yukt::Program& program, const std::string& name) {
+    for (const auto& function : program.functions) {
+        if (function != nullptr && function->name == name) {
+            return function.get();
+        }
+    }
+    return nullptr;
+}
+
+template <typename T>
+const T* as(const yukt::Stmt* stmt) {
+    return dynamic_cast<const T*>(stmt);
+}
+
+template <typename T>
+const T* as(const yukt::Expr* expr) {
+    return dynamic_cast<const T*>(expr);
+}
+
+}  // namespace
+
+int main() {
+    {
+        const auto result = parse(
+            "create greet(name):\n"
+            "    say \"Hello, \" + name\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        REQUIRE(result.program != nullptr);
+        const auto* greet = function_named(*result.program, "greet");
+        REQUIRE(greet != nullptr);
+        REQUIRE(greet != nullptr && greet->parameters.size() == 1);
+        REQUIRE(greet != nullptr && greet->parameters[0] == "name");
+        REQUIRE(greet != nullptr && greet->body.size() == 1);
+        const auto* say = greet != nullptr ? as<yukt::SayStmt>(greet->body[0].get()) : nullptr;
+        REQUIRE(say != nullptr);
+        const auto* concat = say != nullptr ? as<yukt::BinaryExpr>(say->value.get()) : nullptr;
+        REQUIRE(concat != nullptr);
+        REQUIRE(concat != nullptr && concat->op == yukt::TokenKind::Plus);
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    greet(name)\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* main = function_named(*result.program, "main");
+        REQUIRE(main != nullptr);
+        REQUIRE(main != nullptr && main->parameters.empty());
+        const auto* call_stmt = main != nullptr ? as<yukt::ExprStmt>(main->body[0].get()) : nullptr;
+        REQUIRE(call_stmt != nullptr);
+        const auto* call = call_stmt != nullptr ? as<yukt::CallExpr>(call_stmt->expr.get()) : nullptr;
+        REQUIRE(call != nullptr);
+        REQUIRE(call != nullptr && call->callee == "greet");
+        REQUIRE(call != nullptr && call->arguments.size() == 1);
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    value = 1 + 2 * 3\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* main = function_named(*result.program, "main");
+        const auto* assign = main != nullptr && !main->body.empty() ? as<yukt::AssignStmt>(main->body[0].get()) : nullptr;
+        REQUIRE(assign != nullptr);
+        const auto* plus = assign != nullptr ? as<yukt::BinaryExpr>(assign->value.get()) : nullptr;
+        REQUIRE(plus != nullptr);
+        REQUIRE(plus != nullptr && plus->op == yukt::TokenKind::Plus);
+        const auto* left = plus != nullptr ? as<yukt::IntegerExpr>(plus->left.get()) : nullptr;
+        const auto* times = plus != nullptr ? as<yukt::BinaryExpr>(plus->right.get()) : nullptr;
+        REQUIRE(left != nullptr && left->value == 1);
+        REQUIRE(times != nullptr && times->op == yukt::TokenKind::Star);
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    repeat i in 1..2:\n"
+            "        repeat j in 1..2:\n"
+            "            say i\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* main = function_named(*result.program, "main");
+        const auto* outer = main != nullptr && !main->body.empty() ? as<yukt::RepeatStmt>(main->body[0].get()) : nullptr;
+        REQUIRE(outer != nullptr);
+        REQUIRE(outer != nullptr && outer->iterator == "i");
+        const auto* inner = outer != nullptr && !outer->body.empty() ? as<yukt::RepeatStmt>(outer->body[0].get()) : nullptr;
+        REQUIRE(inner != nullptr);
+        REQUIRE(inner != nullptr && inner->iterator == "j");
+        REQUIRE(inner != nullptr && inner->body.size() == 1);
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    if age > 18:\n"
+            "        say \"adult\"\n"
+            "    otherwise:\n"
+            "        say \"young\"\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* main = function_named(*result.program, "main");
+        const auto* iff = main != nullptr && !main->body.empty() ? as<yukt::IfStmt>(main->body[0].get()) : nullptr;
+        REQUIRE(iff != nullptr);
+        REQUIRE(iff != nullptr && iff->then_branch.size() == 1);
+        REQUIRE(iff != nullptr && iff->otherwise_branch.size() == 1);
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    items = [1, 2, 3]\n"
+            "    give items\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* main = function_named(*result.program, "main");
+        REQUIRE(main != nullptr && main->body.size() == 2);
+        const auto* assign = main != nullptr ? as<yukt::AssignStmt>(main->body[0].get()) : nullptr;
+        REQUIRE(assign != nullptr);
+        const auto* list = assign != nullptr ? as<yukt::ListExpr>(assign->value.get()) : nullptr;
+        REQUIRE(list != nullptr && list->elements.size() == 3);
+        REQUIRE(as<yukt::GiveStmt>(main->body[1].get()) != nullptr);
+    }
+
+    {
+        const auto result = parse("say 1\n");
+        REQUIRE(result.diagnostics->has_errors());
+        REQUIRE(result.diagnostics->diagnostics().front().title == "Unexpected token");
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "say 1\n");
+        REQUIRE(result.diagnostics->has_errors());
+        bool saw_missing_indent = false;
+        for (const auto& diagnostic : result.diagnostics->diagnostics()) {
+            if (diagnostic.title == "Missing indentation") {
+                saw_missing_indent = true;
+            }
+        }
+        REQUIRE(saw_missing_indent);
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    say +\n");
+        REQUIRE(result.diagnostics->has_errors());
+        bool saw_unexpected = false;
+        for (const auto& diagnostic : result.diagnostics->diagnostics()) {
+            if (diagnostic.title == "Unexpected token") {
+                saw_unexpected = true;
+            }
+        }
+        REQUIRE(saw_unexpected);
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    otherwise:\n"
+            "        say 1\n");
+        REQUIRE(result.diagnostics->has_errors());
+        REQUIRE(result.diagnostics->diagnostics().front().title == "Unexpected token");
+    }
+
+    {
+        const auto result = parse(
+            "create :\n"
+            "    say 1\n");
+        REQUIRE(result.diagnostics->has_errors());
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    items = [1, 2, 3]\n"
+            "    items[0] = 9\n"
+            "    say items[1]\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* main = function_named(*result.program, "main");
+        REQUIRE(main != nullptr && main->body.size() == 3);
+        const auto* index_assign = main != nullptr ? as<yukt::IndexAssignStmt>(main->body[1].get()) : nullptr;
+        REQUIRE(index_assign != nullptr);
+        const auto* say = main != nullptr ? as<yukt::SayStmt>(main->body[2].get()) : nullptr;
+        REQUIRE(say != nullptr && as<yukt::IndexExpr>(say->value.get()) != nullptr);
+    }
+
+    return yukt::test::summary("parser");
+}

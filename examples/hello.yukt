@@ -1,0 +1,11 @@
+create greet(name):
+    say "Hello, " + name
+
+create main:
+    name = "World"
+    greet(name)
+
+    repeat i in 1..5:
+        say i
+
+    say "YUKT is running!"

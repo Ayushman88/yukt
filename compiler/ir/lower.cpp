@@ -1,0 +1,1297 @@
+#include "ir/lower.hpp"
+
+#include "lexer/token.hpp"
+
+#include <cstdint>
+#include <limits>
+#include <map>
+#include <optional>
+#include <set>
+#include <utility>
+
+namespace yukt {
+namespace {
+
+bool expr_mentions(const Expr* expr, const std::string& name) {
+    if (expr == nullptr) {
+        return false;
+    }
+    if (const auto* ident = dynamic_cast<const IdentifierExpr*>(expr)) {
+        return ident->name == name;
+    }
+    if (const auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+        return expr_mentions(unary->operand.get(), name);
+    }
+    if (const auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+        return expr_mentions(binary->left.get(), name) || expr_mentions(binary->right.get(), name);
+    }
+    if (const auto* call = dynamic_cast<const CallExpr*>(expr)) {
+        for (const auto& argument : call->arguments) {
+            if (expr_mentions(argument.get(), name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (const auto* list = dynamic_cast<const ListExpr*>(expr)) {
+        for (const auto& element : list->elements) {
+            if (expr_mentions(element.get(), name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (const auto* index = dynamic_cast<const IndexExpr*>(expr)) {
+        return expr_mentions(index->collection.get(), name) || expr_mentions(index->index.get(), name);
+    }
+    return false;
+}
+
+bool has_user_call(const Expr* expr) {
+    if (expr == nullptr) {
+        return false;
+    }
+    if (const auto* call = dynamic_cast<const CallExpr*>(expr)) {
+        if (call->callee != "count" && call->callee != "zeros") {
+            return true;
+        }
+        for (const auto& argument : call->arguments) {
+            if (has_user_call(argument.get())) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (const auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+        return has_user_call(unary->operand.get());
+    }
+    if (const auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+        return has_user_call(binary->left.get()) || has_user_call(binary->right.get());
+    }
+    if (const auto* list = dynamic_cast<const ListExpr*>(expr)) {
+        for (const auto& element : list->elements) {
+            if (has_user_call(element.get())) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (const auto* index = dynamic_cast<const IndexExpr*>(expr)) {
+        return has_user_call(index->collection.get()) || has_user_call(index->index.get());
+    }
+    return false;
+}
+
+void collect_reads(const Expr* expr, std::set<std::string>& names) {
+    if (expr == nullptr) {
+        return;
+    }
+    if (const auto* ident = dynamic_cast<const IdentifierExpr*>(expr)) {
+        names.insert(ident->name);
+        return;
+    }
+    if (const auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+        collect_reads(unary->operand.get(), names);
+        return;
+    }
+    if (const auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+        collect_reads(binary->left.get(), names);
+        collect_reads(binary->right.get(), names);
+        return;
+    }
+    if (const auto* call = dynamic_cast<const CallExpr*>(expr)) {
+        for (const auto& argument : call->arguments) {
+            collect_reads(argument.get(), names);
+        }
+        return;
+    }
+    if (const auto* list = dynamic_cast<const ListExpr*>(expr)) {
+        for (const auto& element : list->elements) {
+            collect_reads(element.get(), names);
+        }
+        return;
+    }
+    if (const auto* index = dynamic_cast<const IndexExpr*>(expr)) {
+        collect_reads(index->collection.get(), names);
+        collect_reads(index->index.get(), names);
+    }
+}
+
+bool stmt_uses_name(const Stmt* stmt, const std::string& name);
+
+bool stmts_use_name(const std::vector<std::unique_ptr<Stmt>>& stmts, const std::string& name) {
+    for (const auto& stmt : stmts) {
+        if (stmt_uses_name(stmt.get(), name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool stmt_uses_name(const Stmt* stmt, const std::string& name) {
+    if (stmt == nullptr) {
+        return false;
+    }
+    if (const auto* assign = dynamic_cast<const AssignStmt*>(stmt)) {
+        return assign->name == name || expr_mentions(assign->value.get(), name);
+    }
+    if (const auto* index_assign = dynamic_cast<const IndexAssignStmt*>(stmt)) {
+        return expr_mentions(index_assign->collection.get(), name) ||
+               expr_mentions(index_assign->index.get(), name) || expr_mentions(index_assign->value.get(), name);
+    }
+    if (const auto* say = dynamic_cast<const SayStmt*>(stmt)) {
+        return expr_mentions(say->value.get(), name);
+    }
+    if (const auto* give = dynamic_cast<const GiveStmt*>(stmt)) {
+        return expr_mentions(give->value.get(), name);
+    }
+    if (const auto* expr_stmt = dynamic_cast<const ExprStmt*>(stmt)) {
+        return expr_mentions(expr_stmt->expr.get(), name);
+    }
+    if (const auto* iff = dynamic_cast<const IfStmt*>(stmt)) {
+        return expr_mentions(iff->condition.get(), name) || stmts_use_name(iff->then_branch, name) ||
+               stmts_use_name(iff->otherwise_branch, name);
+    }
+    if (const auto* repeat = dynamic_cast<const RepeatStmt*>(stmt)) {
+        return repeat->iterator == name || expr_mentions(repeat->start.get(), name) ||
+               expr_mentions(repeat->end.get(), name) || stmts_use_name(repeat->body, name);
+    }
+    return false;
+}
+
+bool scan_used_after(const std::vector<std::unique_ptr<Stmt>>& stmts, const RepeatStmt* target,
+                     const std::string& name, bool& found) {
+    for (const auto& stmt : stmts) {
+        if (const auto* repeat = dynamic_cast<const RepeatStmt*>(stmt.get())) {
+            if (repeat == target) {
+                found = true;
+                continue;
+            }
+            if (scan_used_after(repeat->body, target, name, found)) {
+                return true;
+            }
+            if (found && stmt_uses_name(repeat, name)) {
+                return true;
+            }
+            continue;
+        }
+        if (const auto* iff = dynamic_cast<const IfStmt*>(stmt.get())) {
+            if (scan_used_after(iff->then_branch, target, name, found) ||
+                scan_used_after(iff->otherwise_branch, target, name, found)) {
+                return true;
+            }
+            if (found && stmt_uses_name(iff, name)) {
+                return true;
+            }
+            continue;
+        }
+        if (found && stmt_uses_name(stmt.get(), name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool assigned_before_loop(const std::vector<std::unique_ptr<Stmt>>& stmts, const RepeatStmt* target,
+                          const std::string& name, bool& found) {
+    for (const auto& stmt : stmts) {
+        if (const auto* repeat = dynamic_cast<const RepeatStmt*>(stmt.get())) {
+            if (repeat == target) {
+                found = true;
+                return false;
+            }
+            if (assigned_before_loop(repeat->body, target, name, found)) {
+                return true;
+            }
+            if (found) {
+                return false;
+            }
+            continue;
+        }
+        if (const auto* iff = dynamic_cast<const IfStmt*>(stmt.get())) {
+            if (assigned_before_loop(iff->then_branch, target, name, found) ||
+                assigned_before_loop(iff->otherwise_branch, target, name, found)) {
+                return true;
+            }
+            if (found) {
+                return false;
+            }
+            continue;
+        }
+        if (found) {
+            return false;
+        }
+        if (const auto* assign = dynamic_cast<const AssignStmt*>(stmt.get())) {
+            if (assign->name == name) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool first_use_is_read(const std::vector<std::unique_ptr<Stmt>>& stmts, const std::string& name, bool& seen) {
+    for (const auto& stmt : stmts) {
+        if (seen) {
+            return false;
+        }
+        if (const auto* assign = dynamic_cast<const AssignStmt*>(stmt.get())) {
+            if (assign->name == name) {
+                seen = true;
+                return expr_mentions(assign->value.get(), name);
+            }
+            if (expr_mentions(assign->value.get(), name)) {
+                seen = true;
+                return true;
+            }
+            continue;
+        }
+        if (const auto* index_assign = dynamic_cast<const IndexAssignStmt*>(stmt.get())) {
+            if (expr_mentions(index_assign->collection.get(), name) || expr_mentions(index_assign->index.get(), name) ||
+                expr_mentions(index_assign->value.get(), name)) {
+                seen = true;
+                return true;
+            }
+            continue;
+        }
+        if (const auto* iff = dynamic_cast<const IfStmt*>(stmt.get())) {
+            if (expr_mentions(iff->condition.get(), name)) {
+                seen = true;
+                return true;
+            }
+            if (first_use_is_read(iff->then_branch, name, seen) || first_use_is_read(iff->otherwise_branch, name, seen)) {
+                return true;
+            }
+            continue;
+        }
+        if (const auto* repeat = dynamic_cast<const RepeatStmt*>(stmt.get())) {
+            if (expr_mentions(repeat->start.get(), name) || expr_mentions(repeat->end.get(), name)) {
+                seen = true;
+                return true;
+            }
+            if (first_use_is_read(repeat->body, name, seen)) {
+                return true;
+            }
+            continue;
+        }
+        if (stmt_uses_name(stmt.get(), name)) {
+            seen = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+std::optional<std::int64_t> eval_const_i64(const Expr* expr, const std::map<std::string, std::int64_t>& env) {
+    if (expr == nullptr) {
+        return std::nullopt;
+    }
+    if (const auto* integer = dynamic_cast<const IntegerExpr*>(expr)) {
+        return integer->value;
+    }
+    if (const auto* ident = dynamic_cast<const IdentifierExpr*>(expr)) {
+        const auto found = env.find(ident->name);
+        if (found == env.end()) {
+            return std::nullopt;
+        }
+        return found->second;
+    }
+    if (const auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+        const auto operand = eval_const_i64(unary->operand.get(), env);
+        if (!operand || unary->op != TokenKind::Minus) {
+            return std::nullopt;
+        }
+        if (*operand == std::numeric_limits<std::int64_t>::min()) {
+            return std::nullopt;
+        }
+        return -*operand;
+    }
+    if (const auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+        const auto left = eval_const_i64(binary->left.get(), env);
+        const auto right = eval_const_i64(binary->right.get(), env);
+        if (!left || !right) {
+            return std::nullopt;
+        }
+        switch (binary->op) {
+            case TokenKind::Plus:
+                return *left + *right;
+            case TokenKind::Minus:
+                return *left - *right;
+            case TokenKind::Star:
+                return *left * *right;
+            default:
+                return std::nullopt;
+        }
+    }
+    return std::nullopt;
+}
+
+bool collect_const_env(const std::vector<std::unique_ptr<Stmt>>& stmts, const RepeatStmt* target,
+                       std::map<std::string, std::int64_t>& env) {
+    for (const auto& stmt : stmts) {
+        if (stmt.get() == target) {
+            return true;
+        }
+        if (const auto* assign = dynamic_cast<const AssignStmt*>(stmt.get())) {
+            if (const auto value = eval_const_i64(assign->value.get(), env)) {
+                env[assign->name] = *value;
+            } else {
+                env.erase(assign->name);
+            }
+            continue;
+        }
+        if (const auto* iff = dynamic_cast<const IfStmt*>(stmt.get())) {
+            if (collect_const_env(iff->then_branch, target, env) ||
+                collect_const_env(iff->otherwise_branch, target, env)) {
+                return true;
+            }
+            continue;
+        }
+        if (const auto* repeat = dynamic_cast<const RepeatStmt*>(stmt.get())) {
+            if (collect_const_env(repeat->body, target, env)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+std::optional<std::int64_t> constant_trip_count(const RepeatStmt& stmt,
+                                                const std::map<std::string, std::int64_t>& env) {
+    const auto start = eval_const_i64(stmt.start.get(), env);
+    const auto end = eval_const_i64(stmt.end.get(), env);
+    if (!start || !end || *end < *start) {
+        return std::nullopt;
+    }
+    const std::uint64_t span = static_cast<std::uint64_t>(*end - *start) + 1;
+    if (span > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+        return std::nullopt;
+    }
+    return static_cast<std::int64_t>(span);
+}
+
+constexpr std::int64_t kMinParallelWork = 1'000'000;
+
+std::int64_t saturating_mul(std::int64_t left, std::int64_t right) {
+    if (left <= 0 || right <= 0) {
+        return 0;
+    }
+    if (left > std::numeric_limits<std::int64_t>::max() / right) {
+        return std::numeric_limits<std::int64_t>::max();
+    }
+    return left * right;
+}
+
+std::int64_t body_work(const std::vector<std::unique_ptr<Stmt>>& stmts,
+                       const std::map<std::string, std::int64_t>& env) {
+    std::int64_t work = 0;
+    for (const auto& stmt : stmts) {
+        if (dynamic_cast<const AssignStmt*>(stmt.get()) != nullptr) {
+            work += 1;
+            continue;
+        }
+        if (dynamic_cast<const IndexAssignStmt*>(stmt.get()) != nullptr) {
+            work += 2;
+            continue;
+        }
+        if (const auto* iff = dynamic_cast<const IfStmt*>(stmt.get())) {
+            work += body_work(iff->then_branch, env);
+            work += body_work(iff->otherwise_branch, env);
+            continue;
+        }
+        if (const auto* repeat = dynamic_cast<const RepeatStmt*>(stmt.get())) {
+            const auto trip = constant_trip_count(*repeat, env);
+            const std::int64_t inner = trip ? *trip : 64;
+            work += saturating_mul(inner, body_work(repeat->body, env) + 1);
+        }
+    }
+    return work;
+}
+
+bool worth_parallelizing(const RepeatStmt& stmt, bool nested,
+                         const std::map<std::string, std::int64_t>& env) {
+    const auto trip = constant_trip_count(stmt, env);
+    if (nested) {
+        return trip.has_value() && *trip >= kMinParallelWork;
+    }
+    if (!trip) {
+        return true;
+    }
+    return saturating_mul(*trip, body_work(stmt.body, env) + 1) >= kMinParallelWork;
+}
+
+void collect_loop_effects(const std::vector<std::unique_ptr<Stmt>>& stmts, const std::string& iterator,
+                          std::set<std::string>& assigned, std::set<std::string>& reads,
+                          std::set<std::string>& inner_iterators, bool& ok, std::string& reason) {
+    for (const auto& stmt : stmts) {
+        if (!ok) {
+            return;
+        }
+        if (const auto* assign = dynamic_cast<const AssignStmt*>(stmt.get())) {
+            if (has_user_call(assign->value.get())) {
+                ok = false;
+                reason = "body contains a user function call";
+                return;
+            }
+            assigned.insert(assign->name);
+            collect_reads(assign->value.get(), reads);
+            continue;
+        }
+        if (const auto* index_assign = dynamic_cast<const IndexAssignStmt*>(stmt.get())) {
+            const auto* collection = dynamic_cast<const IdentifierExpr*>(index_assign->collection.get());
+            if (collection == nullptr || !expr_mentions(index_assign->index.get(), iterator) ||
+                has_user_call(index_assign->index.get()) || has_user_call(index_assign->value.get())) {
+                ok = false;
+                reason = "list write is not indexed solely by this iterator";
+                return;
+            }
+            reads.insert(collection->name);
+            collect_reads(index_assign->index.get(), reads);
+            collect_reads(index_assign->value.get(), reads);
+            continue;
+        }
+        if (dynamic_cast<const SayStmt*>(stmt.get()) != nullptr) {
+            ok = false;
+            reason = "body contains `say`";
+            return;
+        }
+        if (dynamic_cast<const GiveStmt*>(stmt.get()) != nullptr) {
+            ok = false;
+            reason = "body contains `give`";
+            return;
+        }
+        if (const auto* expr_stmt = dynamic_cast<const ExprStmt*>(stmt.get())) {
+            const auto* call = dynamic_cast<const CallExpr*>(expr_stmt->expr.get());
+            if (call == nullptr || (call->callee != "count" && call->callee != "zeros")) {
+                ok = false;
+                reason = "body contains a user function call";
+                return;
+            }
+            collect_reads(expr_stmt->expr.get(), reads);
+            continue;
+        }
+        if (const auto* iff = dynamic_cast<const IfStmt*>(stmt.get())) {
+            if (has_user_call(iff->condition.get())) {
+                ok = false;
+                reason = "body contains a user function call";
+                return;
+            }
+            collect_reads(iff->condition.get(), reads);
+            collect_loop_effects(iff->then_branch, iterator, assigned, reads, inner_iterators, ok, reason);
+            collect_loop_effects(iff->otherwise_branch, iterator, assigned, reads, inner_iterators, ok, reason);
+            continue;
+        }
+        if (const auto* repeat = dynamic_cast<const RepeatStmt*>(stmt.get())) {
+            inner_iterators.insert(repeat->iterator);
+            collect_reads(repeat->start.get(), reads);
+            collect_reads(repeat->end.get(), reads);
+            collect_loop_effects(repeat->body, iterator, assigned, reads, inner_iterators, ok, reason);
+            continue;
+        }
+        ok = false;
+        reason = "body contains a statement that is not known to be independent";
+    }
+}
+
+class Lowerer {
+public:
+    Lowerer(const Program& program, const SemanticInfo& semantic, std::string source_path);
+
+    IrModule run();
+
+private:
+    void lower_function(const FunctionDecl& function);
+    void lower_statement(const Stmt* stmt);
+    void lower_assignment(const AssignStmt& stmt);
+    void lower_index_assign(const IndexAssignStmt& stmt);
+    void lower_say(const SayStmt& stmt);
+    void lower_give(const GiveStmt& stmt);
+    void lower_expr_stmt(const ExprStmt& stmt);
+    void lower_if(const IfStmt& stmt);
+    void lower_repeat(const RepeatStmt& stmt);
+    void lower_counted_repeat(const RepeatStmt& stmt, IrValue start, IrValue end);
+    void lower_parallel_repeat(const RepeatStmt& stmt, const std::vector<std::string>& captures,
+                               std::int64_t work_per_iter);
+    bool can_parallelize(const RepeatStmt& stmt, std::vector<std::string>& captures, LoopDecision& decision) const;
+    IrValue const_i64(std::int64_t value);
+    IrValue emit_bin(IrBinOp op, const IrValue& left, const IrValue& right, IrType type);
+    IrValue lower_expression(const Expr* expr);
+    IrValue lower_unary(const UnaryExpr& expr);
+    IrValue lower_binary(const BinaryExpr& expr);
+    IrValue lower_call(const CallExpr& expr);
+    IrValue lower_list(const ListExpr& expr);
+    IrValue lower_index(const IndexExpr& expr);
+
+    IrType type_of(const Expr* expr) const;
+    IrType type_of_name(const std::string& name) const;
+    void ensure_local(const std::string& name, IrType type);
+    static void ensure_local_on(IrFunction& function, const std::string& name, IrType type);
+
+    IrBlock& current();
+    IrBlock& new_block(const std::string& prefix);
+    void switch_to(const std::string& name);
+    IrBlock* find_block(const std::string& name);
+    void finish_jump(const std::string& target, std::string loop_iterator = {});
+    void finish_branch(const IrValue& condition, const std::string& then_name, const std::string& else_name);
+    void finish_return(IrValue value);
+
+    IrValue make_temp(IrType type);
+    void emit(IrInst inst);
+    IrValue emit_load(const std::string& name);
+    void emit_store(const std::string& name, const IrValue& value);
+
+    const Program& program_;
+    const SemanticInfo& semantic_;
+    IrModule module_;
+    std::vector<IrFunction> outlined_;
+    IrFunction* function_ = nullptr;
+    const FunctionDecl* current_function_decl_ = nullptr;
+    std::string current_block_;
+    std::string current_function_name_;
+    int next_temp_ = 0;
+    int next_block_ = 0;
+    int next_outlined_ = 0;
+    bool in_parallel_ = false;
+    int in_loop_ = 0;
+};
+
+Lowerer::Lowerer(const Program& program, const SemanticInfo& semantic, std::string source_path)
+    : program_(program), semantic_(semantic) {
+    module_.source_path = std::move(source_path);
+}
+
+IrModule Lowerer::run() {
+    for (const auto& function : program_.functions) {
+        if (function != nullptr) {
+            lower_function(*function);
+        }
+    }
+    for (auto& function : outlined_) {
+        module_.functions.push_back(std::move(function));
+    }
+    return module_;
+}
+
+void Lowerer::lower_function(const FunctionDecl& function) {
+    current_function_decl_ = &function;
+    IrFunction ir_fn;
+    ir_fn.name = function.name;
+    const auto return_found = semantic_.return_types.find(function.name);
+    ir_fn.return_type = return_found != semantic_.return_types.end() ? ir_type_from(return_found->second) : ir_void();
+
+    const auto params_found = semantic_.parameter_types.find(function.name);
+    for (std::size_t i = 0; i < function.parameters.size(); ++i) {
+        IrType type = ir_i64();
+        if (params_found != semantic_.parameter_types.end() && i < params_found->second.size()) {
+            type = ir_type_from(params_found->second[i]);
+        }
+        ir_fn.params.emplace_back(function.parameters[i], type);
+        ir_fn.locals.emplace_back(function.parameters[i], type);
+    }
+
+    const auto locals_found = semantic_.local_types.find(function.name);
+    if (locals_found != semantic_.local_types.end()) {
+        for (const auto& [name, type] : locals_found->second) {
+            ensure_local_on(ir_fn, name, ir_type_from(type));
+        }
+    }
+
+    module_.functions.push_back(std::move(ir_fn));
+    function_ = &module_.functions.back();
+    current_function_name_ = function.name;
+    next_temp_ = 0;
+    next_block_ = 0;
+
+    IrBlock entry;
+    entry.name = "entry";
+    function_->blocks.push_back(std::move(entry));
+    current_block_ = "entry";
+
+    for (const auto& stmt : function.body) {
+        lower_statement(stmt.get());
+    }
+
+    if (!current().terminated) {
+        IrValue value;
+        value.type = function_->return_type;
+        if (function_->return_type.kind == IrTypeKind::I64) {
+            value.kind = IrValue::Kind::ConstI64;
+        } else if (function_->return_type.kind == IrTypeKind::F64) {
+            value.kind = IrValue::Kind::ConstF64;
+        } else if (function_->return_type.kind == IrTypeKind::Bool) {
+            value.kind = IrValue::Kind::ConstBool;
+        } else if (function_->return_type.kind == IrTypeKind::Void) {
+            value.kind = IrValue::Kind::Undef;
+        } else {
+            value.kind = IrValue::Kind::Undef;
+        }
+        finish_return(value);
+    }
+
+    function_ = nullptr;
+    current_function_decl_ = nullptr;
+}
+
+void Lowerer::ensure_local_on(IrFunction& function, const std::string& name, IrType type) {
+    for (const auto& local : function.locals) {
+        if (local.first == name) {
+            return;
+        }
+    }
+    function.locals.emplace_back(name, type);
+}
+
+void Lowerer::lower_statement(const Stmt* stmt) {
+    if (stmt == nullptr || current().terminated) {
+        return;
+    }
+    if (const auto* assign = dynamic_cast<const AssignStmt*>(stmt)) {
+        lower_assignment(*assign);
+        return;
+    }
+    if (const auto* index_assign = dynamic_cast<const IndexAssignStmt*>(stmt)) {
+        lower_index_assign(*index_assign);
+        return;
+    }
+    if (const auto* say = dynamic_cast<const SayStmt*>(stmt)) {
+        lower_say(*say);
+        return;
+    }
+    if (const auto* give = dynamic_cast<const GiveStmt*>(stmt)) {
+        lower_give(*give);
+        return;
+    }
+    if (const auto* expr_stmt = dynamic_cast<const ExprStmt*>(stmt)) {
+        lower_expr_stmt(*expr_stmt);
+        return;
+    }
+    if (const auto* iff = dynamic_cast<const IfStmt*>(stmt)) {
+        lower_if(*iff);
+        return;
+    }
+    if (const auto* repeat = dynamic_cast<const RepeatStmt*>(stmt)) {
+        lower_repeat(*repeat);
+        return;
+    }
+}
+
+void Lowerer::lower_assignment(const AssignStmt& stmt) {
+    const IrValue value = lower_expression(stmt.value.get());
+    ensure_local(stmt.name, value.type);
+    emit_store(stmt.name, value);
+}
+
+void Lowerer::lower_index_assign(const IndexAssignStmt& stmt) {
+    IrInst inst;
+    inst.op = IrOp::ListSet;
+    inst.args.push_back(lower_expression(stmt.collection.get()));
+    inst.args.push_back(lower_expression(stmt.index.get()));
+    inst.args.push_back(lower_expression(stmt.value.get()));
+    emit(std::move(inst));
+}
+
+void Lowerer::lower_say(const SayStmt& stmt) {
+    IrInst inst;
+    inst.op = IrOp::Say;
+    inst.args.push_back(lower_expression(stmt.value.get()));
+    emit(std::move(inst));
+}
+
+void Lowerer::lower_give(const GiveStmt& stmt) {
+    finish_return(lower_expression(stmt.value.get()));
+}
+
+void Lowerer::lower_expr_stmt(const ExprStmt& stmt) {
+    lower_expression(stmt.expr.get());
+}
+
+void Lowerer::lower_if(const IfStmt& stmt) {
+    const IrValue condition = lower_expression(stmt.condition.get());
+    const std::string then_name = new_block("then").name;
+    const std::string else_name = new_block("else").name;
+    const std::string merge_name = new_block("merge").name;
+    finish_branch(condition, then_name, else_name);
+
+    switch_to(then_name);
+    for (const auto& then_stmt : stmt.then_branch) {
+        lower_statement(then_stmt.get());
+    }
+    if (!current().terminated) {
+        finish_jump(merge_name);
+    }
+
+    switch_to(else_name);
+    for (const auto& otherwise_stmt : stmt.otherwise_branch) {
+        lower_statement(otherwise_stmt.get());
+    }
+    if (!current().terminated) {
+        finish_jump(merge_name);
+    }
+
+    switch_to(merge_name);
+}
+
+bool Lowerer::can_parallelize(const RepeatStmt& stmt, std::vector<std::string>& captures,
+                              LoopDecision& decision) const {
+    decision.function = current_function_name_;
+    decision.iterator = stmt.iterator;
+    decision.location = stmt.span.start;
+    decision.nest_depth = in_loop_;
+    decision.parallel = false;
+    decision.independent = false;
+
+    if (in_parallel_ || current_function_decl_ == nullptr) {
+        decision.reason = "already inside a parallel region";
+        return false;
+    }
+    std::map<std::string, std::int64_t> env;
+    collect_const_env(current_function_decl_->body, &stmt, env);
+    const auto trip = constant_trip_count(stmt, env);
+    decision.estimated_trip = trip.value_or(-1);
+    const std::int64_t cost = body_work(stmt.body, env) + 1;
+    decision.work_per_iter = cost < 1 ? 1 : cost;
+    decision.estimated_work = trip ? saturating_mul(*trip, cost) : -1;
+
+    std::set<std::string> assigned;
+    std::set<std::string> reads;
+    std::set<std::string> inner_iterators;
+    bool ok = true;
+    std::string effect_reason;
+    collect_loop_effects(stmt.body, stmt.iterator, assigned, reads, inner_iterators, ok, effect_reason);
+    if (!ok) {
+        decision.reason = effect_reason.empty() ? "loop body is not independent" : effect_reason;
+        return false;
+    }
+    decision.independent = true;
+
+    if (!worth_parallelizing(stmt, in_loop_ != 0, env)) {
+        if (in_loop_ != 0) {
+            decision.reason =
+                trip ? "nested inside another repeat with trip count " + std::to_string(*trip) +
+                           " (need a proven trip of at least 1000000)"
+                     : "nested inside another repeat without a proven trip count of at least 1000000";
+        } else if (trip) {
+            decision.reason = "estimated work " + std::to_string(decision.estimated_work) +
+                              " is below 1000000 (trip " + std::to_string(*trip) + ")";
+        } else {
+            decision.reason = "estimated work is below the parallel threshold";
+        }
+        return false;
+    }
+
+    for (const auto& name : assigned) {
+        bool found = false;
+        if (scan_used_after(current_function_decl_->body, &stmt, name, found)) {
+            decision.independent = false;
+            decision.reason = "scalar `" + name + "` is used after the loop";
+            return false;
+        }
+        bool seen = false;
+        const bool read_first = first_use_is_read(stmt.body, name, seen);
+        bool before_found = false;
+        const bool existed =
+            assigned_before_loop(current_function_decl_->body, &stmt, name, before_found);
+        for (const auto& param : current_function_decl_->parameters) {
+            if (param == name) {
+                if (read_first) {
+                    decision.independent = false;
+                    decision.reason = "scalar `" + name + "` is a reduction or live-in value";
+                    return false;
+                }
+            }
+        }
+        if (existed && read_first) {
+            decision.independent = false;
+            decision.reason = "scalar `" + name + "` is a reduction";
+            return false;
+        }
+    }
+
+    reads.erase(stmt.iterator);
+    for (const auto& name : inner_iterators) {
+        reads.erase(name);
+    }
+    for (const auto& name : assigned) {
+        bool seen = false;
+        const bool read_first = first_use_is_read(stmt.body, name, seen);
+        bool before_found = false;
+        const bool existed =
+            assigned_before_loop(current_function_decl_->body, &stmt, name, before_found);
+        if (!read_first || !existed) {
+            reads.erase(name);
+        }
+    }
+
+    captures.assign(reads.begin(), reads.end());
+    decision.independent = true;
+    decision.parallel = true;
+    decision.reason = "independent iterations, estimated work " +
+                      (decision.estimated_work >= 0 ? std::to_string(decision.estimated_work) : std::string("unknown")) +
+                      (decision.estimated_trip >= 0 ? ", trip " + std::to_string(decision.estimated_trip) : "");
+    return true;
+}
+
+IrValue Lowerer::const_i64(std::int64_t value) {
+    IrValue result;
+    result.kind = IrValue::Kind::ConstI64;
+    result.type = ir_i64();
+    result.i64 = value;
+    return result;
+}
+
+IrValue Lowerer::emit_bin(IrBinOp op, const IrValue& left, const IrValue& right, IrType type) {
+    IrInst inst;
+    inst.op = IrOp::Bin;
+    inst.bin = op;
+    inst.dest = make_temp(std::move(type));
+    inst.args.push_back(left);
+    inst.args.push_back(right);
+    emit(inst);
+    return inst.dest;
+}
+
+void Lowerer::lower_counted_repeat(const RepeatStmt& stmt, IrValue start, IrValue end) {
+    ensure_local(stmt.iterator, ir_i64());
+    const std::string k_name = stmt.iterator + "$k";
+    const std::string n_name = stmt.iterator + "$n";
+    ensure_local(k_name, ir_i64());
+    ensure_local(n_name, ir_i64());
+
+    const std::string empty_name = new_block("empty").name;
+    const std::string pre_name = new_block("pre").name;
+    const std::string cond_name = new_block("loop").name;
+    const std::string body_name = new_block("body").name;
+    const std::string after_name = new_block("after").name;
+
+    const IrValue too_small = emit_bin(IrBinOp::Lt, end, start, ir_bool());
+    finish_branch(too_small, empty_name, pre_name);
+
+    switch_to(empty_name);
+    finish_jump(after_name);
+
+    switch_to(pre_name);
+    const IrValue span = emit_bin(IrBinOp::Sub, end, start, ir_i64());
+    const IrValue niter = emit_bin(IrBinOp::Add, span, const_i64(1), ir_i64());
+    emit_store(n_name, niter);
+    emit_store(k_name, const_i64(0));
+    emit_store(stmt.iterator, start);
+    finish_jump(cond_name);
+
+    switch_to(cond_name);
+    const IrValue k = emit_load(k_name);
+    const IrValue n = emit_load(n_name);
+    const IrValue keep_going = emit_bin(IrBinOp::Lt, k, n, ir_bool());
+    finish_branch(keep_going, body_name, after_name);
+
+    switch_to(body_name);
+    ++in_loop_;
+    for (const auto& body_stmt : stmt.body) {
+        lower_statement(body_stmt.get());
+    }
+    --in_loop_;
+    if (!current().terminated) {
+        const IrValue i = emit_load(stmt.iterator);
+        emit_store(stmt.iterator, emit_bin(IrBinOp::Add, i, const_i64(1), ir_i64()));
+        const IrValue next_k = emit_bin(IrBinOp::Add, emit_load(k_name), const_i64(1), ir_i64());
+        emit_store(k_name, next_k);
+        finish_jump(cond_name, stmt.iterator);
+    }
+
+    switch_to(after_name);
+}
+
+void Lowerer::lower_parallel_repeat(const RepeatStmt& stmt, const std::vector<std::string>& captures,
+                                    std::int64_t work_per_iter) {
+    const IrValue start = lower_expression(stmt.start.get());
+    const IrValue end = lower_expression(stmt.end.get());
+
+    IrFunction outlined;
+    outlined.name = "$par$" + std::to_string(next_outlined_++);
+    outlined.return_type = ir_void();
+    outlined.params.emplace_back("$lo", ir_i64());
+    outlined.params.emplace_back("$hi", ir_i64());
+    outlined.locals.emplace_back("$lo", ir_i64());
+    outlined.locals.emplace_back("$hi", ir_i64());
+    outlined.locals.emplace_back(stmt.iterator, ir_i64());
+    for (const auto& capture : captures) {
+        const IrType type = type_of_name(capture);
+        outlined.params.emplace_back(capture, type);
+        outlined.locals.emplace_back(capture, type);
+    }
+
+    IrFunction* parent = function_;
+    const std::string parent_block = current_block_;
+    const int parent_temp = next_temp_;
+    const int parent_block_n = next_block_;
+
+    function_ = &outlined;
+    next_temp_ = 0;
+    next_block_ = 0;
+    in_parallel_ = true;
+
+    IrBlock entry;
+    entry.name = "entry";
+    outlined.blocks.push_back(std::move(entry));
+    current_block_ = "entry";
+
+    lower_counted_repeat(stmt, emit_load("$lo"), emit_load("$hi"));
+    if (!current().terminated) {
+        IrValue value;
+        value.kind = IrValue::Kind::Undef;
+        value.type = ir_void();
+        finish_return(value);
+    }
+
+    in_parallel_ = false;
+    function_ = parent;
+    current_block_ = parent_block;
+    next_temp_ = parent_temp;
+    next_block_ = parent_block_n;
+
+    const std::string outlined_name = outlined.name;
+    outlined_.push_back(std::move(outlined));
+
+    IrInst inst;
+    inst.op = IrOp::ParallelFor;
+    inst.name = outlined_name;
+    inst.work = work_per_iter < 1 ? 1 : work_per_iter;
+    inst.args.push_back(start);
+    inst.args.push_back(end);
+    for (const auto& capture : captures) {
+        inst.args.push_back(emit_load(capture));
+    }
+    emit(std::move(inst));
+}
+
+void Lowerer::lower_repeat(const RepeatStmt& stmt) {
+    std::vector<std::string> captures;
+    LoopDecision decision;
+    if (can_parallelize(stmt, captures, decision)) {
+        module_.decisions.push_back(decision);
+        lower_parallel_repeat(stmt, captures, decision.work_per_iter);
+        return;
+    }
+    if (decision.iterator.empty()) {
+        decision.function = current_function_name_;
+        decision.iterator = stmt.iterator;
+        decision.location = stmt.span.start;
+        decision.reason = "sequential";
+    }
+    module_.decisions.push_back(decision);
+    lower_counted_repeat(stmt, lower_expression(stmt.start.get()), lower_expression(stmt.end.get()));
+}
+
+IrValue Lowerer::lower_expression(const Expr* expr) {
+    if (expr == nullptr) {
+        IrValue value;
+        value.kind = IrValue::Kind::Undef;
+        return value;
+    }
+    if (const auto* integer = dynamic_cast<const IntegerExpr*>(expr)) {
+        IrValue value;
+        value.kind = IrValue::Kind::ConstI64;
+        value.type = ir_i64();
+        value.i64 = integer->value;
+        return value;
+    }
+    if (const auto* floating = dynamic_cast<const FloatExpr*>(expr)) {
+        IrValue value;
+        value.kind = IrValue::Kind::ConstF64;
+        value.type = ir_f64();
+        value.f64 = floating->value;
+        return value;
+    }
+    if (const auto* string = dynamic_cast<const StringExpr*>(expr)) {
+        IrValue value;
+        value.kind = IrValue::Kind::ConstString;
+        value.type = ir_string();
+        value.text = string->value;
+        return value;
+    }
+    if (const auto* boolean = dynamic_cast<const BoolExpr*>(expr)) {
+        IrValue value;
+        value.kind = IrValue::Kind::ConstBool;
+        value.type = ir_bool();
+        value.boolean = boolean->value;
+        return value;
+    }
+    if (const auto* name = dynamic_cast<const IdentifierExpr*>(expr)) {
+        return emit_load(name->name);
+    }
+    if (const auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+        return lower_unary(*unary);
+    }
+    if (const auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+        return lower_binary(*binary);
+    }
+    if (const auto* call = dynamic_cast<const CallExpr*>(expr)) {
+        return lower_call(*call);
+    }
+    if (const auto* list = dynamic_cast<const ListExpr*>(expr)) {
+        return lower_list(*list);
+    }
+    if (const auto* index = dynamic_cast<const IndexExpr*>(expr)) {
+        return lower_index(*index);
+    }
+    IrValue value;
+    value.kind = IrValue::Kind::Undef;
+    return value;
+}
+
+IrValue Lowerer::lower_unary(const UnaryExpr& expr) {
+    IrInst inst;
+    inst.op = IrOp::Un;
+    inst.un = IrUnOp::Neg;
+    inst.args.push_back(lower_expression(expr.operand.get()));
+    inst.dest = make_temp(type_of(&expr));
+    emit(inst);
+    return inst.dest;
+}
+
+IrValue Lowerer::lower_binary(const BinaryExpr& expr) {
+    IrInst inst;
+    inst.op = IrOp::Bin;
+    inst.args.push_back(lower_expression(expr.left.get()));
+    inst.args.push_back(lower_expression(expr.right.get()));
+    const IrType result_type = type_of(&expr);
+    switch (expr.op) {
+        case TokenKind::Plus:
+            inst.bin = result_type.kind == IrTypeKind::String ? IrBinOp::Concat : IrBinOp::Add;
+            break;
+        case TokenKind::Minus:
+            inst.bin = IrBinOp::Sub;
+            break;
+        case TokenKind::Star:
+            inst.bin = IrBinOp::Mul;
+            break;
+        case TokenKind::Slash:
+            inst.bin = IrBinOp::Div;
+            break;
+        case TokenKind::Percent:
+            inst.bin = IrBinOp::Rem;
+            break;
+        case TokenKind::EqualEqual:
+            inst.bin = IrBinOp::Eq;
+            break;
+        case TokenKind::BangEqual:
+            inst.bin = IrBinOp::Ne;
+            break;
+        case TokenKind::Less:
+            inst.bin = IrBinOp::Lt;
+            break;
+        case TokenKind::LessEqual:
+            inst.bin = IrBinOp::Le;
+            break;
+        case TokenKind::Greater:
+            inst.bin = IrBinOp::Gt;
+            break;
+        case TokenKind::GreaterEqual:
+            inst.bin = IrBinOp::Ge;
+            break;
+        default:
+            inst.bin = IrBinOp::Add;
+            break;
+    }
+    inst.dest = make_temp(result_type);
+    emit(inst);
+    return inst.dest;
+}
+
+IrValue Lowerer::lower_index(const IndexExpr& expr) {
+    IrInst inst;
+    inst.op = IrOp::ListGet;
+    inst.args.push_back(lower_expression(expr.collection.get()));
+    inst.args.push_back(lower_expression(expr.index.get()));
+    inst.dest = make_temp(type_of(&expr));
+    emit(inst);
+    return inst.dest;
+}
+
+bool is_user_function(const Program& program, const std::string& name) {
+    for (const auto& function : program.functions) {
+        if (function != nullptr && function->name == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
+IrValue Lowerer::lower_call(const CallExpr& expr) {
+    if (expr.callee == "count" && !is_user_function(program_, "count")) {
+        IrInst inst;
+        inst.op = IrOp::ListLen;
+        if (!expr.arguments.empty()) {
+            inst.args.push_back(lower_expression(expr.arguments[0].get()));
+        }
+        inst.dest = make_temp(ir_i64());
+        emit(inst);
+        return inst.dest;
+    }
+    if (expr.callee == "zeros" && !is_user_function(program_, "zeros")) {
+        IrInst inst;
+        inst.op = IrOp::Zeros;
+        if (!expr.arguments.empty()) {
+            inst.args.push_back(lower_expression(expr.arguments[0].get()));
+        }
+        inst.dest = make_temp(ir_list(ir_i64()));
+        emit(inst);
+        return inst.dest;
+    }
+
+    IrInst inst;
+    inst.op = IrOp::Call;
+    inst.name = expr.callee;
+    for (const auto& argument : expr.arguments) {
+        inst.args.push_back(lower_expression(argument.get()));
+    }
+    inst.dest = make_temp(type_of(&expr));
+    emit(inst);
+    return inst.dest;
+}
+
+IrValue Lowerer::lower_list(const ListExpr& expr) {
+    const IrType type = type_of(&expr);
+    IrInst create;
+    create.op = IrOp::List;
+    create.dest = make_temp(type);
+    create.args.push_back([&] {
+        IrValue count;
+        count.kind = IrValue::Kind::ConstI64;
+        count.type = ir_i64();
+        count.i64 = static_cast<std::int64_t>(expr.elements.size());
+        return count;
+    }());
+    emit(create);
+    for (std::size_t i = 0; i < expr.elements.size(); ++i) {
+        IrValue index;
+        index.kind = IrValue::Kind::ConstI64;
+        index.type = ir_i64();
+        index.i64 = static_cast<std::int64_t>(i);
+        IrInst set;
+        set.op = IrOp::ListSet;
+        set.args.push_back(create.dest);
+        set.args.push_back(index);
+        set.args.push_back(lower_expression(expr.elements[i].get()));
+        emit(std::move(set));
+    }
+    return create.dest;
+}
+
+IrType Lowerer::type_of(const Expr* expr) const {
+    if (expr == nullptr) {
+        return ir_void();
+    }
+    const auto found = semantic_.expression_types.find(expr);
+    if (found != semantic_.expression_types.end()) {
+        return ir_type_from(found->second);
+    }
+    return ir_void();
+}
+
+IrType Lowerer::type_of_name(const std::string& name) const {
+    const auto function = semantic_.local_types.find(current_function_name_);
+    if (function != semantic_.local_types.end()) {
+        const auto local = function->second.find(name);
+        if (local != function->second.end()) {
+            return ir_type_from(local->second);
+        }
+    }
+    if (function_ != nullptr) {
+        for (const auto& local : function_->locals) {
+            if (local.first == name) {
+                return local.second;
+            }
+        }
+    }
+    return ir_i64();
+}
+
+void Lowerer::ensure_local(const std::string& name, IrType type) {
+    if (function_ == nullptr) {
+        return;
+    }
+    ensure_local_on(*function_, name, type);
+}
+
+IrBlock& Lowerer::current() {
+    return *find_block(current_block_);
+}
+
+IrBlock& Lowerer::new_block(const std::string& prefix) {
+    IrBlock block;
+    block.name = prefix + std::to_string(next_block_++);
+    function_->blocks.push_back(std::move(block));
+    return function_->blocks.back();
+}
+
+void Lowerer::switch_to(const std::string& name) {
+    current_block_ = name;
+}
+
+IrBlock* Lowerer::find_block(const std::string& name) {
+    for (auto& block : function_->blocks) {
+        if (block.name == name) {
+            return &block;
+        }
+    }
+    return &function_->blocks.front();
+}
+
+void Lowerer::finish_jump(const std::string& target, std::string loop_iterator) {
+    current().term.kind = IrTermKind::Jump;
+    current().term.target = target;
+    current().term.loop_iterator = std::move(loop_iterator);
+    current().terminated = true;
+}
+
+void Lowerer::finish_branch(const IrValue& condition, const std::string& then_name, const std::string& else_name) {
+    current().term.kind = IrTermKind::Branch;
+    current().term.value = condition;
+    current().term.target = then_name;
+    current().term.otherwise = else_name;
+    current().terminated = true;
+}
+
+void Lowerer::finish_return(IrValue value) {
+    current().term.kind = IrTermKind::Return;
+    current().term.value = std::move(value);
+    current().terminated = true;
+}
+
+IrValue Lowerer::make_temp(IrType type) {
+    IrValue value;
+    value.kind = IrValue::Kind::Temp;
+    value.type = std::move(type);
+    value.id = next_temp_++;
+    return value;
+}
+
+void Lowerer::emit(IrInst inst) {
+    current().insts.push_back(std::move(inst));
+}
+
+IrValue Lowerer::emit_load(const std::string& name) {
+    IrInst inst;
+    inst.op = IrOp::Load;
+    inst.name = name;
+    inst.dest = make_temp(type_of_name(name));
+    emit(inst);
+    return inst.dest;
+}
+
+void Lowerer::emit_store(const std::string& name, const IrValue& value) {
+    IrInst inst;
+    inst.op = IrOp::Store;
+    inst.name = name;
+    inst.args.push_back(value);
+    emit(std::move(inst));
+}
+
+}  // namespace
+
+IrModule lower_to_ir(const Program& program, const SemanticInfo& semantic, const std::string& source_path) {
+    Lowerer lowerer(program, semantic, source_path);
+    return lowerer.run();
+}
+
+}  // namespace yukt

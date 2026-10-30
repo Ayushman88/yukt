@@ -1,0 +1,12 @@
+create check(age):
+    if age > 18:
+        say "adult"
+    otherwise:
+        if age == 18:
+            say "just 18"
+        otherwise:
+            say "young"
+    give true
+
+create main:
+    check(21)

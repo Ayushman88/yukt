@@ -1,0 +1,7 @@
+create main:
+    value = 1 + 2 * 3
+    extra = (4 + 5) * 6
+    ready = true
+    count = -1
+    say value
+    give extra

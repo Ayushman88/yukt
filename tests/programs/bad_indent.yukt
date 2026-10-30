@@ -1,0 +1,3 @@
+create main:
+    say 1
+  say 2

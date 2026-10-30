@@ -1,0 +1,17 @@
+create fib(n):
+    if n < 2:
+        give n
+    a = 0
+    b = 1
+    repeat i in 2..n:
+        next = a + b
+        a = b
+        b = next
+    give b
+
+create main:
+    arg = count(zeros(45))
+    acc = 0
+    repeat t in 1..1500000:
+        acc = acc + fib(arg)
+    say acc

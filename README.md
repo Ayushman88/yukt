@@ -1,0 +1,122 @@
+# YUKT
+
+YUKT is an English-inspired, statically typed, compiled programming language. This repository contains its compiler, language specification, and tests.
+
+The current milestone is **0.10: Intelligent Execution Engine**. `yukt build` and `yukt run` produce host binaries optimized at LLVM O3. Independent `repeat` loops may run in parallel when estimated work is large; the runtime can still sequentialize a call that is not worth dispatching. `yukt --explain` reports those decisions only when they appear in generated LLVM IR. See `docs/YUKT_010_DESIGN.md`, `docs/EXECUTION_ENGINE.md`, and `docs/PERFORMANCE_ANALYSIS_0.10.md`.
+
+## Example
+
+```yukt
+create greet(name):
+    say "Hello, " + name
+
+create main:
+    name = "World"
+    greet(name)
+
+    repeat i in 1..5:
+        say i
+
+    say "YUKT is running!"
+```
+
+```text
+Hello, World
+1
+2
+3
+4
+5
+YUKT is running!
+```
+
+## Status
+
+| Component | Status |
+| --- | --- |
+| Lexer, including indentation | Implemented |
+| Recursive-descent parser | Implemented |
+| Abstract syntax tree | Implemented |
+| Diagnostics | Implemented |
+| Semantic analysis and type inference | Implemented |
+| YUKT IR | Implemented |
+| LLVM backend | Implemented |
+| Native executables (host triple) | Implemented |
+| LLVM O3, mem2reg, host CPU | Implemented |
+| List index, `count`, `zeros` | Implemented |
+| Automatic parallelization | Implemented (conservative) |
+| SIMD / loop vectorize | Implemented via LLVM |
+| C++ / Rust benches | `benches/` and `docs/BENCHMARKS.md` |
+| Performance engineering | Implemented (0.08); see `docs/PERFORMANCE_ANALYSIS_0.08.md` |
+| Compiler optimization | Implemented (0.09); see `docs/PERFORMANCE_ANALYSIS_0.09.md` |
+| Intelligent execution engine | Implemented (0.10); see `docs/PERFORMANCE_ANALYSIS_0.10.md` |
+| Standard library | Not started |
+
+`yukt file.yukt` type-checks. `yukt build` and `yukt run` generate native code through LLVM.
+
+## Requirements
+
+- C++20 compiler (`clang++` on macOS)
+- C compiler for the runtime
+- CMake 3.20+
+- Ninja
+- LLVM 18+ (Homebrew `llvm` 23 is tested on Apple Silicon)
+
+On macOS:
+
+```bash
+brew install cmake ninja llvm
+xcode-select --install
+```
+
+## Build
+
+```bash
+cmake -G Ninja -S . -B build -DLLVM_DIR="$(brew --prefix llvm)/lib/cmake/llvm"
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+The compiler binary is `build/yukt`.
+
+Same-algorithm C++ and Rust benches. The harness times in-process kernel compute (warmup discarded, monotonic clock), not process startup:
+
+```bash
+python3 benches/run.py
+```
+
+Numbers and the claims that run supports are written to `docs/BENCHMARKS.md`.
+
+## Usage
+
+```bash
+build/yukt examples/hello.yukt
+build/yukt --emit-ir examples/hello.yukt
+build/yukt --emit-llvm examples/hello.yukt
+build/yukt --explain examples/hello.yukt
+build/yukt build examples/hello.yukt -o hello
+build/yukt run examples/hello.yukt
+```
+
+## Project layout
+
+```
+compiler/    Frontend, YUKT IR, and LLVM backend
+runtime/     C runtime linked into generated programs
+std/         Reserved for the standard library
+tests/       CTest suites
+examples/    Sample YUKT programs
+docs/        Language and compiler documentation
+tools/       Reserved for developer tools
+```
+
+## Documentation
+
+- [Language specification](docs/LANGUAGE_SPEC.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Roadmap](docs/ROADMAP.md)
+- [Contributor / agent guide](AGENTS.md)
+- [Benchmarks vs C++ and Rust](docs/BENCHMARKS.md)
+- [0.10 design](docs/YUKT_010_DESIGN.md)
+- [Execution engine](docs/EXECUTION_ENGINE.md)
+- [0.10 performance analysis](docs/PERFORMANCE_ANALYSIS_0.10.md)

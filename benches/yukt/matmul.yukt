@@ -1,0 +1,19 @@
+create main:
+    n = 512
+    a = zeros(n * n)
+    b = zeros(n * n)
+    c = zeros(n * n)
+    repeat i in 0..n - 1:
+        repeat j in 0..n - 1:
+            a[i * n + j] = i + j
+            b[i * n + j] = i - j + 1
+    repeat i in 0..n - 1:
+        repeat j in 0..n - 1:
+            total = 0
+            repeat k in 0..n - 1:
+                total = total + a[i * n + k] * b[k * n + j]
+            c[i * n + j] = total
+    checksum = 0
+    repeat i in 0..n * n - 1:
+        checksum = checksum + c[i]
+    say checksum

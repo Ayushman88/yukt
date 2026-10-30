@@ -1,0 +1,5 @@
+create main:
+    repeat i in 1..3:
+        repeat j in 1..3:
+            say i
+            say j

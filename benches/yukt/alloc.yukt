@@ -1,0 +1,10 @@
+create main:
+    n = 4000000
+    passes = 25
+    items = zeros(n)
+    repeat p in 1..passes:
+        repeat i in 0..n - 1:
+            items[i] = i + p
+    say items[0]
+    say items[n - 1]
+    say count(items)
