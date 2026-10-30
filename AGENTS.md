@@ -6,11 +6,11 @@ YUKT is a real programming language. The compiler is handwritten C++20. Do not i
 
 ## Current milestone
 
-**0.10 — Intelligent Execution Engine**
+**0.11 — Portability and compiler intelligence**
 
-Implemented: lexer, parser, AST, diagnostics, scopes, type inference, YUKT IR, LLVM lowering, host object emission, `yukt build`, `yukt run`, `yukt --explain`, LLVM O3, list indexing, `count` / `zeros`, work-based automatic parallelization, adaptive runtime parallelization, host-CPU SIMD via LLVM vectorize, counted-loop lowering, range-parallel runtime, aligned list payloads, payload reuse, and the 0.08–0.10 performance sprints.
+Implemented: lexer, parser, AST, diagnostics (notes, GNU line, TTY color), scopes, type inference, YUKT IR, LLVM lowering, host object emission, `yukt build`, `yukt run`, `yukt --explain`, LLVM O3, list indexing, `count` / `zeros`, work-based automatic parallelization, simple +/* parallel reductions, adaptive runtime parallelization, host-CPU SIMD via LLVM vectorize, counted-loop lowering, range-parallel runtime, aligned list payloads, size-class payload reuse, host-native CI (macOS arm64, Linux x86-64), and the 0.08–0.10 performance sprints.
 
-Not implemented: a standard library, or cross-compilation to non-host triples.
+Not implemented: a standard library, modules, or cross-compilation to non-host triples.
 
 Native execution is real when `yukt build` writes a host binary and `file` reports an executable for that architecture. Do not call a program "native" if it was interpreted.
 
@@ -23,12 +23,22 @@ Native execution is real when `yukt build` writes a host binary and `file` repor
 5. Use C++20 ownership types (`std::unique_ptr`, `std::vector`). Do not add raw owning pointers.
 6. Do not add dependencies unless the milestone requires them. No parser generators. LLVM stays inside `compiler/backend`.
 7. Every language feature needs tests under `tests/`.
-8. Keep the build working on Apple Silicon macOS and portable to Linux.
+8. Keep the build working on Apple Silicon macOS and portable to Linux. Host-native CI must stay green.
 
 ## How to build
 
+macOS:
+
 ```bash
 cmake -G Ninja -S . -B build -DLLVM_DIR="$(brew --prefix llvm)/lib/cmake/llvm"
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+Linux:
+
+```bash
+cmake -G Ninja -S . -B build -DLLVM_DIR="$(llvm-config --cmakedir)"
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
@@ -49,12 +59,11 @@ The compiler entry point is `compiler/main.cpp`. Frontend/IR code lives in `yukt
 | `compiler/ir` | YUKT IR and AST lowering | semantic |
 | `compiler/backend` | LLVM lowering, objects, linking | ir |
 | `runtime` | C runtime linked into generated programs | — |
-| `runtime` | Runtime support (future) | — |
-| `std` | Standard library (future) | — |
+| `std` | Standard library (future, 0.12) | — |
 
 ## Language constraints
 
-YUKT 0.10 is indentation-sensitive. Blocks are introduced by `:` and a newline, then an indented suite.
+YUKT 0.11 is indentation-sensitive. Blocks are introduced by `:` and a newline, then an indented suite.
 
 Supported syntax is listed in `docs/LANGUAGE_SPEC.md`:
 
@@ -92,7 +101,9 @@ If `--ast` fails, fix the parser. If `--types` fails, fix semantic analysis. If 
 
 ## Out of scope until later milestones
 
-- Imports / modules
-- Classes
+- Imports / modules (0.12)
+- Classes / structs (0.13)
 - Package management
 - An interactive REPL
+- Cross-compilation to non-host triples
+- CUDA / GPU (0.14)

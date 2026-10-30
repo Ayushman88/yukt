@@ -2,6 +2,7 @@
 #include "semantic/analyzer.hpp"
 #include "test_harness.hpp"
 
+#include <sstream>
 #include <string>
 
 namespace {
@@ -300,6 +301,52 @@ int main() {
             "    items = [1, 2, 3]\n"
             "    items[true] = 1\n");
         REQUIRE(has_title(result, "Type mismatch"));
+    }
+
+    {
+        const auto result = check(
+            "create main:\n"
+            "    value = 1\n"
+            "    value = \"no\"\n");
+        REQUIRE(has_title(result, "Type mismatch"));
+        bool saw_note = false;
+        for (const auto& diagnostic : result.diagnostics->diagnostics()) {
+            for (const auto& note : diagnostic.notes) {
+                if (note.text.find("first assigned here") != std::string::npos) {
+                    saw_note = true;
+                }
+            }
+        }
+        REQUIRE(saw_note);
+        std::ostringstream printed;
+        result.diagnostics->emit(printed);
+        REQUIRE(printed.str().find("<test>:3:") != std::string::npos);
+        REQUIRE(printed.str().find("error: Type mismatch") != std::string::npos);
+        REQUIRE(printed.str().find("note:") != std::string::npos);
+    }
+
+    {
+        const auto result = check(
+            "create main:\n"
+            "    say count()\n");
+        REQUIRE(has_title(result, "Wrong number of arguments"));
+        bool saw_note = false;
+        for (const auto& diagnostic : result.diagnostics->diagnostics()) {
+            for (const auto& note : diagnostic.notes) {
+                if (note.text.find("builtin") != std::string::npos) {
+                    saw_note = true;
+                }
+            }
+        }
+        REQUIRE(saw_note);
+    }
+
+    {
+        const auto result = check("create greet:\n    say 1\n");
+        REQUIRE(has_title(result, "Missing entry point"));
+        std::ostringstream printed;
+        result.diagnostics->emit(printed);
+        REQUIRE(printed.str().find("error: Missing entry point") != std::string::npos);
     }
 
     return yukt::test::summary("semantic");

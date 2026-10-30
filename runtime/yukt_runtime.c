@@ -6,12 +6,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(__APPLE__)
-#include <dispatch/dispatch.h>
-#include <unistd.h>
-#else
 #include <pthread.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <dispatch/dispatch.h>
 #endif
 
 static void die(const char* message) {
@@ -29,8 +27,90 @@ typedef struct YuktAlloc {
 } YuktAlloc;
 
 static YuktAlloc* yukt_allocs = NULL;
-static void* yukt_cached_data = NULL;
-static size_t yukt_cached_bytes = 0;
+
+enum { YUKT_BIN_COUNT = 6, YUKT_BIN_SLOTS = 4 };
+
+static const size_t yukt_bin_limits[YUKT_BIN_COUNT] = {16, 64, 256, 4096, 65536, 1048576};
+
+typedef struct {
+    void* slots[YUKT_BIN_SLOTS];
+    int count;
+} YuktCacheBin;
+
+static YuktCacheBin yukt_list_bins[YUKT_BIN_COUNT];
+static YuktCacheBin yukt_str_bins[YUKT_BIN_COUNT];
+static pthread_mutex_t yukt_reduce_mu = PTHREAD_MUTEX_INITIALIZER;
+/* List/string caches and yukt_allocs are single-threaded. The compiler will not
+ * parallelize a loop that allocates. yukt_reduce_* is the only heap-adjacent
+ * parallel path and uses yukt_reduce_mu. */
+
+static int yukt_bin_index(size_t bytes) {
+    for (int i = 0; i < YUKT_BIN_COUNT; ++i) {
+        if (bytes <= yukt_bin_limits[i]) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static size_t yukt_alloc_size(size_t bytes) {
+    const int idx = yukt_bin_index(bytes);
+    if (idx < 0) {
+        return bytes;
+    }
+    return yukt_bin_limits[idx];
+}
+
+static void* yukt_cache_take(YuktCacheBin* bins, size_t bytes) {
+    const int idx = yukt_bin_index(bytes);
+    if (idx < 0 || bins[idx].count <= 0) {
+        return NULL;
+    }
+    return bins[idx].slots[--bins[idx].count];
+}
+
+static int yukt_cache_put(YuktCacheBin* bins, void* ptr, size_t bytes) {
+    const int idx = yukt_bin_index(bytes);
+    if (ptr == NULL || idx < 0 || bins[idx].count >= YUKT_BIN_SLOTS) {
+        return 0;
+    }
+    bins[idx].slots[bins[idx].count++] = ptr;
+    return 1;
+}
+
+static size_t yukt_pad16(size_t bytes) {
+    const size_t align = 16;
+    if (bytes == 0) {
+        return 0;
+    }
+    return (bytes + align - 1) & ~(align - 1);
+}
+
+void yukt_reduce_i64(int64_t* acc, int64_t partial, int64_t op) {
+    if (acc == NULL) {
+        return;
+    }
+    pthread_mutex_lock(&yukt_reduce_mu);
+    if (op == 1) {
+        *acc *= partial;
+    } else {
+        *acc += partial;
+    }
+    pthread_mutex_unlock(&yukt_reduce_mu);
+}
+
+void yukt_reduce_f64(double* acc, double partial, int64_t op) {
+    if (acc == NULL) {
+        return;
+    }
+    pthread_mutex_lock(&yukt_reduce_mu);
+    if (op == 1) {
+        *acc *= partial;
+    } else {
+        *acc += partial;
+    }
+    pthread_mutex_unlock(&yukt_reduce_mu);
+}
 
 static void yukt_track(int kind, void* ptr, size_t bytes) {
     if (ptr == NULL) {
@@ -54,15 +134,12 @@ void yukt_runtime_release(void) {
         YuktAlloc* next = node->next;
         if (node->kind == YUKT_ALLOC_LIST) {
             YuktList* list = (YuktList*)node->ptr;
-            if (list->data != NULL && node->bytes > yukt_cached_bytes) {
-                free(yukt_cached_data);
-                yukt_cached_data = list->data;
-                yukt_cached_bytes = node->bytes;
+            if (list->data != NULL && yukt_cache_put(yukt_list_bins, list->data, node->bytes)) {
                 list->data = NULL;
             }
             free(list->data);
             free(list);
-        } else {
+        } else if (!yukt_cache_put(yukt_str_bins, node->ptr, node->bytes)) {
             free(node->ptr);
         }
         free(node);
@@ -140,14 +217,19 @@ char* yukt_str_concat(const char* left, const char* right) {
     }
     const size_t left_size = strlen(left);
     const size_t right_size = strlen(right);
-    char* out = (char*)malloc(left_size + right_size + 1);
+    const size_t need = left_size + right_size + 1;
+    const size_t bytes = yukt_alloc_size(need);
+    char* out = (char*)yukt_cache_take(yukt_str_bins, bytes);
     if (out == NULL) {
-        die("out of memory");
+        out = (char*)malloc(bytes);
+        if (out == NULL) {
+            die("out of memory");
+        }
     }
     memcpy(out, left, left_size);
     memcpy(out + left_size, right, right_size);
     out[left_size + right_size] = '\0';
-    yukt_track(YUKT_ALLOC_STR, out, left_size + right_size + 1);
+    yukt_track(YUKT_ALLOC_STR, out, bytes);
     return out;
 }
 
@@ -171,18 +253,13 @@ static void* yukt_alloc_aligned_zero(size_t bytes) {
     if (bytes == 0) {
         return NULL;
     }
-    const size_t align = 16;
-    const size_t padded = (bytes + align - 1) & ~(align - 1);
-    if (yukt_cached_data != NULL && yukt_cached_bytes >= padded) {
-        void* data = yukt_cached_data;
-        yukt_cached_data = NULL;
-        yukt_cached_bytes = 0;
-        memset(data, 0, padded);
-        return data;
-    }
-    void* data = aligned_alloc(align, padded);
+    const size_t padded = yukt_alloc_size(yukt_pad16(bytes));
+    void* data = yukt_cache_take(yukt_list_bins, padded);
     if (data == NULL) {
-        die("out of memory");
+        data = aligned_alloc(16, padded);
+        if (data == NULL) {
+            die("out of memory");
+        }
     }
     memset(data, 0, padded);
     return data;
@@ -200,7 +277,7 @@ YuktList* yukt_list_new(int64_t length, int64_t kind) {
     list->kind = kind;
     size_t payload = 0;
     if (length > 0) {
-        payload = (size_t)length * element_size(kind);
+        payload = yukt_alloc_size(yukt_pad16((size_t)length * element_size(kind)));
         list->data = yukt_alloc_aligned_zero(payload);
     }
     yukt_track(YUKT_ALLOC_LIST, list, payload);

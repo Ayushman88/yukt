@@ -9,9 +9,14 @@
 #include <string>
 #include <sys/wait.h>
 #include <system_error>
+#include <unistd.h>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#ifndef YUKT_LLVM_CLANG
+#define YUKT_LLVM_CLANG ""
+#endif
 
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringMap.h>
@@ -69,9 +74,27 @@ std::string first_line_from(const char* command) {
     return line;
 }
 
+bool path_executable(const std::string& path) {
+    return !path.empty() && access(path.c_str(), X_OK) == 0;
+}
+
 std::string find_clang() {
+    if (const char* env = std::getenv("YUKT_CLANG")) {
+        if (env[0] != '\0') {
+            return env;
+        }
+    }
+    const std::string from_llvm = YUKT_LLVM_CLANG;
+    if (path_executable(from_llvm)) {
+        return from_llvm;
+    }
+#if defined(__APPLE__)
     const std::string path = first_line_from("xcrun -f clang 2>/dev/null");
-    return path.empty() ? "clang" : path;
+    if (!path.empty()) {
+        return path;
+    }
+#endif
+    return "clang";
 }
 
 std::string macos_sysroot() {
@@ -278,6 +301,8 @@ void LlvmEmitter::declare_runtime() {
     runtime_["yukt_list_zeros"] = module_.getOrInsertFunction("yukt_list_zeros", ptr, i64);
     runtime_["yukt_parallel_for"] =
         module_.getOrInsertFunction("yukt_parallel_for", void_ty, i64, i64, ptr, ptr, i64);
+    runtime_["yukt_reduce_i64"] = module_.getOrInsertFunction("yukt_reduce_i64", void_ty, ptr, i64, i64);
+    runtime_["yukt_reduce_f64"] = module_.getOrInsertFunction("yukt_reduce_f64", void_ty, ptr, f64, i64);
     runtime_["yukt_runtime_release"] = module_.getOrInsertFunction("yukt_runtime_release", void_ty);
     if (auto* zeros = module_.getFunction("yukt_list_zeros")) {
         zeros->addRetAttr(llvm::Attribute::NoAlias);
@@ -532,12 +557,20 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
         case IrOp::ParallelFor: {
             llvm::Value* start = materialize(inst.args[0]);
             llvm::Value* end = materialize(inst.args[1]);
+            auto* void_ty = llvm::Type::getVoidTy(context_);
+            auto* i64 = llvm::Type::getInt64Ty(context_);
+            auto* ptr = llvm::PointerType::getUnqual(context_);
             std::vector<llvm::Type*> field_types;
             std::vector<llvm::Value*> captures;
-            field_types.reserve(inst.args.size() > 2 ? inst.args.size() - 2 : 0);
+            field_types.reserve(inst.args.size() > 2 ? inst.args.size() - 1 : 1);
             for (std::size_t i = 2; i < inst.args.size(); ++i) {
                 captures.push_back(materialize(inst.args[i]));
                 field_types.push_back(llvm_type(context_, inst.args[i].type));
+            }
+            const bool reducing = !inst.reduce_local.empty();
+            if (reducing) {
+                captures.push_back(locals_.at(inst.reduce_local));
+                field_types.push_back(ptr);
             }
             llvm::StructType* ctx_ty = llvm::StructType::get(context_, field_types);
             llvm::AllocaInst* ctx = builder_.CreateAlloca(ctx_ty, nullptr, "par.ctx");
@@ -545,9 +578,6 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
                 builder_.CreateStore(captures[i], builder_.CreateStructGEP(ctx_ty, ctx, static_cast<unsigned>(i)));
             }
 
-            auto* void_ty = llvm::Type::getVoidTy(context_);
-            auto* i64 = llvm::Type::getInt64Ty(context_);
-            auto* ptr = llvm::PointerType::getUnqual(context_);
             auto* thunk_ty = llvm::FunctionType::get(void_ty, {i64, i64, ptr}, false);
             auto* thunk = llvm::Function::Create(thunk_ty, llvm::Function::InternalLinkage,
                                                  "yukt_par_thunk_" + std::to_string(next_thunk_++), module_);
@@ -557,13 +587,27 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
                 std::vector<llvm::Value*> call_args;
                 call_args.push_back(thunk->getArg(0));
                 call_args.push_back(thunk->getArg(1));
-                for (std::size_t i = 0; i < field_types.size(); ++i) {
+                const std::size_t capture_count = reducing ? field_types.size() - 1 : field_types.size();
+                for (std::size_t i = 0; i < capture_count; ++i) {
                     llvm::Value* slot =
                         thunk_builder.CreateStructGEP(ctx_ty, thunk->getArg(2), static_cast<unsigned>(i));
                     call_args.push_back(thunk_builder.CreateLoad(field_types[i], slot));
                 }
                 auto* outlined = functions_.at(inst.name);
-                thunk_builder.CreateCall(outlined->getFunctionType(), outlined, call_args);
+                llvm::Value* partial =
+                    thunk_builder.CreateCall(outlined->getFunctionType(), outlined, call_args);
+                if (reducing) {
+                    llvm::Value* slot = thunk_builder.CreateStructGEP(
+                        ctx_ty, thunk->getArg(2), static_cast<unsigned>(field_types.size() - 1));
+                    llvm::Value* acc_ptr = thunk_builder.CreateLoad(ptr, slot);
+                    llvm::Value* op = llvm::ConstantInt::get(
+                        i64, inst.reduce_bin == IrBinOp::Mul ? 1 : 0, true);
+                    if (outlined->getReturnType()->isDoubleTy()) {
+                        thunk_builder.CreateCall(runtime("yukt_reduce_f64"), {acc_ptr, partial, op});
+                    } else {
+                        thunk_builder.CreateCall(runtime("yukt_reduce_i64"), {acc_ptr, partial, op});
+                    }
+                }
                 thunk_builder.CreateRetVoid();
             }
             llvm::Value* work =

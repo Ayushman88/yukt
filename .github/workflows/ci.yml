@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  macos:
+    name: macOS arm64
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: brew install cmake ninja llvm
+      - name: Configure
+        run: cmake -G Ninja -S . -B build -DLLVM_DIR="$(brew --prefix llvm)/lib/cmake/llvm"
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  linux:
+    name: Ubuntu x86-64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build clang llvm-dev zlib1g-dev
+      - name: Configure
+        run: |
+          LLVM_CMAKE="$(llvm-config --cmakedir 2>/dev/null || true)"
+          if [ -z "$LLVM_CMAKE" ]; then
+            LLVM_CMAKE="$(ls -d /usr/lib/llvm-*/lib/cmake/llvm 2>/dev/null | tail -1)"
+          fi
+          cmake -G Ninja -S . -B build -DLLVM_DIR="$LLVM_CMAKE"
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure

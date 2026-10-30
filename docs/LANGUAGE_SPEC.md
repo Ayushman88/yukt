@@ -1,7 +1,7 @@
 # YUKT Language Specification
 
-Version: 0.10  
-Status: syntax, type checking, native host executables, optimizations, automatic parallelization, SIMD, and execution explanation.
+Version: 0.11  
+Status: syntax, type checking, native host executables, optimizations, automatic parallelization (including simple +/* reductions), SIMD, execution explanation, and host-native CI.
 
 This document is the source of truth for YUKT syntax. If the compiler and this file disagree, that is a bug.
 
@@ -266,7 +266,7 @@ There is no implicit conversion. `1 + 1.5` is an error. `"age " + 21` is an erro
 ## Memory
 
 - Integers, floats, and booleans are stack values. LLVM `mem2reg` promotes them when it can.
-- Lists and strings live on the heap. List payloads are 16-byte aligned. The runtime releases them when `main` returns.
+- Lists and strings live on the heap. List payloads are 16-byte aligned. The runtime releases them when `main` returns. Size-class reuse is bounded and not thread-safe; allocating loops stay sequential.
 - Function calls use the native C convention after name mangling: `create add` becomes `yukt_add`.
 
 ## Automatic parallelization
@@ -274,16 +274,24 @@ There is no implicit conversion. `1 + 1.5` is an error. `"age " + 21` is an erro
 The compiler may run a `repeat` loop on several cores when every iteration is independent:
 
 - the body has no `say`, `give`, or user function call
-- scalar names assigned in the body are not used after the loop and are not reductions (`sum = sum + ...`)
 - list writes use an index that mentions the loop iterator
 - estimated work (trip count × body cost) is at least 1_000_000 operations, or the trip count is not a compile-time constant
 - a loop nested inside another `repeat` only parallelizes when its trip count is a compile-time constant of at least 1_000_000
+- unknown nested inner trip counts are estimated as 256 iterations for cost
+- `count(xs)` folds when `xs` is a list literal or `zeros(n)` with a compile-time integer `n`
 
 Trip counts below 64 stay sequential. The runtime also stays sequential when only one CPU is available or when `trip × work-per-iteration` is below a dispatch tax (`100000 × ncpu`). Larger loops split into one inclusive range per CPU and reuse a thread pool (libdispatch on macOS, a persistent pthread pool on Linux). Overlapping writes to the same list slot from two iterations are undefined if the loop was parallelized.
 
-A reduction such as `total = total + items[i]` stays sequential.
+A simple reduction of the form `acc = acc + expr` or `acc = acc * expr` (or the commuting `expr + acc` / `expr * acc`), where `acc` is integer or float, `expr` does not mention `acc`, and there is only one such accumulator, may run in parallel. Each chunk computes a local partial from the operator identity (0 for `+`, 1 for `*`) and combines with `+` or `*` after the range. Other reductions, including `-`, mixed scalars, and reductions inside `if`, stay sequential. A loop that allocates (`zeros`, list literals, or string concatenation) stays sequential because the runtime allocator is not thread-safe.
 
-`yukt --explain file.yukt` prints each loop’s sequential / parallel plan and only reports parallelization or vectorization as successful when those facts appear in generated LLVM IR.
+## Numerical semantics
+
+- **Integer overflow** is **undefined**, sequential or parallel. LLVM lowering uses `nsw` add/mul. Do not rely on wraparound.
+- **Integer `+` and `*` reductions** that do not overflow are associative. Parallel and sequential results match.
+- **Floating-point `+` and `*` are not associative.** A parallel float reduction may use a different association than a left-to-right sequential fold, and may differ across CPU counts. LLVM vectorization of a sequential float loop may also change association. YUKT does not promise bitwise-identical float reduction results.
+- **Division** of integers truncates toward zero. Division by zero is undefined.
+
+`yukt --explain file.yukt` prints the host triple, each loop’s sequential / parallel plan, and only reports parallelization or vectorization as successful when those facts appear in generated LLVM IR.
 
 ## SIMD
 
@@ -310,7 +318,7 @@ If `main` gives an integer, that value is the process exit code. Other return ty
 
 ## Out of scope
 
-The following are **not** part of YUKT 0.10 and must not be parsed as if they were:
+The following are **not** part of YUKT 0.11 and must not be parsed as if they were:
 
 - modules and imports
 - classes or structs

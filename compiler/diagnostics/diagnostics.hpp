@@ -15,12 +15,18 @@ enum class DiagnosticLevel {
     Warning,
 };
 
+struct DiagnosticNote {
+    SourceLocation location;
+    std::string text;
+};
+
 struct Diagnostic {
     DiagnosticLevel level = DiagnosticLevel::Error;
     std::string title;
     std::string detail;
     std::string suggestion;
     SourceLocation location;
+    std::vector<DiagnosticNote> notes;
 };
 
 class DiagnosticEngine {
@@ -31,6 +37,8 @@ public:
     const std::string& source() const { return source_; }
 
     void error(SourceLocation location, std::string title, std::string detail, std::string suggestion = {});
+    void error(SourceLocation location, std::string title, std::string detail, std::string suggestion,
+               std::vector<DiagnosticNote> notes);
     void warning(SourceLocation location, std::string title, std::string detail, std::string suggestion = {});
 
     bool has_errors() const;
@@ -41,7 +49,7 @@ public:
 
 private:
     void add(DiagnosticLevel level, SourceLocation location, std::string title, std::string detail,
-             std::string suggestion);
+             std::string suggestion, std::vector<DiagnosticNote> notes);
 
     std::string file_;
     std::string source_;

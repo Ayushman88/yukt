@@ -12,7 +12,7 @@
 #include <vector>
 
 namespace {
-constexpr std::string_view kVersion = "0.10";
+constexpr std::string_view kVersion = "0.11";
 
 void print_usage(std::ostream& out) {
     out << "yukt " << kVersion << " — YUKT compiler\n\n"

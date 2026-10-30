@@ -2,6 +2,8 @@
 
 These numbers are **in-process kernel time**, not process startup. Each binary discards one warmup call, then times the second call with a monotonic clock (`compute_ns` on stderr). The table is the median of 15 process runs.
 
+Host tables are **not interchangeable**. The table below is Apple M2, arm64 Darwin. Publish Linux x86-64 as a separate section after measuring on that machine. `benchmarks/results.json` records `os`, `arch`, `cpu`, `llvm_version`, and `clang_path`.
+
 ## Compute
 
 | Kernel | Size | YUKT | C++ seq | C++ par | Rust seq | Rust par | YUKT IQR | YUKT MAD | YUKT min–max | Checksum |
@@ -33,9 +35,9 @@ These numbers are **in-process kernel time**, not process startup. Each binary d
 
 ## Method
 
-- Host: arm64 Darwin (Apple M2)
-- YUKT yukt 0.10 / LLVM IR codegen with /opt/homebrew/opt/llvm/bin/llc -O3, linked with /opt/homebrew/opt/llvm/bin/clang
-- C++: /opt/homebrew/opt/llvm/bin/clang++ -O3 -march=native; Rust: rustc 1.99.1 (58cf8f9c3 2026-10-13) (Homebrew)
+- Host: arm64 Darwin (Apple M2) — do not replace with a Linux run
+- YUKT yukt 0.11 / LLVM IR codegen with /opt/homebrew/opt/llvm/bin/llc -O3, linked with the same LLVM clang the compiler was built against
+- C++: /opt/homebrew/opt/llvm/bin/clang++ -O3 -march=native (same LLVM family as YUKT); Rust: rustc 1.99.1 (58cf8f9c3 2026-10-13) (Homebrew)
 - YUKT timing wraps `yukt_main` (CRT `main` stripped). C++/Rust time the kernel function with `steady_clock` / `Instant`.
 - One warmup call is discarded in-process, then the second call is timed. Median, IQR, and MAD of 15 process runs.
 - C++ is Homebrew LLVM clang++ when present (same LLVM as YUKT), not Apple clang.

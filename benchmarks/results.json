@@ -1,8 +1,13 @@
 {
-  "version": "0.10",
+  "version": "0.11",
   "baseline": "0.08",
   "baseline_0_09": "0.09",
   "host": "arm64 Darwin (Apple M2)",
+  "os": "Darwin",
+  "arch": "arm64",
+  "cpu": "Apple M2",
+  "llvm_version": "Homebrew clang version 23.1.4",
+  "clang_path": "/opt/homebrew/opt/llvm/bin/clang",
   "runs": 15,
   "compiler_flags": {
     "yukt": "yukt 0.10 --emit-llvm + /opt/homebrew/opt/llvm/bin/llc -O3",

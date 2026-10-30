@@ -90,6 +90,8 @@ private:
     bool expect_type(Type actual, Type expected, SourceLocation location, std::string title, std::string detail,
                      std::string suggestion);
     void error(SourceLocation location, std::string title, std::string detail, std::string suggestion);
+    void error(SourceLocation location, std::string title, std::string detail, std::string suggestion,
+               std::vector<DiagnosticNote> notes);
 
     void push_scope();
     void pop_scope();
@@ -315,7 +317,8 @@ void Analyzer::require_main() {
     if (found == functions_.end()) {
         error(SourceLocation{1, 1}, "Missing entry point",
               "Every YUKT program must define `create main`.",
-              "Add `create main:` and put the program's starting statements there.");
+              "Add `create main:` and put the program's starting statements there.",
+              {{SourceLocation{1, 1}, "YUKT programs start at `create main`."}});
         return;
     }
     if (!found->second.parameters.empty()) {
@@ -429,10 +432,13 @@ void Analyzer::analyze_assignment(const AssignStmt& stmt) {
                   "Choose a different name for this value.");
             return;
         }
-        expect_type(value_type, existing->type, stmt.name_location, "Type mismatch",
-                    "`" + stmt.name + "` has type " + types_.to_string(existing->type) + " but this assignment has type " +
-                        types_.to_string(value_type) + ".",
-                    "Assign a value of type " + types_.to_string(existing->type) + ".");
+        if (!types_.unify(value_type, existing->type)) {
+            error(stmt.name_location, "Type mismatch",
+                  "`" + stmt.name + "` has type " + types_.to_string(existing->type) + " but this assignment has type " +
+                      types_.to_string(value_type) + ".",
+                  "Assign a value of type " + types_.to_string(existing->type) + ".",
+                  {{existing->location, "first assigned here as " + types_.to_string(existing->type)}});
+        }
         existing->assigned = true;
         return;
     }
@@ -704,7 +710,8 @@ Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
     if (expr.callee == "count" && lookup_function("count") == nullptr) {
         if (expr.arguments.size() != 1) {
             error(expr.callee_location, "Wrong number of arguments", "`count` takes one list.",
-                  "Write `count(items)`.");
+                  "Write `count(items)`.",
+                  {{expr.callee_location, "`count` is a compiler builtin, not a user function."}});
         } else {
             const Type argument = analyze_expression(expr.arguments[0].get());
             const Type resolved = types_.prune(argument);
@@ -719,7 +726,8 @@ Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
     if (expr.callee == "zeros" && lookup_function("zeros") == nullptr) {
         if (expr.arguments.size() != 1) {
             error(expr.callee_location, "Wrong number of arguments", "`zeros` takes one integer length.",
-                  "Write `zeros(n)`.");
+                  "Write `zeros(n)`.",
+                  {{expr.callee_location, "`zeros` is a compiler builtin, not a user function."}});
         } else {
             expect_type(analyze_expression(expr.arguments[0].get()), integer_type(), expr.callee_location,
                         "Type mismatch", "`zeros` expects an integer length.", "Write `zeros(256)`.");
@@ -838,6 +846,11 @@ bool Analyzer::expect_type(Type actual, Type expected, SourceLocation location, 
 
 void Analyzer::error(SourceLocation location, std::string title, std::string detail, std::string suggestion) {
     diagnostics_.error(location, std::move(title), std::move(detail), std::move(suggestion));
+}
+
+void Analyzer::error(SourceLocation location, std::string title, std::string detail, std::string suggestion,
+                     std::vector<DiagnosticNote> notes) {
+    diagnostics_.error(location, std::move(title), std::move(detail), std::move(suggestion), std::move(notes));
 }
 
 void Analyzer::add_constraint(Type type, ConstraintKind kind, SourceLocation location, std::string operator_text) {

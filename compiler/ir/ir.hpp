@@ -100,6 +100,8 @@ struct IrInst {
     std::string name;
     std::vector<IrValue> args;
     std::int64_t work = 1;
+    std::string reduce_local;
+    IrBinOp reduce_bin = IrBinOp::Add;
 };
 
 enum class IrTermKind {
@@ -127,6 +129,8 @@ struct LoopDecision {
     std::int64_t estimated_work = -1;
     std::int64_t work_per_iter = 1;
     std::string reason;
+    std::string reduction;
+    std::string reduction_op;
 };
 
 struct IrBlock {

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(yukt VERSION 0.10.0 LANGUAGES C CXX)
+project(yukt VERSION 0.11.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,6 +26,19 @@ find_package(LLVM REQUIRED CONFIG
     PATH_SUFFIXES lib/cmake/llvm
 )
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION} at ${LLVM_DIR}")
+
+if(DEFINED LLVM_TOOLS_BINARY_DIR)
+    find_program(YUKT_HOST_CLANG NAMES clang clang-18 clang-19 clang-20 clang-21 clang-22 clang-23 clang-24
+        HINTS ${LLVM_TOOLS_BINARY_DIR}
+        NO_DEFAULT_PATH)
+endif()
+if(NOT YUKT_HOST_CLANG)
+    find_program(YUKT_HOST_CLANG NAMES clang)
+endif()
+if(NOT YUKT_HOST_CLANG)
+    set(YUKT_HOST_CLANG "")
+endif()
+message(STATUS "YUKT host clang for linking: ${YUKT_HOST_CLANG}")
 
 separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND ${LLVM_DEFINITIONS})
 llvm_map_components_to_libnames(YUKT_LLVM_LIBS
@@ -73,7 +86,11 @@ add_library(yukt_backend
 )
 target_include_directories(yukt_backend PUBLIC ${CMAKE_SOURCE_DIR}/compiler)
 target_include_directories(yukt_backend SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(yukt_backend PRIVATE ${LLVM_DEFINITIONS_LIST} YUKT_RUNTIME_LIB="$<TARGET_FILE:yukt_runtime>")
+target_compile_definitions(yukt_backend PRIVATE
+    ${LLVM_DEFINITIONS_LIST}
+    YUKT_RUNTIME_LIB="$<TARGET_FILE:yukt_runtime>"
+    YUKT_LLVM_CLANG="${YUKT_HOST_CLANG}"
+)
 target_link_libraries(yukt_backend PUBLIC yukt_compiler PRIVATE ${YUKT_LLVM_LIBS})
 if(NOT LLVM_ENABLE_RTTI)
     target_compile_options(yukt_backend PRIVATE -fno-rtti)

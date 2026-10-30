@@ -1,5 +1,8 @@
 #include "backend/explain.hpp"
 
+#include <llvm/ADT/StringRef.h>
+#include <llvm/TargetParser/Host.h>
+
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -71,6 +74,15 @@ bool iterator_metadata(const std::string& llvm_ir, const std::string& iterator) 
 std::string explain_execution(const IrModule& ir, const std::string& llvm_ir) {
     std::ostringstream out;
     out << "YUKT execution explanation for " << (ir.source_path.empty() ? "<source>" : ir.source_path) << "\n\n";
+    out << "Target\n";
+    out << "  triple: " << llvm::sys::getDefaultTargetTriple() << "\n";
+    out << "  cpu: " << llvm::sys::getHostCPUName().str() << "\n";
+    out << "  lowering: native, not cross-compiled\n\n";
+    out << "Cost model thresholds\n";
+    out << "  compile-time work: 1000000 (trip × body cost)\n";
+    out << "  nested proven trip: 1000000\n";
+    out << "  nested unknown inner trip estimate: 256\n";
+    out << "  runtime sequential if trip < 64, ncpu ≤ 1, or trip × work_per_iter < 100000 × ncpu\n\n";
 
     const std::size_t parallel_calls = count_occurrences(llvm_ir, "call void @yukt_parallel_for");
     const std::size_t vector_bodies = count_occurrences(llvm_ir, "vector.body");
@@ -106,6 +118,9 @@ std::string explain_execution(const IrModule& ir, const std::string& llvm_ir) {
         out << "    estimated trip: " << format_count(decision.estimated_trip) << "\n";
         out << "    estimated work: " << format_count(decision.estimated_work) << "\n";
         out << "    work per iteration: " << format_count(decision.work_per_iter) << "\n";
+        if (!decision.reduction.empty()) {
+            out << "    reduction: `" << decision.reduction << "` " << decision.reduction_op << "\n";
+        }
         out << "    reason: " << (decision.reason.empty() ? "(none)" : decision.reason) << "\n";
         if (parallel_mismatch) {
             out << "    verified parallel: no — YUKT IR planned parallel but LLVM IR has no yukt_parallel_for\n";
@@ -142,7 +157,7 @@ std::string explain_execution(const IrModule& ir, const std::string& llvm_ir) {
     out << "  alwaysinline on outlined helpers: " << (alwaysinline ? "yes" : "not observed") << "\n";
     out << "\n";
     out << "Investigated, not applied as YUKT-IR transforms (no general legality proof yet)\n";
-    out << "  loop fusion, loop interchange, compiler-driven unroll, parallel reductions\n";
+    out << "  loop fusion, loop interchange, compiler-driven unroll\n";
     out << "  LLVM O3 may still unroll, vectorize, inline, and eliminate dead code on its own.\n";
     return out.str();
 }

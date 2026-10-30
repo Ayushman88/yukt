@@ -1,6 +1,7 @@
 #include "backend/pipeline.hpp"
 #include "driver/driver.hpp"
 #include "test_harness.hpp"
+#include "yukt_runtime.h"
 
 #include <filesystem>
 #include <string>
@@ -243,6 +244,12 @@ int main() {
                 result.explanation.find("below 1000000") != std::string::npos);
         REQUIRE(result.explanation.find("verified parallel: yes") == std::string::npos);
         REQUIRE(result.explanation.find("PassBuilder default O3") != std::string::npos);
+        REQUIRE(result.explanation.find("native, not cross-compiled") != std::string::npos);
+        REQUIRE(result.explanation.find("triple:") != std::string::npos);
+        REQUIRE(result.explanation.find("arm64") != std::string::npos ||
+                result.explanation.find("aarch64") != std::string::npos ||
+                result.explanation.find("x86_64") != std::string::npos);
+        REQUIRE(result.explanation.find("Cost model thresholds") != std::string::npos);
     }
 
     {
@@ -262,6 +269,48 @@ int main() {
         REQUIRE(result.explanation.find("planned: parallel") != std::string::npos);
         REQUIRE(result.explanation.find("verified parallel: yes") != std::string::npos);
         REQUIRE(result.llvm_ir.find("yukt_parallel_for") != std::string::npos);
+    }
+
+    {
+        const auto result = run_source(
+            "create main:\n"
+            "    n = 1000000\n"
+            "    items = zeros(n)\n"
+            "    repeat i in 0..n - 1:\n"
+            "        items[i] = 1\n"
+            "    total = 0\n"
+            "    repeat i in 0..n - 1:\n"
+            "        total = total + items[i]\n"
+            "    say total\n");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "1000000\n");
+    }
+
+    {
+        const auto result = run_source(
+            "create main:\n"
+            "    n = 1000000\n"
+            "    items = zeros(n)\n"
+            "    repeat i in 0..n - 1:\n"
+            "        items[i] = 1\n"
+            "    total = 0.0\n"
+            "    repeat i in 0..n - 1:\n"
+            "        total = total + 1.0\n"
+            "    say total\n");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE_MSG(result.program_output == "1000000\n" || result.program_output == "1e+06\n",
+                    result.program_output);
+    }
+
+    {
+        YuktList* first = yukt_list_zeros(128);
+        REQUIRE(first != nullptr);
+        yukt_list_set_i64(first, 0, 9);
+        yukt_runtime_release();
+        YuktList* second = yukt_list_zeros(128);
+        REQUIRE(second != nullptr);
+        REQUIRE(yukt_list_get_i64(second, 0) == 0);
+        yukt_runtime_release();
     }
 
     return yukt::test::summary("native");

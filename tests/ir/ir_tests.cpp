@@ -209,5 +209,96 @@ int main() {
         REQUIRE(planned_parallel);
     }
 
+    {
+        const auto module = ir_from(
+            "create main:\n"
+            "    items = [1, 2, 3, 4, 5]\n"
+            "    repeat i in 1..count(items):\n"
+            "        items[i - 1] = i\n"
+            "    say items[0]\n");
+        bool saw = false;
+        for (const auto& decision : module.decisions) {
+            if (decision.iterator == "i") {
+                REQUIRE(decision.estimated_trip == 5);
+                saw = true;
+            }
+        }
+        REQUIRE(saw);
+    }
+
+    {
+        const auto module = ir_from(
+            "create main:\n"
+            "    items = zeros(1000000)\n"
+            "    repeat i in 0..count(items) - 1:\n"
+            "        items[i] = 1\n"
+            "    say items[0]\n");
+        const auto* main_fn = function_named(module, "main");
+        REQUIRE(main_fn != nullptr && has_op(*main_fn, yukt::IrOp::ParallelFor));
+        bool planned_parallel = false;
+        for (const auto& decision : module.decisions) {
+            if (decision.iterator == "i" && decision.parallel) {
+                planned_parallel = true;
+                REQUIRE(decision.estimated_trip == 1000000);
+            }
+        }
+        REQUIRE(planned_parallel);
+    }
+
+    {
+        const auto module = ir_from(
+            "create main:\n"
+            "    n = 1000000\n"
+            "    items = zeros(n)\n"
+            "    repeat i in 0..n - 1:\n"
+            "        items[i] = 1\n"
+            "    total = 0\n"
+            "    repeat i in 0..n - 1:\n"
+            "        total = total + items[i]\n"
+            "    say total\n");
+        const auto* main_fn = function_named(module, "main");
+        REQUIRE(main_fn != nullptr && has_op(*main_fn, yukt::IrOp::ParallelFor));
+        bool saw_reduction = false;
+        for (const auto& decision : module.decisions) {
+            if (decision.iterator == "i" && decision.reduction == "total") {
+                saw_reduction = true;
+                REQUIRE(decision.parallel);
+                REQUIRE(decision.reduction_op == "add");
+            }
+        }
+        REQUIRE(saw_reduction);
+    }
+
+    {
+        const auto module = ir_from(
+            "create main:\n"
+            "    n = 1000000\n"
+            "    repeat i in 0..n - 1:\n"
+            "        tmp = zeros(1)\n"
+            "    say 1\n");
+        const auto* main_fn = function_named(module, "main");
+        REQUIRE(main_fn != nullptr && !has_op(*main_fn, yukt::IrOp::ParallelFor));
+        bool saw_alloc = false;
+        for (const auto& decision : module.decisions) {
+            if (decision.iterator == "i") {
+                REQUIRE(!decision.parallel);
+                REQUIRE(decision.reason.find("allocates") != std::string::npos);
+                saw_alloc = true;
+            }
+        }
+        REQUIRE(saw_alloc);
+    }
+
+    {
+        const auto module = ir_from(
+            "create main:\n"
+            "    items = zeros(100)\n"
+            "    repeat i in 0..99:\n"
+            "        items[i] = i\n"
+            "    say items[0]\n");
+        const auto* main_fn = function_named(module, "main");
+        REQUIRE(main_fn != nullptr && !has_op(*main_fn, yukt::IrOp::ParallelFor));
+    }
+
     return yukt::test::summary("ir");
 }

@@ -36,6 +36,8 @@ void yukt_list_set_list(YuktList* list, int64_t index, YuktList* value);
 
 typedef void (*yukt_par_fn)(int64_t begin, int64_t end, void* context);
 void yukt_parallel_for(int64_t start, int64_t end, yukt_par_fn fn, void* context, int64_t work_per_iter);
+void yukt_reduce_i64(int64_t* acc, int64_t partial, int64_t op);
+void yukt_reduce_f64(double* acc, double partial, int64_t op);
 void yukt_runtime_release(void);
 
 #ifdef __cplusplus

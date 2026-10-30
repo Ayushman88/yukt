@@ -50,12 +50,20 @@ def macos_sysroot() -> str:
 
 
 def find_clang() -> str:
+    env = os.environ.get("YUKT_CLANG")
+    if env:
+        return env
     brew_llvm = Path("/opt/homebrew/opt/llvm/bin/clang")
     if brew_llvm.exists():
         return str(brew_llvm)
     local_llvm = Path("/usr/local/opt/llvm/bin/clang")
     if local_llvm.exists():
         return str(local_llvm)
+    bindir = first_line("llvm-config --bindir 2>/dev/null")
+    if bindir:
+        candidate = Path(bindir) / "clang"
+        if candidate.exists():
+            return str(candidate)
     if sys.platform == "darwin":
         path = first_line("xcrun -f clang 2>/dev/null")
         if path:
@@ -584,7 +592,8 @@ def main() -> int:
         f"C++: {cxx} -O3 -march=native; Rust: {first_line(rustc + ' --version')}",
         "YUKT timing wraps `yukt_main` (CRT `main` stripped). C++/Rust time the kernel function with `steady_clock` / `Instant`.",
         "One warmup call is discarded in-process, then the second call is timed. Median, IQR, and MAD of 15 process runs.",
-        "C++ is Homebrew LLVM clang++ when present (same LLVM as YUKT), not Apple clang.",
+        "C++ uses the same clang family YUKT links with (LLVM clang from the compiler build, not Apple clang).",
+        "Keep per-host tables. Do not overwrite Apple Silicon numbers with Linux runs.",
         "C++/Rust `matmul` report sequential ijk and a row-parallel variant. YUKT auto-parallelizes when estimated work >= 1e6.",
         "C++/Rust `parallel` report sequential and explicit-thread fills. YUKT may auto-parallelize a large independent fill.",
         "A language is only called faster on a kernel when its median is at least 5% below the next one.",
@@ -605,10 +614,15 @@ def main() -> int:
     )
 
     payload = {
-        "version": "0.10",
+        "version": "0.11",
         "baseline": "0.08",
         "baseline_0_09": "0.09",
         "host": f"{platform.machine()} {platform.system()} ({host_cpu()})",
+        "os": platform.system(),
+        "arch": platform.machine(),
+        "cpu": host_cpu(),
+        "llvm_version": first_line(clang + " --version"),
+        "clang_path": clang,
         "runs": RUNS,
         "compiler_flags": {
             "yukt": f"{first_line(str(yukt) + ' --version')} --emit-llvm + {find_llc(clang)} -O3",

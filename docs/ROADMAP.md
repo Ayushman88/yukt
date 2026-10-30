@@ -46,7 +46,7 @@ This milestone still does **not** execute programs or generate machine code.
 - `yukt build` writes a native executable
 - `yukt run` compiles, links, and executes
 
-Verified on Apple Silicon macOS (`arm64`). Linux uses the same CMake/LLVM path; it is not yet CI-tested.
+Verified on Apple Silicon macOS (`arm64`). Linux uses the same CMake/LLVM path. Host-native CI landed in 0.11.
 
 Benchmarks can start now. Do not claim YUKT is faster than C++ or Rust until those measurements exist.
 
@@ -65,7 +65,7 @@ Benchmarks can start now. Do not claim YUKT is faster than C++ or Rust until tho
 
 - Conservative independence analysis on `repeat`
 - Outlined loop bodies and `yukt_parallel_for` (libdispatch on macOS, pthreads on Linux)
-- Reductions and loops with `say` / `give` / user calls stay sequential
+- Reductions and loops with `say` / `give` / user calls stay sequential (simple +/* reductions parallelize in 0.11)
 
 ## 0.07 — SIMD and advanced computation
 
@@ -108,11 +108,57 @@ Benchmarks can start now. Do not claim YUKT is faster than C++ or Rust until tho
 - 15-run median / IQR / MAD; 0.08 and 0.09 kept as baselines
 - `docs/YUKT_010_DESIGN.md`, `docs/EXECUTION_ENGINE.md`, `docs/PERFORMANCE_ANALYSIS_0.10.md`
 
-## 0.11 — Standard library
+## 0.11 — Portability and compiler intelligence
 
-- Core collections, I/O, and numeric helpers written in YUKT where possible
-- Runtime support only where the language cannot express it
-- Optimized sort / matmul / reduction as library algorithms, not compiler special cases
+**Status: implemented**
+
+- Host-native GitHub Actions: `macos-latest` (arm64) and `ubuntu-latest` (x86-64)
+- Linker prefers the LLVM clang the compiler was built against
+- Nested unknown trip cost 256; `count`/`zeros` constant folding in the cost model
+- Simple parallel reductions: `acc = acc + expr` and `acc = acc * expr` on i64/f64
+- Integer overflow undefined; float reduction association not bitwise stable (specified)
+- Allocating loop bodies stay sequential (allocator is not thread-safe)
+- Size-class list/string payload reuse (bounded bins)
+- Diagnostic notes, GNU first line, TTY color
+- `--explain` prints host triple, CPU, and cost-model thresholds
+- Stdlib foundations documented in `docs/STDLIB.md` (no new syntax)
+
+This milestone does **not** cross-compile, add modules, or add CUDA.
+
+## 0.12 — Standard library
+
+- Requires a `use`/module story specified in `docs/LANGUAGE_SPEC.md` first
+- Strings and collections; arrays, lists, maps, and sets
+- File handling and JSON parsing
+- Sorting, searching, math, statistics
+- Error handling
+- Written in YUKT where possible; runtime only where the language cannot express it
+
+Goal: build useful applications without depending on external languages.
+
+## 0.13 — Memory and systems programming
+
+- Memory ownership model
+- Stack and heap management
+- Structs and custom data types
+- Pointers and references
+- C interoperability
+- Efficient memory-safe abstractions
+
+Specify syntax before implementing. This is a language milestone, not a backend tweak.
+
+Goal: make YUKT suitable for serious systems programming.
+
+## 0.14 — Concurrency and GPU foundations
+
+- Async execution, thread pools, tasks, and synchronization (CPU first)
+- GPU execution interface with a **CPU fallback**
+- NVIDIA CUDA backend prototype on **Linux+NVIDIA only**
+- CPU/GPU memory transfer abstractions
+
+Apple Silicon has no CUDA. Do not claim GPU execution on a Mac.
+
+Goal: make heterogeneous computing possible.
 
 ## Later — First usable release
 

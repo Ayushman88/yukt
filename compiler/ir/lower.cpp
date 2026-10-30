@@ -82,6 +82,36 @@ bool has_user_call(const Expr* expr) {
     return false;
 }
 
+bool expr_allocates(const Expr* expr) {
+    if (expr == nullptr) {
+        return false;
+    }
+    if (dynamic_cast<const ListExpr*>(expr) != nullptr) {
+        return true;
+    }
+    if (const auto* call = dynamic_cast<const CallExpr*>(expr)) {
+        if (call->callee == "zeros") {
+            return true;
+        }
+        for (const auto& argument : call->arguments) {
+            if (expr_allocates(argument.get())) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (const auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+        return expr_allocates(unary->operand.get());
+    }
+    if (const auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+        return expr_allocates(binary->left.get()) || expr_allocates(binary->right.get());
+    }
+    if (const auto* index = dynamic_cast<const IndexExpr*>(expr)) {
+        return expr_allocates(index->collection.get()) || expr_allocates(index->index.get());
+    }
+    return false;
+}
+
 void collect_reads(const Expr* expr, std::set<std::string>& names) {
     if (expr == nullptr) {
         return;
@@ -282,7 +312,8 @@ bool first_use_is_read(const std::vector<std::unique_ptr<Stmt>>& stmts, const st
     return false;
 }
 
-std::optional<std::int64_t> eval_const_i64(const Expr* expr, const std::map<std::string, std::int64_t>& env) {
+std::optional<std::int64_t> eval_const_i64(const Expr* expr, const std::map<std::string, std::int64_t>& env,
+                                          const std::map<std::string, std::int64_t>& list_len) {
     if (expr == nullptr) {
         return std::nullopt;
     }
@@ -297,7 +328,7 @@ std::optional<std::int64_t> eval_const_i64(const Expr* expr, const std::map<std:
         return found->second;
     }
     if (const auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
-        const auto operand = eval_const_i64(unary->operand.get(), env);
+        const auto operand = eval_const_i64(unary->operand.get(), env, list_len);
         if (!operand || unary->op != TokenKind::Minus) {
             return std::nullopt;
         }
@@ -307,8 +338,8 @@ std::optional<std::int64_t> eval_const_i64(const Expr* expr, const std::map<std:
         return -*operand;
     }
     if (const auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
-        const auto left = eval_const_i64(binary->left.get(), env);
-        const auto right = eval_const_i64(binary->right.get(), env);
+        const auto left = eval_const_i64(binary->left.get(), env, list_len);
+        const auto right = eval_const_i64(binary->right.get(), env, list_len);
         if (!left || !right) {
             return std::nullopt;
         }
@@ -323,32 +354,70 @@ std::optional<std::int64_t> eval_const_i64(const Expr* expr, const std::map<std:
                 return std::nullopt;
         }
     }
+    if (const auto* call = dynamic_cast<const CallExpr*>(expr)) {
+        if (call->callee == "count" && call->arguments.size() == 1) {
+            const auto* ident = dynamic_cast<const IdentifierExpr*>(call->arguments[0].get());
+            if (ident != nullptr) {
+                const auto found = list_len.find(ident->name);
+                if (found != list_len.end()) {
+                    return found->second;
+                }
+            }
+            if (const auto* list = dynamic_cast<const ListExpr*>(call->arguments[0].get())) {
+                return static_cast<std::int64_t>(list->elements.size());
+            }
+            if (const auto* zeros = dynamic_cast<const CallExpr*>(call->arguments[0].get())) {
+                if (zeros->callee == "zeros" && zeros->arguments.size() == 1) {
+                    return eval_const_i64(zeros->arguments[0].get(), env, list_len);
+                }
+            }
+        }
+        return std::nullopt;
+    }
     return std::nullopt;
 }
 
+void record_list_len(const AssignStmt& assign, const std::map<std::string, std::int64_t>& env,
+                     std::map<std::string, std::int64_t>& list_len) {
+    if (const auto* list = dynamic_cast<const ListExpr*>(assign.value.get())) {
+        list_len[assign.name] = static_cast<std::int64_t>(list->elements.size());
+        return;
+    }
+    if (const auto* call = dynamic_cast<const CallExpr*>(assign.value.get())) {
+        if (call->callee == "zeros" && call->arguments.size() == 1) {
+            if (const auto n = eval_const_i64(call->arguments[0].get(), env, list_len)) {
+                list_len[assign.name] = *n;
+                return;
+            }
+        }
+    }
+    list_len.erase(assign.name);
+}
+
 bool collect_const_env(const std::vector<std::unique_ptr<Stmt>>& stmts, const RepeatStmt* target,
-                       std::map<std::string, std::int64_t>& env) {
+                       std::map<std::string, std::int64_t>& env, std::map<std::string, std::int64_t>& list_len) {
     for (const auto& stmt : stmts) {
         if (stmt.get() == target) {
             return true;
         }
         if (const auto* assign = dynamic_cast<const AssignStmt*>(stmt.get())) {
-            if (const auto value = eval_const_i64(assign->value.get(), env)) {
+            if (const auto value = eval_const_i64(assign->value.get(), env, list_len)) {
                 env[assign->name] = *value;
             } else {
                 env.erase(assign->name);
             }
+            record_list_len(*assign, env, list_len);
             continue;
         }
         if (const auto* iff = dynamic_cast<const IfStmt*>(stmt.get())) {
-            if (collect_const_env(iff->then_branch, target, env) ||
-                collect_const_env(iff->otherwise_branch, target, env)) {
+            if (collect_const_env(iff->then_branch, target, env, list_len) ||
+                collect_const_env(iff->otherwise_branch, target, env, list_len)) {
                 return true;
             }
             continue;
         }
         if (const auto* repeat = dynamic_cast<const RepeatStmt*>(stmt.get())) {
-            if (collect_const_env(repeat->body, target, env)) {
+            if (collect_const_env(repeat->body, target, env, list_len)) {
                 return true;
             }
         }
@@ -357,9 +426,10 @@ bool collect_const_env(const std::vector<std::unique_ptr<Stmt>>& stmts, const Re
 }
 
 std::optional<std::int64_t> constant_trip_count(const RepeatStmt& stmt,
-                                                const std::map<std::string, std::int64_t>& env) {
-    const auto start = eval_const_i64(stmt.start.get(), env);
-    const auto end = eval_const_i64(stmt.end.get(), env);
+                                                const std::map<std::string, std::int64_t>& env,
+                                                const std::map<std::string, std::int64_t>& list_len) {
+    const auto start = eval_const_i64(stmt.start.get(), env, list_len);
+    const auto end = eval_const_i64(stmt.end.get(), env, list_len);
     if (!start || !end || *end < *start) {
         return std::nullopt;
     }
@@ -371,6 +441,7 @@ std::optional<std::int64_t> constant_trip_count(const RepeatStmt& stmt,
 }
 
 constexpr std::int64_t kMinParallelWork = 1'000'000;
+constexpr std::int64_t kUnknownNestedTrip = 256;
 
 std::int64_t saturating_mul(std::int64_t left, std::int64_t right) {
     if (left <= 0 || right <= 0) {
@@ -383,7 +454,8 @@ std::int64_t saturating_mul(std::int64_t left, std::int64_t right) {
 }
 
 std::int64_t body_work(const std::vector<std::unique_ptr<Stmt>>& stmts,
-                       const std::map<std::string, std::int64_t>& env) {
+                       const std::map<std::string, std::int64_t>& env,
+                       const std::map<std::string, std::int64_t>& list_len) {
     std::int64_t work = 0;
     for (const auto& stmt : stmts) {
         if (dynamic_cast<const AssignStmt*>(stmt.get()) != nullptr) {
@@ -395,29 +467,130 @@ std::int64_t body_work(const std::vector<std::unique_ptr<Stmt>>& stmts,
             continue;
         }
         if (const auto* iff = dynamic_cast<const IfStmt*>(stmt.get())) {
-            work += body_work(iff->then_branch, env);
-            work += body_work(iff->otherwise_branch, env);
+            work += body_work(iff->then_branch, env, list_len);
+            work += body_work(iff->otherwise_branch, env, list_len);
             continue;
         }
         if (const auto* repeat = dynamic_cast<const RepeatStmt*>(stmt.get())) {
-            const auto trip = constant_trip_count(*repeat, env);
-            const std::int64_t inner = trip ? *trip : 64;
-            work += saturating_mul(inner, body_work(repeat->body, env) + 1);
+            const auto trip = constant_trip_count(*repeat, env, list_len);
+            const std::int64_t inner = trip ? *trip : kUnknownNestedTrip;
+            work += saturating_mul(inner, body_work(repeat->body, env, list_len) + 1);
         }
     }
     return work;
 }
 
-bool worth_parallelizing(const RepeatStmt& stmt, bool nested,
-                         const std::map<std::string, std::int64_t>& env) {
-    const auto trip = constant_trip_count(stmt, env);
+bool worth_parallelizing(const RepeatStmt& stmt, bool nested, const std::map<std::string, std::int64_t>& env,
+                         const std::map<std::string, std::int64_t>& list_len) {
+    const auto trip = constant_trip_count(stmt, env, list_len);
     if (nested) {
         return trip.has_value() && *trip >= kMinParallelWork;
     }
     if (!trip) {
         return true;
     }
-    return saturating_mul(*trip, body_work(stmt.body, env) + 1) >= kMinParallelWork;
+    return saturating_mul(*trip, body_work(stmt.body, env, list_len) + 1) >= kMinParallelWork;
+}
+
+struct SimpleReduction {
+    std::string name;
+    TokenKind op = TokenKind::Plus;
+};
+
+bool match_simple_reduction(const AssignStmt& assign, TokenKind& op) {
+    const auto* bin = dynamic_cast<const BinaryExpr*>(assign.value.get());
+    if (bin == nullptr || (bin->op != TokenKind::Plus && bin->op != TokenKind::Star)) {
+        return false;
+    }
+    const auto* left = dynamic_cast<const IdentifierExpr*>(bin->left.get());
+    const auto* right = dynamic_cast<const IdentifierExpr*>(bin->right.get());
+    if (left != nullptr && left->name == assign.name) {
+        if (expr_mentions(bin->right.get(), assign.name)) {
+            return false;
+        }
+        op = bin->op;
+        return true;
+    }
+    if (right != nullptr && right->name == assign.name) {
+        if (expr_mentions(bin->left.get(), assign.name)) {
+            return false;
+        }
+        op = bin->op;
+        return true;
+    }
+    return false;
+}
+
+void collect_reduction_assigns(const std::vector<std::unique_ptr<Stmt>>& stmts,
+                               std::map<std::string, TokenKind>& simple,
+                               std::set<std::string>& other_assigns, bool& nested_control) {
+    for (const auto& stmt : stmts) {
+        if (const auto* assign = dynamic_cast<const AssignStmt*>(stmt.get())) {
+            TokenKind op = TokenKind::Plus;
+            if (match_simple_reduction(*assign, op)) {
+                const auto found = simple.find(assign->name);
+                if (found != simple.end() && found->second != op) {
+                    other_assigns.insert(assign->name);
+                } else {
+                    simple[assign->name] = op;
+                }
+            } else {
+                other_assigns.insert(assign->name);
+            }
+            continue;
+        }
+        if (const auto* iff = dynamic_cast<const IfStmt*>(stmt.get())) {
+            nested_control = true;
+            collect_reduction_assigns(iff->then_branch, simple, other_assigns, nested_control);
+            collect_reduction_assigns(iff->otherwise_branch, simple, other_assigns, nested_control);
+            continue;
+        }
+        if (const auto* repeat = dynamic_cast<const RepeatStmt*>(stmt.get())) {
+            nested_control = true;
+            collect_reduction_assigns(repeat->body, simple, other_assigns, nested_control);
+        }
+    }
+}
+
+std::optional<SimpleReduction> classify_simple_reduction(const std::vector<std::unique_ptr<Stmt>>& stmts) {
+    std::map<std::string, TokenKind> simple;
+    std::set<std::string> other_assigns;
+    bool nested_control = false;
+    collect_reduction_assigns(stmts, simple, other_assigns, nested_control);
+    if (nested_control || simple.size() != 1) {
+        return std::nullopt;
+    }
+    const auto& entry = *simple.begin();
+    if (other_assigns.contains(entry.first)) {
+        return std::nullopt;
+    }
+    return SimpleReduction{entry.first, entry.second};
+}
+
+bool reduction_used_unsafely(const std::vector<std::unique_ptr<Stmt>>& stmts, const std::string& name) {
+    for (const auto& stmt : stmts) {
+        if (const auto* assign = dynamic_cast<const AssignStmt*>(stmt.get())) {
+            TokenKind op = TokenKind::Plus;
+            if (assign->name == name && match_simple_reduction(*assign, op)) {
+                continue;
+            }
+            if (assign->name != name && expr_mentions(assign->value.get(), name)) {
+                return true;
+            }
+            continue;
+        }
+        if (const auto* index_assign = dynamic_cast<const IndexAssignStmt*>(stmt.get())) {
+            if (expr_mentions(index_assign->collection.get(), name) ||
+                expr_mentions(index_assign->index.get(), name) || expr_mentions(index_assign->value.get(), name)) {
+                return true;
+            }
+            continue;
+        }
+        if (stmt_uses_name(stmt.get(), name)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void collect_loop_effects(const std::vector<std::unique_ptr<Stmt>>& stmts, const std::string& iterator,
@@ -511,9 +684,14 @@ private:
     void lower_repeat(const RepeatStmt& stmt);
     void lower_counted_repeat(const RepeatStmt& stmt, IrValue start, IrValue end);
     void lower_parallel_repeat(const RepeatStmt& stmt, const std::vector<std::string>& captures,
-                               std::int64_t work_per_iter);
-    bool can_parallelize(const RepeatStmt& stmt, std::vector<std::string>& captures, LoopDecision& decision) const;
+                               std::int64_t work_per_iter, const std::optional<SimpleReduction>& reduction);
+    bool can_parallelize(const RepeatStmt& stmt, std::vector<std::string>& captures, LoopDecision& decision,
+                         std::optional<SimpleReduction>& reduction) const;
+    bool stmts_allocate(const std::vector<std::unique_ptr<Stmt>>& stmts) const;
+    bool expr_is_string_concat(const Expr* expr) const;
     IrValue const_i64(std::int64_t value);
+    IrValue const_f64(double value);
+    std::string rewrite_name(const std::string& name) const;
     IrValue emit_bin(IrBinOp op, const IrValue& left, const IrValue& right, IrType type);
     IrValue lower_expression(const Expr* expr);
     IrValue lower_unary(const UnaryExpr& expr);
@@ -553,6 +731,8 @@ private:
     int next_outlined_ = 0;
     bool in_parallel_ = false;
     int in_loop_ = 0;
+    std::string reduction_from_;
+    std::string reduction_to_;
 };
 
 Lowerer::Lowerer(const Program& program, const SemanticInfo& semantic, std::string source_path)
@@ -731,24 +911,26 @@ void Lowerer::lower_if(const IfStmt& stmt) {
     switch_to(merge_name);
 }
 
-bool Lowerer::can_parallelize(const RepeatStmt& stmt, std::vector<std::string>& captures,
-                              LoopDecision& decision) const {
+bool Lowerer::can_parallelize(const RepeatStmt& stmt, std::vector<std::string>& captures, LoopDecision& decision,
+                              std::optional<SimpleReduction>& reduction) const {
     decision.function = current_function_name_;
     decision.iterator = stmt.iterator;
     decision.location = stmt.span.start;
     decision.nest_depth = in_loop_;
     decision.parallel = false;
     decision.independent = false;
+    reduction.reset();
 
     if (in_parallel_ || current_function_decl_ == nullptr) {
         decision.reason = "already inside a parallel region";
         return false;
     }
     std::map<std::string, std::int64_t> env;
-    collect_const_env(current_function_decl_->body, &stmt, env);
-    const auto trip = constant_trip_count(stmt, env);
+    std::map<std::string, std::int64_t> list_len;
+    collect_const_env(current_function_decl_->body, &stmt, env, list_len);
+    const auto trip = constant_trip_count(stmt, env, list_len);
     decision.estimated_trip = trip.value_or(-1);
-    const std::int64_t cost = body_work(stmt.body, env) + 1;
+    const std::int64_t cost = body_work(stmt.body, env, list_len) + 1;
     decision.work_per_iter = cost < 1 ? 1 : cost;
     decision.estimated_work = trip ? saturating_mul(*trip, cost) : -1;
 
@@ -762,9 +944,23 @@ bool Lowerer::can_parallelize(const RepeatStmt& stmt, std::vector<std::string>& 
         decision.reason = effect_reason.empty() ? "loop body is not independent" : effect_reason;
         return false;
     }
-    decision.independent = true;
+    if (stmts_allocate(stmt.body)) {
+        decision.reason = "body allocates heap memory";
+        return false;
+    }
+    auto candidate = classify_simple_reduction(stmt.body);
+    if (candidate && reduction_used_unsafely(stmt.body, candidate->name)) {
+        candidate.reset();
+    }
+    if (candidate) {
+        const IrType acc_type = type_of_name(candidate->name);
+        if (acc_type.kind != IrTypeKind::I64 && acc_type.kind != IrTypeKind::F64) {
+            candidate.reset();
+        }
+    }
+    decision.independent = !candidate.has_value();
 
-    if (!worth_parallelizing(stmt, in_loop_ != 0, env)) {
+    if (!worth_parallelizing(stmt, in_loop_ != 0, env, list_len)) {
         if (in_loop_ != 0) {
             decision.reason =
                 trip ? "nested inside another repeat with trip count " + std::to_string(*trip) +
@@ -780,6 +976,9 @@ bool Lowerer::can_parallelize(const RepeatStmt& stmt, std::vector<std::string>& 
     }
 
     for (const auto& name : assigned) {
+        if (candidate && name == candidate->name) {
+            continue;
+        }
         bool found = false;
         if (scan_used_after(current_function_decl_->body, &stmt, name, found)) {
             decision.independent = false;
@@ -811,6 +1010,9 @@ bool Lowerer::can_parallelize(const RepeatStmt& stmt, std::vector<std::string>& 
     for (const auto& name : inner_iterators) {
         reads.erase(name);
     }
+    if (candidate) {
+        reads.erase(candidate->name);
+    }
     for (const auto& name : assigned) {
         bool seen = false;
         const bool read_first = first_use_is_read(stmt.body, name, seen);
@@ -823,12 +1025,95 @@ bool Lowerer::can_parallelize(const RepeatStmt& stmt, std::vector<std::string>& 
     }
 
     captures.assign(reads.begin(), reads.end());
+    reduction = std::move(candidate);
     decision.independent = true;
+    if (reduction) {
+        decision.reduction = reduction->name;
+        decision.reduction_op = reduction->op == TokenKind::Star ? "mul" : "add";
+    }
     decision.parallel = true;
-    decision.reason = "independent iterations, estimated work " +
-                      (decision.estimated_work >= 0 ? std::to_string(decision.estimated_work) : std::string("unknown")) +
-                      (decision.estimated_trip >= 0 ? ", trip " + std::to_string(decision.estimated_trip) : "");
+    decision.reason = reduction ? "simple " + decision.reduction_op + " reduction `" + decision.reduction +
+                                      "`, estimated work "
+                                : "independent iterations, estimated work ";
+    decision.reason +=
+        (decision.estimated_work >= 0 ? std::to_string(decision.estimated_work) : std::string("unknown"));
+    if (decision.estimated_trip >= 0) {
+        decision.reason += ", trip " + std::to_string(decision.estimated_trip);
+    }
     return true;
+}
+
+bool Lowerer::expr_is_string_concat(const Expr* expr) const {
+    if (expr == nullptr) {
+        return false;
+    }
+    if (const auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+        if (binary->op == TokenKind::Plus && type_of(expr).kind == IrTypeKind::String) {
+            return true;
+        }
+        return expr_is_string_concat(binary->left.get()) || expr_is_string_concat(binary->right.get());
+    }
+    if (const auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+        return expr_is_string_concat(unary->operand.get());
+    }
+    if (const auto* call = dynamic_cast<const CallExpr*>(expr)) {
+        for (const auto& argument : call->arguments) {
+            if (expr_is_string_concat(argument.get())) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (const auto* list = dynamic_cast<const ListExpr*>(expr)) {
+        for (const auto& element : list->elements) {
+            if (expr_is_string_concat(element.get())) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (const auto* index = dynamic_cast<const IndexExpr*>(expr)) {
+        return expr_is_string_concat(index->collection.get()) || expr_is_string_concat(index->index.get());
+    }
+    return false;
+}
+
+bool Lowerer::stmts_allocate(const std::vector<std::unique_ptr<Stmt>>& stmts) const {
+    for (const auto& stmt : stmts) {
+        if (const auto* assign = dynamic_cast<const AssignStmt*>(stmt.get())) {
+            if (expr_allocates(assign->value.get()) || expr_is_string_concat(assign->value.get())) {
+                return true;
+            }
+            continue;
+        }
+        if (const auto* index_assign = dynamic_cast<const IndexAssignStmt*>(stmt.get())) {
+            if (expr_allocates(index_assign->index.get()) || expr_allocates(index_assign->value.get()) ||
+                expr_is_string_concat(index_assign->index.get()) || expr_is_string_concat(index_assign->value.get())) {
+                return true;
+            }
+            continue;
+        }
+        if (const auto* expr_stmt = dynamic_cast<const ExprStmt*>(stmt.get())) {
+            if (expr_allocates(expr_stmt->expr.get()) || expr_is_string_concat(expr_stmt->expr.get())) {
+                return true;
+            }
+            continue;
+        }
+        if (const auto* iff = dynamic_cast<const IfStmt*>(stmt.get())) {
+            if (expr_allocates(iff->condition.get()) || expr_is_string_concat(iff->condition.get()) ||
+                stmts_allocate(iff->then_branch) || stmts_allocate(iff->otherwise_branch)) {
+                return true;
+            }
+            continue;
+        }
+        if (const auto* repeat = dynamic_cast<const RepeatStmt*>(stmt.get())) {
+            if (expr_allocates(repeat->start.get()) || expr_allocates(repeat->end.get()) ||
+                stmts_allocate(repeat->body)) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 IrValue Lowerer::const_i64(std::int64_t value) {
@@ -837,6 +1122,21 @@ IrValue Lowerer::const_i64(std::int64_t value) {
     result.type = ir_i64();
     result.i64 = value;
     return result;
+}
+
+IrValue Lowerer::const_f64(double value) {
+    IrValue result;
+    result.kind = IrValue::Kind::ConstF64;
+    result.type = ir_f64();
+    result.f64 = value;
+    return result;
+}
+
+std::string Lowerer::rewrite_name(const std::string& name) const {
+    if (!reduction_from_.empty() && name == reduction_from_) {
+        return reduction_to_;
+    }
+    return name;
 }
 
 IrValue Lowerer::emit_bin(IrBinOp op, const IrValue& left, const IrValue& right, IrType type) {
@@ -901,13 +1201,14 @@ void Lowerer::lower_counted_repeat(const RepeatStmt& stmt, IrValue start, IrValu
 }
 
 void Lowerer::lower_parallel_repeat(const RepeatStmt& stmt, const std::vector<std::string>& captures,
-                                    std::int64_t work_per_iter) {
+                                    std::int64_t work_per_iter, const std::optional<SimpleReduction>& reduction) {
     const IrValue start = lower_expression(stmt.start.get());
     const IrValue end = lower_expression(stmt.end.get());
+    const IrType reduce_type = reduction ? type_of_name(reduction->name) : ir_void();
 
     IrFunction outlined;
     outlined.name = "$par$" + std::to_string(next_outlined_++);
-    outlined.return_type = ir_void();
+    outlined.return_type = reduction ? reduce_type : ir_void();
     outlined.params.emplace_back("$lo", ir_i64());
     outlined.params.emplace_back("$hi", ir_i64());
     outlined.locals.emplace_back("$lo", ir_i64());
@@ -917,6 +1218,9 @@ void Lowerer::lower_parallel_repeat(const RepeatStmt& stmt, const std::vector<st
         const IrType type = type_of_name(capture);
         outlined.params.emplace_back(capture, type);
         outlined.locals.emplace_back(capture, type);
+    }
+    if (reduction) {
+        outlined.locals.emplace_back("$red", reduce_type);
     }
 
     IrFunction* parent = function_;
@@ -928,20 +1232,38 @@ void Lowerer::lower_parallel_repeat(const RepeatStmt& stmt, const std::vector<st
     next_temp_ = 0;
     next_block_ = 0;
     in_parallel_ = true;
+    if (reduction) {
+        reduction_from_ = reduction->name;
+        reduction_to_ = "$red";
+    }
 
     IrBlock entry;
     entry.name = "entry";
     outlined.blocks.push_back(std::move(entry));
     current_block_ = "entry";
 
-    lower_counted_repeat(stmt, emit_load("$lo"), emit_load("$hi"));
-    if (!current().terminated) {
-        IrValue value;
-        value.kind = IrValue::Kind::Undef;
-        value.type = ir_void();
-        finish_return(value);
+    if (reduction) {
+        if (reduction->op == TokenKind::Star) {
+            emit_store("$red", reduce_type.kind == IrTypeKind::F64 ? const_f64(1.0) : const_i64(1));
+        } else {
+            emit_store("$red", reduce_type.kind == IrTypeKind::F64 ? const_f64(0.0) : const_i64(0));
+        }
     }
 
+    lower_counted_repeat(stmt, emit_load("$lo"), emit_load("$hi"));
+    if (!current().terminated) {
+        if (reduction) {
+            finish_return(emit_load("$red"));
+        } else {
+            IrValue value;
+            value.kind = IrValue::Kind::Undef;
+            value.type = ir_void();
+            finish_return(value);
+        }
+    }
+
+    reduction_from_.clear();
+    reduction_to_.clear();
     in_parallel_ = false;
     function_ = parent;
     current_block_ = parent_block;
@@ -960,15 +1282,20 @@ void Lowerer::lower_parallel_repeat(const RepeatStmt& stmt, const std::vector<st
     for (const auto& capture : captures) {
         inst.args.push_back(emit_load(capture));
     }
+    if (reduction) {
+        inst.reduce_local = reduction->name;
+        inst.reduce_bin = reduction->op == TokenKind::Star ? IrBinOp::Mul : IrBinOp::Add;
+    }
     emit(std::move(inst));
 }
 
 void Lowerer::lower_repeat(const RepeatStmt& stmt) {
     std::vector<std::string> captures;
     LoopDecision decision;
-    if (can_parallelize(stmt, captures, decision)) {
+    std::optional<SimpleReduction> reduction;
+    if (can_parallelize(stmt, captures, decision, reduction)) {
         module_.decisions.push_back(decision);
-        lower_parallel_repeat(stmt, captures, decision.work_per_iter);
+        lower_parallel_repeat(stmt, captures, decision.work_per_iter, reduction);
         return;
     }
     if (decision.iterator.empty()) {
@@ -1271,10 +1598,11 @@ void Lowerer::emit(IrInst inst) {
 }
 
 IrValue Lowerer::emit_load(const std::string& name) {
+    const std::string resolved = rewrite_name(name);
     IrInst inst;
     inst.op = IrOp::Load;
-    inst.name = name;
-    inst.dest = make_temp(type_of_name(name));
+    inst.name = resolved;
+    inst.dest = make_temp(type_of_name(resolved));
     emit(inst);
     return inst.dest;
 }
@@ -1282,7 +1610,7 @@ IrValue Lowerer::emit_load(const std::string& name) {
 void Lowerer::emit_store(const std::string& name, const IrValue& value) {
     IrInst inst;
     inst.op = IrOp::Store;
-    inst.name = name;
+    inst.name = rewrite_name(name);
     inst.args.push_back(value);
     emit(std::move(inst));
 }
