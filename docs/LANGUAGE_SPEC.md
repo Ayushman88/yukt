@@ -774,7 +774,7 @@ record Profile:
     scores: list
 ```
 
-Field types stay `type_name` (an identifier or `alias.Name`); the grammar is unchanged. In 0.13.2 the field type names `string` and `list` become valid. A field written `list` is a `list[integer]`, the list type `zeros` and integer literals produce. Fields of other list element types wait for a later spec; the compiler must reject them rather than guess.
+Field types stay `type_name` (an identifier or `alias.Name`); the grammar is unchanged. In 0.13.2 the field type names `string` and `list` become valid. A field written `list` is `list[E]`. There is no `list[E]` field syntax. `E` is inferred by unification from the constructor arguments and uses of that record type, and must be the same everywhere. If constructors disagree on `E`, or `E` cannot be inferred, that is a type error at the offending constructor or the field. Non-integer element types (for example `list[string]` or `list[Point]`) are allowed.
 
 ### Per-name states
 
