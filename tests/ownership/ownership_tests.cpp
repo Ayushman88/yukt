@@ -449,5 +449,55 @@ int main() {
         REQUIRE(!result.diagnostics->has_errors());
     }
 
+    // A list field whose element type is never inferred is an error.
+    {
+        const auto result = check(
+            "record Box:\n"
+            "    items: list\n"
+            "\n"
+            "create main:\n"
+            "    say 1\n");
+        REQUIRE(has_title(result, "Cannot infer type"));
+        REQUIRE(has_title_on_line(result, "Cannot infer type", 2));
+    }
+
+    // Box([]) leaves the list element unbound.
+    {
+        const auto result = check(
+            "record Box:\n"
+            "    items: list\n"
+            "\n"
+            "create main:\n"
+            "    say Box([])\n");
+        REQUIRE(has_title(result, "Cannot infer type"));
+        REQUIRE(has_title_on_line(result, "Cannot infer type", 2) ||
+                has_title_on_line(result, "Cannot infer type", 5));
+    }
+
+    // A constructor that determines E stays valid.
+    {
+        const auto result = check(
+            "record Box:\n"
+            "    items: list\n"
+            "\n"
+            "create main:\n"
+            "    say count(Box(zeros(1)).items)\n");
+        REQUIRE(!result.diagnostics->has_errors());
+    }
+
+    // Disagreeing constructors stay Type mismatch, not Cannot infer type.
+    {
+        const auto result = check(
+            "record Box:\n"
+            "    items: list\n"
+            "\n"
+            "create main:\n"
+            "    a = Box(zeros(1))\n"
+            "    b = Box([\"x\"])\n"
+            "    say count(a.items)\n");
+        REQUIRE(has_title(result, "Type mismatch"));
+        REQUIRE(!has_title(result, "Cannot infer type"));
+    }
+
     return yukt::test::summary("ownership");
 }

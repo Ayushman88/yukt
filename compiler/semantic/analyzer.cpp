@@ -85,6 +85,7 @@ private:
     FunctionSymbol* lookup_shared(int module_index, const std::string& name);
     void check_constraints();
     void finalize_functions();
+    void finalize_records();
     void check_non_void_uses();
     void require_main();
     void require_non_void(Type type, SourceLocation location, std::string detail, std::string suggestion);
@@ -206,6 +207,7 @@ SemanticInfo Analyzer::run() {
     check_shared_signatures();
     check_constraints();
     finalize_functions();
+    finalize_records();
     check_non_void_uses();
     require_main();
     for (auto& record : records_) {
@@ -933,6 +935,21 @@ void Analyzer::finalize_functions() {
                       "The type of `" + local.name + "` could not be inferred.",
                       "Initialize it with a concrete value, such as `0`, `\"\"`, or `[1]`.");
             }
+        }
+    }
+}
+
+void Analyzer::finalize_records() {
+    for (const auto& record : records_) {
+        for (const auto& field : record.fields) {
+            const Type resolved = types_.prune(field.type);
+            if (resolved.kind != TypeKind::List || types_.is_resolved(resolved)) {
+                continue;
+            }
+            error(field.location, "Cannot infer type",
+                  "The element type of field `" + record.name + "." + field.name + "` could not be inferred.",
+                  "Construct `" + record.name + "` with a list whose element type is known, for example `" +
+                      record.name + "(zeros(1))`.");
         }
     }
 }
