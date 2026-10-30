@@ -6,6 +6,7 @@
 #include <iosfwd>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace yukt {
@@ -35,6 +36,7 @@ public:
 
     const std::string& file() const { return file_; }
     const std::string& source() const { return source_; }
+    void add_source(std::string path, std::string source);
 
     void error(SourceLocation location, std::string title, std::string detail, std::string suggestion = {});
     void error(SourceLocation location, std::string title, std::string detail, std::string suggestion,
@@ -53,6 +55,7 @@ private:
 
     std::string file_;
     std::string source_;
+    std::unordered_map<std::string, std::string> sources_;
     std::vector<Diagnostic> diagnostics_;
 };
 

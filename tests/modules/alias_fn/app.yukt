@@ -1,0 +1,7 @@
+use math
+
+create math:
+    give 1
+
+create main:
+    say 1

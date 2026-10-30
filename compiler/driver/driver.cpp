@@ -4,6 +4,8 @@
 #include "parser/parser.hpp"
 #include "semantic/analyzer.hpp"
 
+#include <filesystem>
+
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -64,13 +66,17 @@ FrontendResult analyze_source(std::string path, std::string source) {
 }
 
 FrontendResult analyze_file(const std::string& path) {
+    return analyze_file(path, default_stdlib_root());
+}
+
+FrontendResult analyze_file(const std::string& path, const std::string& stdlib_root) {
     std::ifstream input(path);
     if (!input) {
         FrontendResult result;
         result.path = path;
         result.diagnostics = std::make_unique<DiagnosticEngine>(path, "");
         result.diagnostics->error(
-            SourceLocation{1, 1}, "File not found",
+            SourceLocation{1, 1, path}, "File not found",
             "Could not open `" + path + "` for reading.",
             "Check the file path and try again.");
         result.program = std::make_unique<Program>();
@@ -79,11 +85,36 @@ FrontendResult analyze_file(const std::string& path) {
 
     std::ostringstream buffer;
     buffer << input.rdbuf();
-    return analyze_source(path, buffer.str());
+    const std::string source = buffer.str();
+
+    FrontendResult result;
+    result.path = path;
+    result.source = source;
+    result.diagnostics = std::make_unique<DiagnosticEngine>(path, source);
+    load_module_graph(result.graph, path, *result.diagnostics, stdlib_root);
+    if (result.graph.modules.empty()) {
+        result.program = std::make_unique<Program>();
+        return result;
+    }
+    result.tokens = result.graph.modules[0].tokens;
+    result.source = result.graph.modules[0].source;
+    result.path = result.graph.modules[0].canonical_path;
+    if (result.graph.modules.size() == 1 && !result.graph.has_uses()) {
+        result.program = std::move(result.graph.modules[0].program);
+        result.graph = ModuleGraph{};
+    }
+    return result;
 }
 
 void analyze_types(FrontendResult& result) {
-    if (result.program == nullptr || result.diagnostics == nullptr || result.diagnostics->has_errors()) {
+    if (result.diagnostics == nullptr || result.diagnostics->has_errors()) {
+        return;
+    }
+    if (!result.graph.modules.empty()) {
+        result.semantic = analyze_semantics(result.graph, *result.diagnostics);
+        return;
+    }
+    if (result.program == nullptr) {
         return;
     }
     result.semantic = analyze_semantics(*result.program, *result.diagnostics);

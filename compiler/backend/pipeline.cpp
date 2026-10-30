@@ -40,7 +40,8 @@ void report(DiagnosticEngine& diagnostics, const std::string& title, const std::
 
 CompileOutput compile_program(FrontendResult& frontend, const CompileRequest& request, DiagnosticEngine& diagnostics) {
     CompileOutput output;
-    if (frontend.program == nullptr) {
+    Program* program = frontend.entry_program();
+    if (program == nullptr) {
         report(diagnostics, "Compilation failed", "The frontend did not produce a program.",
                "Fix parse errors first.");
         return output;
@@ -49,7 +50,11 @@ CompileOutput compile_program(FrontendResult& frontend, const CompileRequest& re
         return output;
     }
 
-    output.ir = lower_to_ir(*frontend.program, frontend.semantic, frontend.path);
+    if (!frontend.graph.modules.empty()) {
+        output.ir = lower_to_ir(frontend.graph, frontend.semantic);
+    } else {
+        output.ir = lower_to_ir(*program, frontend.semantic, frontend.path);
+    }
     if (request.action == CompileAction::EmitYuktIr) {
         output.ok = !diagnostics.has_errors();
         output.exit_code = output.ok ? 0 : 1;

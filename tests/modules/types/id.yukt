@@ -1,0 +1,2 @@
+share create ident(x):
+    give x

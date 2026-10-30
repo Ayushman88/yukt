@@ -6,11 +6,11 @@ YUKT is a real programming language. The compiler is handwritten C++20. Do not i
 
 ## Current milestone
 
-**0.11 frozen** (tag `v0.11.0`). **0.12 is language design only** — modules and imports in `docs/LANGUAGE_SPEC.md`. Do not implement `use` / `share` / qualification in the compiler until an implementation plan is approved.
+**0.12 — Modules and compiler intelligence** (0.11 remains tagged `v0.11.0`).
 
-Implemented (0.11): lexer, parser, AST, diagnostics (notes, GNU line, TTY color), scopes, type inference, YUKT IR, LLVM lowering, host object emission, `yukt build`, `yukt run`, `yukt --explain`, LLVM O3, list indexing, `count` / `zeros`, work-based automatic parallelization, simple +/* parallel reductions, adaptive runtime parallelization, host-CPU SIMD via LLVM vectorize, counted-loop lowering, range-parallel runtime, aligned list payloads, size-class payload reuse, host-native CI (macOS arm64, Linux x86-64), and the 0.08–0.10 performance sprints.
+Implemented: lexer, parser, AST, diagnostics (notes, GNU line, TTY color, per-file locations), scopes, type inference, YUKT IR, LLVM lowering, host object emission, `yukt build`, `yukt run`, `yukt --explain`, LLVM O3, list indexing, `count` / `zeros`, work-based automatic parallelization, simple +/* parallel reductions, adaptive runtime parallelization, host-CPU SIMD via LLVM vectorize, counted-loop lowering, range-parallel runtime, aligned list payloads, size-class payload reuse, host-native CI (macOS arm64, Linux x86-64), the 0.08–0.10 performance sprints, and the 0.12 module system (`use` / `share` / `as` / `.` qualification, whole-program DAG, one native executable).
 
-Not implemented: modules, a standard library, or cross-compilation to non-host triples. 0.12 syntax is specified; parsing it is still a bug until 0.12 compiler work starts.
+Not implemented: a standard library of APIs, package management, or cross-compilation to non-host triples.
 
 Native execution is real when `yukt build` writes a host binary and `file` reports an executable for that architecture. Do not call a program "native" if it was interpreted.
 
@@ -54,23 +54,24 @@ The compiler entry point is `compiler/main.cpp`. Frontend/IR code lives in `yukt
 | `compiler/lexer` | Tokens, including `INDENT` / `DEDENT` | diagnostics |
 | `compiler/ast` | Syntax tree nodes | lexer tokens |
 | `compiler/parser` | Recursive-descent parser | lexer, ast, diagnostics |
-| `compiler/driver` | File loading and frontend orchestration | lexer, parser |
+| `compiler/driver` | File loading, module graph, frontend orchestration | lexer, parser |
 | `compiler/semantic` | Types, scopes, inference | ast, diagnostics |
 | `compiler/ir` | YUKT IR and AST lowering | semantic |
 | `compiler/backend` | LLVM lowering, objects, linking | ir |
 | `runtime` | C runtime linked into generated programs | — |
-| `std` | Standard library (future, 0.12) | — |
+| `std` | Standard library APIs (empty in 0.12) | — |
 
 ## Language constraints
 
-YUKT 0.11 is indentation-sensitive. Blocks are introduced by `:` and a newline, then an indented suite.
+YUKT 0.12 is indentation-sensitive. Blocks are introduced by `:` and a newline, then an indented suite.
 
 Supported syntax is listed in `docs/LANGUAGE_SPEC.md`:
 
 - assignments and list index assignment
 - integer, float, boolean, and string literals
 - arithmetic and comparison operators
-- `create` functions
+- `create` functions and `share create` exports
+- `use path [as alias]` and qualified calls `alias.name(...)`
 - `say`, `give`, `if` / `otherwise`, `repeat`
 - lists, indexing, `count`, `zeros`
 - `#` comments
@@ -101,7 +102,7 @@ If `--ast` fails, fix the parser. If `--types` fails, fix semantic analysis. If 
 
 ## Out of scope until later milestones
 
-- Imports / modules (0.12 specified in `docs/LANGUAGE_SPEC.md`; do not implement yet)
+- Standard-library APIs under `std/` (after 0.12 modules)
 - Classes / structs (0.13)
 - Package management
 - An interactive REPL

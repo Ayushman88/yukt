@@ -43,20 +43,33 @@ std::unique_ptr<Program> Parser::parse_program() {
         program->span.start = peek().location;
     }
 
+    bool seen_function = false;
     while (!is_at_end()) {
         const std::size_t before = current_;
         skip_newlines();
         if (is_at_end()) {
             break;
         }
-        if (!check(TokenKind::KwCreate)) {
+        if (check(TokenKind::KwUse)) {
+            if (seen_function) {
+                error_at(peek(), "Unexpected token",
+                         "`use` must appear before any `create` in this file.",
+                         "Move this `use` to the top of the file.");
+                synchronize();
+            } else {
+                program->uses.push_back(parse_use());
+            }
+        } else if (check(TokenKind::KwShare) || check(TokenKind::KwCreate)) {
+            seen_function = true;
+            if (auto function = parse_function()) {
+                program->functions.push_back(std::move(function));
+            }
+        } else {
             error_at(peek(), "Unexpected token",
-                     "Top-level code must start with a `create` function declaration. Found " +
+                     "Top-level code must start with `use` or a `create` function declaration. Found " +
                          token_description(peek()) + ".",
                      "Wrap this code in `create main:` or move it into an existing function.");
             synchronize();
-        } else if (auto function = parse_function()) {
-            program->functions.push_back(std::move(function));
         }
         if (current_ == before) {
             advance();
@@ -69,17 +82,75 @@ std::unique_ptr<Program> Parser::parse_program() {
     return program;
 }
 
+UseDecl Parser::parse_use() {
+    UseDecl use;
+    const Token start = peek();
+    use.use_location = start.location;
+    use.span.start = start.location;
+    advance();
+
+    if (!check(TokenKind::Identifier)) {
+        error_at(peek(), "Unexpected token",
+                 "Expected a module path after `use`. Found " + token_description(peek()) + ".",
+                 "Write `use math` or `use std/math as m`.");
+        synchronize();
+        return use;
+    }
+
+    use.path.push_back(advance().lexeme);
+    while (match(TokenKind::Slash)) {
+        if (!check(TokenKind::Identifier)) {
+            error_at(peek(), "Unexpected token",
+                     "Expected a path component after `/`. Found " + token_description(peek()) + ".",
+                     "Write a path such as `use std/math`.");
+            synchronize();
+            return use;
+        }
+        use.path.push_back(advance().lexeme);
+    }
+
+    use.alias = use.path.back();
+    use.alias_location = previous().location;
+    if (match(TokenKind::KwAs)) {
+        if (!check(TokenKind::Identifier)) {
+            error_at(peek(), "Unexpected token",
+                     "Expected an alias after `as`. Found " + token_description(peek()) + ".",
+                     "Write `use std/math as math`.");
+            synchronize();
+            return use;
+        }
+        const Token alias = advance();
+        use.alias = alias.lexeme;
+        use.alias_location = alias.location;
+    }
+
+    expect_newline("after this `use`");
+    use.span.end = previous().location;
+    return use;
+}
+
 std::unique_ptr<FunctionDecl> Parser::parse_function() {
     const Token start = peek();
+    auto function = std::make_unique<FunctionDecl>();
+    function->span.start = start.location;
+
+    if (match(TokenKind::KwShare)) {
+        function->shared = true;
+        if (!check(TokenKind::KwCreate)) {
+            error_at(peek(), "Unexpected token",
+                     "`share` is only valid immediately before `create`.",
+                     "Write `share create name:`.");
+            synchronize();
+            return nullptr;
+        }
+    }
+
     if (!consume(TokenKind::KwCreate, "Unexpected token",
                  "Expected `create` to start a function declaration.",
                  "Write `create name:` or `create name(arguments):`.")) {
         synchronize();
         return nullptr;
     }
-
-    auto function = std::make_unique<FunctionDecl>();
-    function->span.start = start.location;
 
     if (!check(TokenKind::Identifier)) {
         error_at(peek(), "Unexpected token",
@@ -241,6 +312,32 @@ std::unique_ptr<Stmt> Parser::parse_assignment_or_call() {
         auto stmt = std::make_unique<ExprStmt>();
         stmt->span.start = name.location;
         stmt->expr = parse_call_from_name(name);
+        expect_newline("after this function call");
+        stmt->span.end = previous().location;
+        return stmt;
+    }
+
+    if (check(TokenKind::Dot)) {
+        const Token dot = advance();
+        if (!check(TokenKind::Identifier)) {
+            error_at(peek(), "Unexpected token",
+                     "Expected a function name after `.`. Found " + token_description(peek()) + ".",
+                     "Write a qualified call such as `math.add(1, 2)`.");
+            synchronize();
+            return nullptr;
+        }
+        const Token callee = advance();
+        if (!check(TokenKind::LParen)) {
+            error_at(peek(), "Unexpected token",
+                     "Qualified names must be called. Found " + token_description(peek()) + " after `" + name.lexeme +
+                         "." + callee.lexeme + "`.",
+                     "Write `" + name.lexeme + "." + callee.lexeme + "(...)`.");
+            synchronize();
+            return nullptr;
+        }
+        auto stmt = std::make_unique<ExprStmt>();
+        stmt->span.start = name.location;
+        stmt->expr = parse_call_from_tokens(name, callee, dot.location);
         expect_newline("after this function call");
         stmt->span.end = previous().location;
         return stmt;
@@ -474,6 +571,23 @@ std::unique_ptr<Expr> Parser::parse_primary() {
         if (check(TokenKind::LParen)) {
             return parse_call_from_name(name);
         }
+        if (check(TokenKind::Dot)) {
+            const Token dot = advance();
+            if (!check(TokenKind::Identifier)) {
+                error_at(peek(), "Unexpected token",
+                         "Expected a function name after `.`. Found " + token_description(peek()) + ".",
+                         "Write a qualified call such as `math.add(1, 2)`.");
+                return nullptr;
+            }
+            const Token callee = advance();
+            if (!check(TokenKind::LParen)) {
+                error_at(peek(), "Unexpected token",
+                         "`" + name.lexeme + "." + callee.lexeme + "` is not a value. Call it with `()`.",
+                         "Write `" + name.lexeme + "." + callee.lexeme + "(...)`.");
+                return nullptr;
+            }
+            return parse_call_from_tokens(name, callee, dot.location);
+        }
         auto expr = std::make_unique<IdentifierExpr>();
         expr->span.start = name.location;
         expr->span.end = name.location;
@@ -515,8 +629,17 @@ std::unique_ptr<Expr> Parser::parse_primary() {
 }
 
 std::unique_ptr<Expr> Parser::parse_call_from_name(Token name) {
+    return parse_call_from_tokens(Token{}, std::move(name), SourceLocation{});
+}
+
+std::unique_ptr<Expr> Parser::parse_call_from_tokens(Token qualifier, Token name, SourceLocation dot) {
     auto expr = std::make_unique<CallExpr>();
-    expr->span.start = name.location;
+    expr->span.start = qualifier.lexeme.empty() ? name.location : qualifier.location;
+    if (!qualifier.lexeme.empty()) {
+        expr->qualifier = std::move(qualifier.lexeme);
+        expr->qualifier_location = qualifier.location;
+        expr->dot_location = dot;
+    }
     expr->callee = std::move(name.lexeme);
     expr->callee_location = name.location;
     expr->arguments = parse_argument_list();
@@ -625,6 +748,7 @@ void Parser::synchronize() {
             return;
         }
         if (peek().kind == TokenKind::Dedent || peek().kind == TokenKind::KwCreate ||
+            peek().kind == TokenKind::KwShare || peek().kind == TokenKind::KwUse ||
             peek().kind == TokenKind::KwSay || peek().kind == TokenKind::KwIf ||
             peek().kind == TokenKind::KwRepeat || peek().kind == TokenKind::KwGive) {
             return;

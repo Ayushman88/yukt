@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(yukt VERSION 0.11.0 LANGUAGES C CXX)
+project(yukt VERSION 0.12.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -72,8 +72,10 @@ add_library(yukt_compiler
     compiler/ir/ir.cpp
     compiler/ir/lower.cpp
     compiler/driver/driver.cpp
+    compiler/driver/module.cpp
 )
 target_include_directories(yukt_compiler PUBLIC ${CMAKE_SOURCE_DIR}/compiler)
+target_compile_definitions(yukt_compiler PUBLIC YUKT_STDLIB_DIR="${CMAKE_SOURCE_DIR}/std")
 yukt_set_warnings(yukt_compiler)
 
 add_library(yukt_runtime STATIC runtime/yukt_runtime.c)
@@ -128,6 +130,7 @@ yukt_add_test(yukt_lexer_tests tests/lexer/lexer_tests.cpp)
 yukt_add_test(yukt_parser_tests tests/parser/parser_tests.cpp)
 yukt_add_test(yukt_program_tests tests/programs/program_tests.cpp)
 yukt_add_test(yukt_semantic_tests tests/semantic/semantic_tests.cpp)
+yukt_add_test(yukt_module_tests tests/modules/module_tests.cpp)
 
 add_executable(yukt_ir_tests tests/ir/ir_tests.cpp)
 target_link_libraries(yukt_ir_tests PRIVATE yukt_compiler)
@@ -161,3 +164,5 @@ add_test(NAME hello_ir COMMAND yukt --emit-ir ${CMAKE_SOURCE_DIR}/examples/hello
 add_test(NAME hello_explain COMMAND yukt --explain ${CMAKE_SOURCE_DIR}/examples/hello.yukt)
 add_test(NAME hello_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/examples/hello.yukt)
 add_test(NAME index_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/examples/index.yukt)
+add_test(NAME module_ok_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/modules/ok/app.yukt)
+add_test(NAME module_nested_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/modules/nested/a.yukt)

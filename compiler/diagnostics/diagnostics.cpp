@@ -50,7 +50,13 @@ void write_snippet(std::ostream& out, std::string_view source, SourceLocation lo
 }  // namespace
 
 DiagnosticEngine::DiagnosticEngine(std::string file, std::string source)
-    : file_(std::move(file)), source_(std::move(source)) {}
+    : file_(std::move(file)), source_(std::move(source)) {
+    sources_[file_] = source_;
+}
+
+void DiagnosticEngine::add_source(std::string path, std::string source) {
+    sources_[path] = std::move(source);
+}
 
 void DiagnosticEngine::error(SourceLocation location, std::string title, std::string detail, std::string suggestion) {
     add(DiagnosticLevel::Error, location, std::move(title), std::move(detail), std::move(suggestion), {});
@@ -91,27 +97,32 @@ void DiagnosticEngine::emit(std::ostream& out) const {
     for (const auto& diagnostic : diagnostics_) {
         const char* level_color = diagnostic.level == DiagnosticLevel::Error ? red : yellow;
         const char* gnu_level = diagnostic.level == DiagnosticLevel::Error ? "error" : "warning";
-        out << file_ << ':' << diagnostic.location.line << ':' << diagnostic.location.column << ": " << level_color
+        const std::string& path =
+            diagnostic.location.file.empty() ? file_ : diagnostic.location.file;
+        out << path << ':' << diagnostic.location.line << ':' << diagnostic.location.column << ": " << level_color
             << gnu_level << reset << ": " << bold << diagnostic.title << reset << '\n';
         out << level_color << diagnostic_level_name(diagnostic.level) << reset << ": " << diagnostic.title << '\n';
-        out << "File: " << file_ << '\n';
+        out << "File: " << path << '\n';
         out << "Line: " << diagnostic.location.line << ", Column: " << diagnostic.location.column << "\n\n";
 
         if (!diagnostic.detail.empty()) {
             out << diagnostic.detail << "\n\n";
         }
 
-        write_snippet(out, source_, diagnostic.location);
+        const auto source_found = sources_.find(path);
+        write_snippet(out, source_found != sources_.end() ? source_found->second : source_, diagnostic.location);
 
         if (!diagnostic.suggestion.empty()) {
             out << "\n" << green << "Suggestion: " << reset << diagnostic.suggestion << '\n';
         }
 
         for (const auto& note : diagnostic.notes) {
+            const std::string& note_path = note.location.file.empty() ? file_ : note.location.file;
             out << '\n'
-                << cyan << "note" << reset << ": " << file_ << ':' << note.location.line << ':' << note.location.column
-                << ": " << note.text << '\n';
-            write_snippet(out, source_, note.location);
+                << cyan << "note" << reset << ": " << note_path << ':' << note.location.line << ':'
+                << note.location.column << ": " << note.text << '\n';
+            const auto note_source = sources_.find(note_path);
+            write_snippet(out, note_source != sources_.end() ? note_source->second : source_, note.location);
         }
 
         out << '\n';
@@ -120,6 +131,14 @@ void DiagnosticEngine::emit(std::ostream& out) const {
 
 void DiagnosticEngine::add(DiagnosticLevel level, SourceLocation location, std::string title, std::string detail,
                            std::string suggestion, std::vector<DiagnosticNote> notes) {
+    if (location.file.empty()) {
+        location.file = file_;
+    }
+    for (auto& note : notes) {
+        if (note.location.file.empty()) {
+            note.location.file = file_;
+        }
+    }
     diagnostics_.push_back(Diagnostic{
         level,
         std::move(title),

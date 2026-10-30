@@ -1,0 +1,4 @@
+use nope
+
+create main:
+    say 1

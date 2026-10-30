@@ -1,0 +1,6 @@
+use lib
+use lib as other
+
+create main:
+    say lib.ping()
+    say other.ping()

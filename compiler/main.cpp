@@ -6,13 +6,15 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace {
-constexpr std::string_view kVersion = "0.11";
+constexpr std::string_view kVersion = "0.12";
 
 void print_usage(std::ostream& out) {
     out << "yukt " << kVersion << " — YUKT compiler\n\n"
@@ -31,6 +33,23 @@ void print_usage(std::ostream& out) {
 }
 
 int inspect(const std::string& path, bool show_tokens, bool show_ast, bool show_types) {
+    if (show_tokens && !show_ast && !show_types) {
+        std::ifstream input(path);
+        if (!input) {
+            std::cerr << path << ":1:1: error: File not found\n";
+            return EXIT_FAILURE;
+        }
+        std::ostringstream buffer;
+        buffer << input.rdbuf();
+        auto result = yukt::analyze_source(path, buffer.str());
+        yukt::print_tokens(result.tokens, std::cout);
+        if (result.diagnostics != nullptr && !result.diagnostics->diagnostics().empty()) {
+            result.diagnostics->emit(std::cerr);
+        }
+        const bool ok = result.diagnostics != nullptr && !result.diagnostics->has_errors();
+        return ok ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+
     auto result = yukt::analyze_file(path);
     const bool run_types = !show_tokens && !show_ast;
     if (run_types || show_types) {
@@ -41,8 +60,18 @@ int inspect(const std::string& path, bool show_tokens, bool show_ast, bool show_
     if (show_tokens) {
         yukt::print_tokens(result.tokens, std::cout);
     }
-    if (show_ast && result.program != nullptr) {
-        yukt::print_ast(*result.program, std::cout);
+    if (show_ast) {
+        if (!result.graph.modules.empty()) {
+            for (const auto& module : result.graph.modules) {
+                if (module.program == nullptr) {
+                    continue;
+                }
+                std::cout << "# " << module.canonical_path << '\n';
+                yukt::print_ast(*module.program, std::cout);
+            }
+        } else if (result.program != nullptr) {
+            yukt::print_ast(*result.program, std::cout);
+        }
     }
     if (show_types) {
         yukt::print_types(result.semantic, std::cout);

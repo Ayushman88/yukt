@@ -96,7 +96,11 @@ void BinaryExpr::print(std::ostream& out, int indent) const {
 
 void CallExpr::print(std::ostream& out, int indent) const {
     pad(out, indent);
-    out << "Call " << callee << '\n';
+    out << "Call ";
+    if (!qualifier.empty()) {
+        out << qualifier << '.';
+    }
+    out << callee << '\n';
     for (const auto& argument : arguments) {
         print_child(out, argument.get(), indent + 1);
     }
@@ -183,8 +187,23 @@ void RepeatStmt::print(std::ostream& out, int indent) const {
     }
 }
 
+void UseDecl::print(std::ostream& out, int indent) const {
+    pad(out, indent);
+    out << "Use";
+    for (const auto& part : path) {
+        out << ' ' << part;
+    }
+    if (!alias.empty() && (path.empty() || alias != path.back())) {
+        out << " as " << alias;
+    }
+    out << '\n';
+}
+
 void FunctionDecl::print(std::ostream& out, int indent) const {
     pad(out, indent);
+    if (shared) {
+        out << "Share ";
+    }
     out << "Function " << name << '(';
     for (std::size_t i = 0; i < parameters.size(); ++i) {
         if (i != 0) {
@@ -201,6 +220,9 @@ void FunctionDecl::print(std::ostream& out, int indent) const {
 void Program::print(std::ostream& out, int indent) const {
     pad(out, indent);
     out << "Program\n";
+    for (const auto& use : uses) {
+        use.print(out, indent + 1);
+    }
     for (const auto& function : functions) {
         if (function == nullptr) {
             pad(out, indent + 1);

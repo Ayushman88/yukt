@@ -19,7 +19,9 @@ public:
     std::unique_ptr<Program> parse_program();
 
 private:
+    UseDecl parse_use();
     std::unique_ptr<FunctionDecl> parse_function();
+    std::unique_ptr<Expr> parse_call_from_tokens(Token qualifier, Token name, SourceLocation dot);
     std::vector<std::unique_ptr<Stmt>> parse_block(std::string_view what);
     std::unique_ptr<Stmt> parse_statement();
     std::unique_ptr<Stmt> parse_assignment_or_call();

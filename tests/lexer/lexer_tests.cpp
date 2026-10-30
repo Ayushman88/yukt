@@ -50,7 +50,7 @@ const yukt::Token* first_kind(const std::vector<yukt::Token>& tokens, yukt::Toke
 
 int main() {
     {
-        const auto result = lex("create say if otherwise repeat in give true false name\n");
+        const auto result = lex("create say if otherwise repeat in give true false use share as name\n");
         REQUIRE(!result.diagnostics.has_errors());
         REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwCreate));
         REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwSay));
@@ -61,6 +61,9 @@ int main() {
         REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwGive));
         REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwTrue));
         REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwFalse));
+        REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwUse));
+        REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwShare));
+        REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwAs));
         const auto* ident = first_kind(result.tokens, yukt::TokenKind::Identifier);
         REQUIRE(ident != nullptr);
         REQUIRE(ident != nullptr && ident->lexeme == "name");
@@ -186,6 +189,14 @@ int main() {
         const auto* equal = first_kind(result.tokens, yukt::TokenKind::Equal);
         REQUIRE(equal != nullptr);
         REQUIRE(equal != nullptr && equal->location.column == 7);
+    }
+
+    {
+        const auto result = lex("math.add(1)\n");
+        REQUIRE(!result.diagnostics.has_errors());
+        REQUIRE(contains_kind(result.tokens, yukt::TokenKind::Dot));
+        REQUIRE(contains_kind(result.tokens, yukt::TokenKind::Dot) &&
+                first_kind(result.tokens, yukt::TokenKind::Dot)->lexeme == ".");
     }
 
     return yukt::test::summary("lexer");

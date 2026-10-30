@@ -9,6 +9,11 @@ namespace yukt {
 struct SourceLocation {
     std::uint32_t line = 1;
     std::uint32_t column = 1;
+    std::string file;
+
+    SourceLocation() = default;
+    SourceLocation(std::uint32_t line, std::uint32_t column, std::string file = {})
+        : line(line), column(column), file(std::move(file)) {}
 };
 
 struct SourceSpan {

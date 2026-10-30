@@ -1,0 +1,4 @@
+use math as count
+
+create main:
+    say 1

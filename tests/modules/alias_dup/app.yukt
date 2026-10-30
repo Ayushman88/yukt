@@ -1,0 +1,5 @@
+use math
+use other as math
+
+create main:
+    say 1

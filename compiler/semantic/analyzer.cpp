@@ -3,6 +3,7 @@
 #include "lexer/token.hpp"
 
 #include <algorithm>
+#include <memory>
 #include <ostream>
 #include <unordered_map>
 #include <utility>
@@ -25,6 +26,8 @@ struct LocalBinding {
 
 struct FunctionSymbol {
     const FunctionDecl* decl = nullptr;
+    int module_index = 0;
+    std::string ir_name;
     std::vector<Type> parameters;
     Type return_type = void_type();
     bool saw_give = false;
@@ -55,12 +58,17 @@ struct NonVoidUse {
 class Analyzer {
 public:
     Analyzer(const Program& program, DiagnosticEngine& diagnostics);
+    Analyzer(const ModuleGraph& graph, DiagnosticEngine& diagnostics);
 
     SemanticInfo run();
 
 private:
     void collect_functions();
+    void collect_aliases();
     void analyze_functions();
+    std::string ir_name_for(int module_index, const FunctionDecl& function) const;
+    const Program* module_program(int index) const;
+    FunctionSymbol* lookup_shared(int module_index, const std::string& name);
     void check_constraints();
     void finalize_functions();
     void check_non_void_uses();
@@ -97,9 +105,16 @@ private:
     void pop_scope();
 
     const Program& program_;
+    const ModuleGraph* graph_ = nullptr;
     DiagnosticEngine& diagnostics_;
     TypeContext types_;
-    std::unordered_map<std::string, FunctionSymbol> functions_;
+    std::unordered_map<std::string, std::unique_ptr<FunctionSymbol>> functions_;
+    std::vector<std::unordered_map<std::string, FunctionSymbol*>> module_lookup_;
+    std::vector<std::unordered_map<std::string, int>> aliases_;
+    std::unordered_map<const FunctionDecl*, std::string> function_ir_names_;
+    std::unordered_map<const CallExpr*, std::string> call_ir_names_;
+    int current_module_ = 0;
+    bool single_file_ = true;
     std::vector<std::unordered_map<std::string, Symbol>> scopes_;
     std::vector<Constraint> constraints_;
     std::vector<NonVoidUse> non_void_uses_;
@@ -126,10 +141,21 @@ bool is_arithmetic(TokenKind op) {
 }
 
 Analyzer::Analyzer(const Program& program, DiagnosticEngine& diagnostics)
-    : program_(program), diagnostics_(diagnostics) {}
+    : program_(program), diagnostics_(diagnostics), single_file_(true) {
+    module_lookup_.emplace_back();
+    aliases_.emplace_back();
+}
+
+Analyzer::Analyzer(const ModuleGraph& graph, DiagnosticEngine& diagnostics)
+    : program_(*graph.modules.at(0).program), graph_(&graph), diagnostics_(diagnostics),
+      single_file_(graph.modules.size() <= 1 && !graph.has_uses()) {
+    module_lookup_.resize(graph.modules.size());
+    aliases_.resize(graph.modules.size());
+}
 
 SemanticInfo Analyzer::run() {
     collect_functions();
+    collect_aliases();
     analyze_functions();
     check_constraints();
     finalize_functions();
@@ -137,42 +163,54 @@ SemanticInfo Analyzer::run() {
     require_main();
 
     SemanticInfo info;
-    for (const auto& function : program_.functions) {
-        if (function == nullptr) {
+    info.function_ir_names = function_ir_names_;
+    info.call_ir_names = call_ir_names_;
+    const int module_count = graph_ == nullptr ? 1 : static_cast<int>(graph_->modules.size());
+    for (int module_index = 0; module_index < module_count; ++module_index) {
+        const Program* program = module_program(module_index);
+        if (program == nullptr) {
             continue;
         }
-        auto found = functions_.find(function->name);
-        if (found == functions_.end()) {
-            continue;
+        for (const auto& function : program->functions) {
+            if (function == nullptr) {
+                continue;
+            }
+            const std::string ir_name = ir_name_for(module_index, *function);
+            auto found = functions_.find(ir_name);
+            if (found == functions_.end() || found->second == nullptr) {
+                continue;
+            }
+            const FunctionSymbol& symbol = *found->second;
+            InferredFunction inferred;
+            inferred.name = function->name;
+            inferred.ir_name = ir_name;
+            inferred.return_type = types_.to_string(symbol.return_type);
+            for (std::size_t i = 0; i < function->parameters.size(); ++i) {
+                inferred.parameters.push_back(InferredBinding{
+                    function->parameters[i],
+                    types_.to_string(symbol.parameters[i]),
+                });
+            }
+            for (const auto& local : symbol.locals) {
+                inferred.locals.push_back(InferredBinding{local.name, types_.to_string(local.type)});
+            }
+            std::sort(inferred.locals.begin(), inferred.locals.end(),
+                      [](const InferredBinding& left, const InferredBinding& right) { return left.name < right.name; });
+            info.functions.push_back(std::move(inferred));
+            info.return_types[ir_name] = types_.prune(symbol.return_type);
+            info.parameter_types[ir_name] = symbol.parameters;
+            for (auto& parameter : info.parameter_types[ir_name]) {
+                parameter = types_.prune(parameter);
+            }
+            std::unordered_map<std::string, Type> locals;
+            for (std::size_t i = 0; i < function->parameters.size(); ++i) {
+                locals[function->parameters[i]] = info.parameter_types[ir_name][i];
+            }
+            for (const auto& local : symbol.locals) {
+                locals[local.name] = types_.prune(local.type);
+            }
+            info.local_types[ir_name] = std::move(locals);
         }
-        InferredFunction inferred;
-        inferred.name = function->name;
-        inferred.return_type = types_.to_string(found->second.return_type);
-        for (std::size_t i = 0; i < function->parameters.size(); ++i) {
-            inferred.parameters.push_back(InferredBinding{
-                function->parameters[i],
-                types_.to_string(found->second.parameters[i]),
-            });
-        }
-        for (const auto& local : found->second.locals) {
-            inferred.locals.push_back(InferredBinding{local.name, types_.to_string(local.type)});
-        }
-        std::sort(inferred.locals.begin(), inferred.locals.end(),
-                  [](const InferredBinding& left, const InferredBinding& right) { return left.name < right.name; });
-        info.functions.push_back(std::move(inferred));
-        info.return_types[function->name] = types_.prune(found->second.return_type);
-        info.parameter_types[function->name] = found->second.parameters;
-        for (auto& parameter : info.parameter_types[function->name]) {
-            parameter = types_.prune(parameter);
-        }
-        std::unordered_map<std::string, Type> locals;
-        for (std::size_t i = 0; i < function->parameters.size(); ++i) {
-            locals[function->parameters[i]] = info.parameter_types[function->name][i];
-        }
-        for (const auto& local : found->second.locals) {
-            locals[local.name] = types_.prune(local.type);
-        }
-        info.local_types[function->name] = std::move(locals);
     }
     for (const auto& [expr, type] : expr_types_) {
         info.expression_types[expr] = types_.prune(type);
@@ -180,40 +218,152 @@ SemanticInfo Analyzer::run() {
     return info;
 }
 
-void Analyzer::collect_functions() {
-    for (const auto& function : program_.functions) {
-        if (function == nullptr) {
-            continue;
-        }
-        if (functions_.contains(function->name)) {
-            error(function->name_location, "Duplicate function",
-                  "A function named `" + function->name + "` is already defined.",
-                  "Give this function a different name.");
-            continue;
-        }
+const Program* Analyzer::module_program(int index) const {
+    if (graph_ == nullptr) {
+        return index == 0 ? &program_ : nullptr;
+    }
+    if (index < 0 || static_cast<std::size_t>(index) >= graph_->modules.size()) {
+        return nullptr;
+    }
+    return graph_->modules[static_cast<std::size_t>(index)].program.get();
+}
 
-        FunctionSymbol symbol;
-        symbol.decl = function.get();
-        symbol.return_type = types_.fresh_variable();
-        for (const auto& parameter : function->parameters) {
-            symbol.parameters.push_back(types_.fresh_variable());
-            (void)parameter;
+std::string Analyzer::ir_name_for(int module_index, const FunctionDecl& function) const {
+    const bool entry_main = module_index == 0 && function.name == "main";
+    std::string prefix;
+    if (graph_ != nullptr && static_cast<std::size_t>(module_index) < graph_->modules.size()) {
+        prefix = graph_->modules[static_cast<std::size_t>(module_index)].mangle_prefix;
+    }
+    return mangle_function(prefix, function.name, entry_main, single_file_);
+}
+
+void Analyzer::collect_functions() {
+    const int module_count = graph_ == nullptr ? 1 : static_cast<int>(graph_->modules.size());
+    for (int module_index = 0; module_index < module_count; ++module_index) {
+        const Program* program = module_program(module_index);
+        if (program == nullptr) {
+            continue;
         }
-        functions_.emplace(function->name, std::move(symbol));
+        const bool is_entry = module_index == 0;
+        for (const auto& function : program->functions) {
+            if (function == nullptr) {
+                continue;
+            }
+            if (function->shared && function->name == "main") {
+                error(function->name_location, "Invalid entry point",
+                      "`create main` cannot be `share`.",
+                      "Remove `share` from `create main`.");
+            }
+            if (!is_entry && function->name == "main") {
+                error(function->name_location, "Invalid entry point",
+                      "Only the entry file may define `create main`.",
+                      "Move `main` to the file passed to `yukt build`, or rename this function.");
+            }
+            if (module_lookup_[static_cast<std::size_t>(module_index)].contains(function->name)) {
+                error(function->name_location, "Duplicate function",
+                      "A function named `" + function->name + "` is already defined.",
+                      "Give this function a different name.");
+                continue;
+            }
+            const std::string ir_name = ir_name_for(module_index, *function);
+            if (functions_.contains(ir_name)) {
+                error(function->name_location, "Duplicate function",
+                      "Mangled name `" + ir_name + "` collides with another function.",
+                      "Rename the function or the module path.");
+                continue;
+            }
+            auto symbol = std::make_unique<FunctionSymbol>();
+            symbol->decl = function.get();
+            symbol->module_index = module_index;
+            symbol->ir_name = ir_name;
+            symbol->return_type = types_.fresh_variable();
+            for (const auto& parameter : function->parameters) {
+                symbol->parameters.push_back(types_.fresh_variable());
+                (void)parameter;
+            }
+            FunctionSymbol* stored = symbol.get();
+            functions_.emplace(ir_name, std::move(symbol));
+            module_lookup_[static_cast<std::size_t>(module_index)].emplace(function->name, stored);
+            function_ir_names_[function.get()] = ir_name;
+        }
+    }
+}
+
+void Analyzer::collect_aliases() {
+    const int module_count = graph_ == nullptr ? 1 : static_cast<int>(graph_->modules.size());
+    for (int module_index = 0; module_index < module_count; ++module_index) {
+        const Program* program = module_program(module_index);
+        if (program == nullptr) {
+            continue;
+        }
+        const std::vector<int>* import_modules = nullptr;
+        if (graph_ != nullptr) {
+            import_modules = &graph_->modules[static_cast<std::size_t>(module_index)].import_modules;
+        }
+        for (std::size_t i = 0; i < program->uses.size(); ++i) {
+            const UseDecl& use = program->uses[i];
+            if (use.alias == "count" || use.alias == "zeros") {
+                error(use.alias_location, "Name collision",
+                      "Alias `" + use.alias + "` collides with a compiler builtin.",
+                      "Choose a different alias with `as`.");
+                continue;
+            }
+            if (module_lookup_[static_cast<std::size_t>(module_index)].contains(use.alias)) {
+                error(use.alias_location, "Name collision",
+                      "Alias `" + use.alias + "` collides with a function in this file.",
+                      "Choose a different alias with `as`.");
+                continue;
+            }
+            if (aliases_[static_cast<std::size_t>(module_index)].contains(use.alias)) {
+                error(use.alias_location, "Duplicate alias",
+                      "Alias `" + use.alias + "` is already used in this file.",
+                      "Use `as` to give this import a different name.");
+                continue;
+            }
+            int target = -1;
+            if (import_modules != nullptr && i < import_modules->size()) {
+                target = (*import_modules)[i];
+            }
+            if (target < 0) {
+                continue;
+            }
+            aliases_[static_cast<std::size_t>(module_index)].emplace(use.alias, target);
+        }
     }
 }
 
 void Analyzer::analyze_functions() {
-    for (const auto& function : program_.functions) {
-        if (function == nullptr) {
+    const int module_count = graph_ == nullptr ? 1 : static_cast<int>(graph_->modules.size());
+    for (int module_index = 0; module_index < module_count; ++module_index) {
+        current_module_ = module_index;
+        const Program* program = module_program(module_index);
+        if (program == nullptr) {
             continue;
         }
-        auto found = functions_.find(function->name);
-        if (found == functions_.end()) {
-            continue;
+        for (const auto& function : program->functions) {
+            if (function == nullptr) {
+                continue;
+            }
+            const std::string ir_name = ir_name_for(module_index, *function);
+            auto found = functions_.find(ir_name);
+            if (found == functions_.end() || found->second == nullptr) {
+                continue;
+            }
+            analyze_function(*found->second);
         }
-        analyze_function(found->second);
     }
+    current_module_ = 0;
+}
+
+FunctionSymbol* Analyzer::lookup_shared(int module_index, const std::string& name) {
+    if (module_index < 0 || static_cast<std::size_t>(module_index) >= module_lookup_.size()) {
+        return nullptr;
+    }
+    auto found = module_lookup_[static_cast<std::size_t>(module_index)].find(name);
+    if (found == module_lookup_[static_cast<std::size_t>(module_index)].end()) {
+        return nullptr;
+    }
+    return found->second;
 }
 
 void Analyzer::check_constraints() {
@@ -277,32 +427,35 @@ void Analyzer::check_constraints() {
 
 void Analyzer::finalize_functions() {
     for (auto& [name, function] : functions_) {
-        if (!types_.is_resolved(function.return_type)) {
-            if (function.saw_give) {
-                error(function.decl != nullptr ? function.decl->name_location : SourceLocation{},
+        if (function == nullptr) {
+            continue;
+        }
+        if (!types_.is_resolved(function->return_type)) {
+            if (function->saw_give) {
+                error(function->decl != nullptr ? function->decl->name_location : SourceLocation{},
                       "Cannot infer type",
                       "The return type of `" + name + "` could not be inferred from its `give` statements.",
                       "Give a value with a known type, such as an integer or string.");
-            } else if (!types_.unify(function.return_type, void_type())) {
-                error(function.decl != nullptr ? function.decl->name_location : SourceLocation{},
+            } else if (!types_.unify(function->return_type, void_type())) {
+                error(function->decl != nullptr ? function->decl->name_location : SourceLocation{},
                       "Type mismatch",
                       "Function `" + name + "` has no `give` statement, so it must return void.",
                       "Remove `give` or return a value from every path you intend to use.");
             }
         }
 
-        if (function.decl == nullptr) {
+        if (function->decl == nullptr) {
             continue;
         }
-        for (std::size_t i = 0; i < function.parameters.size(); ++i) {
-            if (!types_.is_resolved(function.parameters[i])) {
-                error(function.decl->name_location, "Cannot infer type",
-                      "The type of parameter `" + function.decl->parameters[i] + "` in `" + name +
+        for (std::size_t i = 0; i < function->parameters.size(); ++i) {
+            if (!types_.is_resolved(function->parameters[i])) {
+                error(function->decl->name_location, "Cannot infer type",
+                      "The type of parameter `" + function->decl->parameters[i] + "` in `" + name +
                           "` could not be inferred.",
                       "Use the parameter in the function body, or pass a value at a call site.");
             }
         }
-        for (const auto& local : function.locals) {
+        for (const auto& local : function->locals) {
             if (!types_.is_resolved(local.type)) {
                 error(local.location, "Cannot infer type",
                       "The type of `" + local.name + "` could not be inferred.",
@@ -314,15 +467,15 @@ void Analyzer::finalize_functions() {
 
 void Analyzer::require_main() {
     const auto found = functions_.find("main");
-    if (found == functions_.end()) {
+    if (found == functions_.end() || found->second == nullptr) {
         error(SourceLocation{1, 1}, "Missing entry point",
               "Every YUKT program must define `create main`.",
               "Add `create main:` and put the program's starting statements there.",
               {{SourceLocation{1, 1}, "YUKT programs start at `create main`."}});
         return;
     }
-    if (!found->second.parameters.empty()) {
-        error(found->second.decl != nullptr ? found->second.decl->name_location : SourceLocation{},
+    if (!found->second->parameters.empty()) {
+        error(found->second->decl != nullptr ? found->second->decl->name_location : SourceLocation{},
               "Invalid entry point", "`create main` cannot take parameters.",
               "Write `create main:` or `create main():`.");
     }
@@ -337,7 +490,7 @@ void Analyzer::analyze_function(FunctionSymbol& function) {
         std::unordered_map<std::string, SourceLocation> seen;
         for (std::size_t i = 0; i < function.decl->parameters.size(); ++i) {
             const auto& name = function.decl->parameters[i];
-            if (functions_.contains(name)) {
+            if (lookup_function(name) != nullptr) {
                 error(function.decl->name_location, "Name collision",
                       "Parameter `" + name + "` has the same name as a function.",
                       "Rename the parameter.");
@@ -411,7 +564,7 @@ void Analyzer::analyze_statement(const Stmt* stmt) {
 }
 
 void Analyzer::analyze_assignment(const AssignStmt& stmt) {
-    if (functions_.contains(stmt.name)) {
+    if (lookup_function(stmt.name) != nullptr) {
         error(stmt.name_location, "Name collision",
               "`" + stmt.name + "` is a function and cannot be assigned.",
               "Use a different variable name.");
@@ -526,7 +679,7 @@ void Analyzer::analyze_repeat(const RepeatStmt& stmt) {
                 "The end of a `repeat` range must be an integer, not " + types_.to_string(end) + ".",
                 "Write a range such as `1..10`.");
 
-    if (functions_.contains(stmt.iterator)) {
+    if (lookup_function(stmt.iterator) != nullptr) {
         error(stmt.iterator_location, "Name collision",
               "`" + stmt.iterator + "` is a function and cannot be a loop variable.",
               "Choose a different loop variable name.");
@@ -575,7 +728,7 @@ Type Analyzer::analyze_expression_body(const Expr* expr) {
             }
             return symbol->type;
         }
-        if (functions_.contains(name->name)) {
+        if (lookup_function(name->name) != nullptr) {
             error(name->span.start, "Invalid expression",
                   "`" + name->name + "` is a function. Call it with `()`.",
                   "Write `" + name->name + "(...)`.");
@@ -707,6 +860,80 @@ Type Analyzer::analyze_binary(const BinaryExpr& expr) {
 }
 
 Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
+    if (!expr.qualifier.empty()) {
+        const auto alias = aliases_[static_cast<std::size_t>(current_module_)].find(expr.qualifier);
+        if (alias == aliases_[static_cast<std::size_t>(current_module_)].end()) {
+            error(expr.dot_location.line == 0 ? expr.callee_location : expr.dot_location, "Unknown module",
+                  "`" + expr.qualifier + "` is not an imported module.",
+                  "Add `use " + expr.qualifier + "` or fix the alias.");
+            for (const auto& argument : expr.arguments) {
+                analyze_expression(argument.get());
+            }
+            return types_.fresh_variable();
+        }
+        FunctionSymbol* function = lookup_shared(alias->second, expr.callee);
+        const Program* imported = module_program(alias->second);
+        if (function == nullptr || function->decl == nullptr || !function->decl->shared) {
+            std::string shared_list = "this module shares no functions";
+            if (imported != nullptr) {
+                std::string names;
+                for (const auto& fn : imported->functions) {
+                    if (fn != nullptr && fn->shared) {
+                        if (!names.empty()) {
+                            names += ", ";
+                        }
+                        names += fn->name;
+                    }
+                }
+                if (!names.empty()) {
+                    shared_list = "shared: " + names;
+                }
+            }
+            error(expr.dot_location.line == 0 ? expr.callee_location : expr.dot_location, "Unknown function",
+                  "`" + expr.qualifier + "." + expr.callee + "` is not a shared function.",
+                  "Export it with `share create " + expr.callee + "`, or call a shared name.",
+                  {{expr.dot_location, shared_list}});
+            for (const auto& argument : expr.arguments) {
+                analyze_expression(argument.get());
+            }
+            return types_.fresh_variable();
+        }
+        call_ir_names_[&expr] = function->ir_name;
+        if (expr.arguments.size() != function->parameters.size()) {
+            error(expr.callee_location, "Wrong number of arguments",
+                  "`" + expr.callee + "` takes " + std::to_string(function->parameters.size()) + " argument" +
+                      (function->parameters.size() == 1 ? "" : "s") + ", but this call passes " +
+                      std::to_string(expr.arguments.size()) + ".",
+                  "Pass exactly " + std::to_string(function->parameters.size()) + " argument" +
+                      (function->parameters.size() == 1 ? "" : "s") + ".");
+        }
+        const std::size_t count = std::min(expr.arguments.size(), function->parameters.size());
+        for (std::size_t i = 0; i < count; ++i) {
+            const Type argument = analyze_expression(expr.arguments[i].get());
+            if (!types_.unify(argument, function->parameters[i])) {
+                const std::string param =
+                    function->decl != nullptr && i < function->decl->parameters.size() ? function->decl->parameters[i]
+                                                                                       : "argument";
+                error(expr.arguments[i] != nullptr ? expr.arguments[i]->span.start : expr.callee_location,
+                      "Type mismatch",
+                      "Argument `" + param + "` of `" + expr.callee + "` has type " +
+                          types_.to_string(function->parameters[i]) + ", but this call passes " +
+                          types_.to_string(argument) + ".",
+                      "Pass a value of type " + types_.to_string(function->parameters[i]) + ".");
+            }
+        }
+        for (std::size_t i = count; i < expr.arguments.size(); ++i) {
+            analyze_expression(expr.arguments[i].get());
+        }
+        const Type result = function->return_type;
+        if (result_used) {
+            require_non_void(result, expr.callee_location,
+                             "`" + expr.callee + "` does not give a value, so it cannot be used in an expression.",
+                             "Call `" + expr.callee + "(...)` as a statement, or add a `give` to the function.");
+        }
+        return result;
+    }
+
     if (expr.callee == "count" && lookup_function("count") == nullptr) {
         if (expr.arguments.size() != 1) {
             error(expr.callee_location, "Wrong number of arguments", "`count` takes one list.",
@@ -745,6 +972,7 @@ Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
         }
         return types_.fresh_variable();
     }
+    call_ir_names_[&expr] = function->ir_name;
 
     if (expr.arguments.size() != function->parameters.size()) {
         error(expr.callee_location, "Wrong number of arguments",
@@ -828,11 +1056,14 @@ Symbol* Analyzer::lookup_local(const std::string& name) {
 }
 
 FunctionSymbol* Analyzer::lookup_function(const std::string& name) {
-    auto found = functions_.find(name);
-    if (found == functions_.end()) {
+    if (current_module_ < 0 || static_cast<std::size_t>(current_module_) >= module_lookup_.size()) {
         return nullptr;
     }
-    return &found->second;
+    auto found = module_lookup_[static_cast<std::size_t>(current_module_)].find(name);
+    if (found == module_lookup_[static_cast<std::size_t>(current_module_)].end()) {
+        return nullptr;
+    }
+    return found->second;
 }
 
 bool Analyzer::expect_type(Type actual, Type expected, SourceLocation location, std::string title, std::string detail,
@@ -887,6 +1118,16 @@ void Analyzer::pop_scope() {
 
 SemanticInfo analyze_semantics(const Program& program, DiagnosticEngine& diagnostics) {
     Analyzer analyzer(program, diagnostics);
+    return analyzer.run();
+}
+
+SemanticInfo analyze_semantics(const ModuleGraph& graph, DiagnosticEngine& diagnostics) {
+    if (graph.modules.empty() || graph.modules[0].program == nullptr) {
+        Program empty;
+        Analyzer analyzer(empty, diagnostics);
+        return analyzer.run();
+    }
+    Analyzer analyzer(graph, diagnostics);
     return analyzer.run();
 }
 

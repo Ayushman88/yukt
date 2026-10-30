@@ -1,11 +1,11 @@
 # YUKT 0.12 design — Modules, then a standard library
 
-Status: **language design only**. 0.11 is frozen (`v0.11.0`). Do not implement this milestone in the compiler until the spec in `docs/LANGUAGE_SPEC.md` (section **0.12 — Modules and imports**) is accepted and an implementation plan exists.
+Status: **module system implemented**. 0.11 remains frozen (`v0.11.0`). Standard-library APIs are not part of this milestone; `std/` stays empty.
 
 ## Order
 
-1. Specify modules and imports (this document + the spec section).
-2. Implement the module system with tests.
+1. Specify modules and imports (this document + the spec section). **Done.**
+2. Implement the module system with tests. **Done.**
 3. Specify stdlib APIs (strings, collections, files, JSON, math) as a separate spec pass.
 4. Implement those APIs in YUKT under `std/`, with runtime only where the language cannot express them.
 
@@ -19,7 +19,7 @@ Do not skip to (3) or (4) by concatenating library source into every compile.
 | Visibility | Default private; only `share create` is callable as `alias.name(...)` |
 | Namespaces | Last path component is the alias; no glob import |
 | Resolution | `std/...` from compiler `std/` only; else importer dir, then entry dir |
-| Compilation | Whole-program native binary; mangled `yukt_<module>_<name>` |
+| Compilation | Whole-program native binary; mangled `yukt_<prefix>$<name>` (`/` → `$`) |
 | Cycles | Error, with the cycle listed |
 | `main` | Only the entry file; never `share` |
 

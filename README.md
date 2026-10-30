@@ -2,7 +2,7 @@
 
 YUKT is an English-inspired, statically typed, compiled programming language. This repository contains its compiler, language specification, and tests.
 
-The current release is **0.11** (tag `v0.11.0`), frozen after the audit in `docs/YUKT_011_AUDIT.md`. `yukt build` and `yukt run` produce **host-native** binaries (Apple Silicon macOS and Linux x86-64) optimized at LLVM O3. Independent `repeat` loops and simple `+`/`*` reductions may run in parallel when estimated work is large; the runtime can still sequentialize a call that is not worth dispatching. `yukt --explain` reports those decisions only when they appear in generated LLVM IR. See `docs/YUKT_011_DESIGN.md`, `docs/EXECUTION_ENGINE.md`, `docs/RUNTIME.md`, and `docs/STDLIB.md`. 0.12 module syntax is specified in `docs/LANGUAGE_SPEC.md` and is not implemented.
+The current release is **0.12**. 0.11 remains tagged `v0.11.0` after the audit in `docs/YUKT_011_AUDIT.md`. `yukt build` and `yukt run` produce **host-native** binaries (Apple Silicon macOS and Linux x86-64) optimized at LLVM O3, including multi-file programs linked through `use`. Independent `repeat` loops and simple `+`/`*` reductions may run in parallel when estimated work is large; the runtime can still sequentialize a call that is not worth dispatching. `yukt --explain` reports those decisions only when they appear in generated LLVM IR. See `docs/YUKT_011_DESIGN.md`, `docs/YUKT_012_DESIGN.md`, `docs/EXECUTION_ENGINE.md`, `docs/RUNTIME.md`, and `docs/STDLIB.md`. Standard-library APIs are not part of 0.12.
 
 ## Example
 
@@ -52,7 +52,8 @@ YUKT is running!
 | Compiler optimization | Implemented (0.09); see `docs/PERFORMANCE_ANALYSIS_0.09.md` |
 | Intelligent execution engine | Implemented (0.10); see `docs/PERFORMANCE_ANALYSIS_0.10.md` |
 | Portability / intelligence | Frozen (0.11); see `docs/YUKT_011_AUDIT.md` |
-| Standard library | 0.12 module system specified, not implemented; see `docs/LANGUAGE_SPEC.md` |
+| Modules (`use` / `share` / `as`) | Implemented (0.12); see `docs/LANGUAGE_SPEC.md` |
+| Standard library APIs | Not started; `std/` is empty |
 
 `yukt file.yukt` type-checks. `yukt build` and `yukt run` generate native code through LLVM.
 
@@ -140,6 +141,7 @@ tools/       Reserved for developer tools
 - [0.10 design](docs/YUKT_010_DESIGN.md)
 - [0.11 design](docs/YUKT_011_DESIGN.md)
 - [0.11 freeze audit](docs/YUKT_011_AUDIT.md)
+- [0.12 design](docs/YUKT_012_DESIGN.md)
 - [Execution engine](docs/EXECUTION_ENGINE.md)
 - [Standard library foundations](docs/STDLIB.md)
 - [0.10 performance analysis](docs/PERFORMANCE_ANALYSIS_0.10.md)

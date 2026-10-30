@@ -1,8 +1,8 @@
 # YUKT standard library foundations
 
-Status: 0.11 is frozen. The module/`use` system is **specified** in `docs/LANGUAGE_SPEC.md` (0.12) and **not implemented**. Library APIs (maps, JSON, files) are not specified yet.
+Status: 0.12 implements the module/`use` system. Library APIs (maps, JSON, files) are **not** specified or shipped. `std/` remains empty.
 
-YUKT 0.11 does not parse `use`. 0.12 must implement the spec first, then specify and add library modules under `std/`.
+YUKT 0.12 parses `use`, `share`, and qualified calls. Do not add stdlib APIs until those APIs are specified.
 
 ## What exists now
 
@@ -19,9 +19,9 @@ Runtime (`runtime/yukt_runtime.c`) owns:
 
 `std/` is reserved and empty.
 
-## What 0.12 must specify first
+## What a later stdlib pass must specify first
 
-A module/`use` story. Without it, YUKT-written library code cannot be shared across programs. Do not concatenate stdlib source into every compile as a silent hack.
+The module/`use` story is implemented. Do not concatenate stdlib source into every compile as a silent hack.
 
 Then, written in YUKT where possible:
 

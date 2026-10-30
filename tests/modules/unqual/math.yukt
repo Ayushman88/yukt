@@ -1,0 +1,2 @@
+share create add(a, b):
+    give a + b

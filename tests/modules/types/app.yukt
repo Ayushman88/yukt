@@ -1,0 +1,5 @@
+use id
+
+create main:
+    say id.ident(1)
+    say id.ident(true)

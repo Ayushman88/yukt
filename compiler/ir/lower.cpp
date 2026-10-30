@@ -8,6 +8,7 @@
 #include <optional>
 #include <set>
 #include <utility>
+#include <vector>
 
 namespace yukt {
 namespace {
@@ -669,6 +670,7 @@ void collect_loop_effects(const std::vector<std::unique_ptr<Stmt>>& stmts, const
 class Lowerer {
 public:
     Lowerer(const Program& program, const SemanticInfo& semantic, std::string source_path);
+    Lowerer(const ModuleGraph& graph, const SemanticInfo& semantic);
 
     IrModule run();
 
@@ -718,7 +720,8 @@ private:
     IrValue emit_load(const std::string& name);
     void emit_store(const std::string& name, const IrValue& value);
 
-    const Program& program_;
+    const Program* program_ = nullptr;
+    std::vector<const Program*> programs_;
     const SemanticInfo& semantic_;
     IrModule module_;
     std::vector<IrFunction> outlined_;
@@ -736,14 +739,33 @@ private:
 };
 
 Lowerer::Lowerer(const Program& program, const SemanticInfo& semantic, std::string source_path)
-    : program_(program), semantic_(semantic) {
+    : program_(&program), semantic_(semantic) {
+    programs_.push_back(&program);
     module_.source_path = std::move(source_path);
 }
 
+Lowerer::Lowerer(const ModuleGraph& graph, const SemanticInfo& semantic)
+    : semantic_(semantic) {
+    if (!graph.modules.empty()) {
+        module_.source_path = graph.modules[0].canonical_path;
+    }
+    for (const auto& module : graph.modules) {
+        if (module.program != nullptr) {
+            programs_.push_back(module.program.get());
+        }
+    }
+    if (!programs_.empty()) {
+        program_ = programs_.front();
+    }
+}
+
 IrModule Lowerer::run() {
-    for (const auto& function : program_.functions) {
-        if (function != nullptr) {
-            lower_function(*function);
+    for (const Program* program : programs_) {
+        program_ = program;
+        for (const auto& function : program->functions) {
+            if (function != nullptr) {
+                lower_function(*function);
+            }
         }
     }
     for (auto& function : outlined_) {
@@ -755,11 +777,15 @@ IrModule Lowerer::run() {
 void Lowerer::lower_function(const FunctionDecl& function) {
     current_function_decl_ = &function;
     IrFunction ir_fn;
-    ir_fn.name = function.name;
-    const auto return_found = semantic_.return_types.find(function.name);
+    auto ir_name = function.name;
+    if (const auto found = semantic_.function_ir_names.find(&function); found != semantic_.function_ir_names.end()) {
+        ir_name = found->second;
+    }
+    ir_fn.name = ir_name;
+    const auto return_found = semantic_.return_types.find(ir_name);
     ir_fn.return_type = return_found != semantic_.return_types.end() ? ir_type_from(return_found->second) : ir_void();
 
-    const auto params_found = semantic_.parameter_types.find(function.name);
+    const auto params_found = semantic_.parameter_types.find(ir_name);
     for (std::size_t i = 0; i < function.parameters.size(); ++i) {
         IrType type = ir_i64();
         if (params_found != semantic_.parameter_types.end() && i < params_found->second.size()) {
@@ -769,7 +795,7 @@ void Lowerer::lower_function(const FunctionDecl& function) {
         ir_fn.locals.emplace_back(function.parameters[i], type);
     }
 
-    const auto locals_found = semantic_.local_types.find(function.name);
+    const auto locals_found = semantic_.local_types.find(ir_name);
     if (locals_found != semantic_.local_types.end()) {
         for (const auto& [name, type] : locals_found->second) {
             ensure_local_on(ir_fn, name, ir_type_from(type));
@@ -778,7 +804,7 @@ void Lowerer::lower_function(const FunctionDecl& function) {
 
     module_.functions.push_back(std::move(ir_fn));
     function_ = &module_.functions.back();
-    current_function_name_ = function.name;
+    current_function_name_ = ir_name;
     next_temp_ = 0;
     next_block_ = 0;
 
@@ -1444,7 +1470,8 @@ bool is_user_function(const Program& program, const std::string& name) {
 }
 
 IrValue Lowerer::lower_call(const CallExpr& expr) {
-    if (expr.callee == "count" && !is_user_function(program_, "count")) {
+    if (expr.qualifier.empty() && expr.callee == "count" && program_ != nullptr &&
+        !is_user_function(*program_, "count")) {
         IrInst inst;
         inst.op = IrOp::ListLen;
         if (!expr.arguments.empty()) {
@@ -1454,7 +1481,8 @@ IrValue Lowerer::lower_call(const CallExpr& expr) {
         emit(inst);
         return inst.dest;
     }
-    if (expr.callee == "zeros" && !is_user_function(program_, "zeros")) {
+    if (expr.qualifier.empty() && expr.callee == "zeros" && program_ != nullptr &&
+        !is_user_function(*program_, "zeros")) {
         IrInst inst;
         inst.op = IrOp::Zeros;
         if (!expr.arguments.empty()) {
@@ -1468,6 +1496,9 @@ IrValue Lowerer::lower_call(const CallExpr& expr) {
     IrInst inst;
     inst.op = IrOp::Call;
     inst.name = expr.callee;
+    if (const auto found = semantic_.call_ir_names.find(&expr); found != semantic_.call_ir_names.end()) {
+        inst.name = found->second;
+    }
     for (const auto& argument : expr.arguments) {
         inst.args.push_back(lower_expression(argument.get()));
     }
@@ -1619,6 +1650,11 @@ void Lowerer::emit_store(const std::string& name, const IrValue& value) {
 
 IrModule lower_to_ir(const Program& program, const SemanticInfo& semantic, const std::string& source_path) {
     Lowerer lowerer(program, semantic, source_path);
+    return lowerer.run();
+}
+
+IrModule lower_to_ir(const ModuleGraph& graph, const SemanticInfo& semantic) {
+    Lowerer lowerer(graph, semantic);
     return lowerer.run();
 }
 

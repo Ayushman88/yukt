@@ -1,0 +1,8 @@
+share create foo:
+    give 1
+
+share create foo:
+    give 2
+
+create main:
+    say 1

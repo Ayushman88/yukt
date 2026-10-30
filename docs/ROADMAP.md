@@ -125,19 +125,18 @@ Benchmarks can start now. Do not claim YUKT is faster than C++ or Rust until tho
 
 This milestone does **not** cross-compile, add modules, or add CUDA.
 
-## 0.12 — Standard library
+## 0.12 — Modules (stdlib APIs later)
 
-**Status: module system specified, not implemented** (`docs/LANGUAGE_SPEC.md` § 0.12, `docs/YUKT_012_DESIGN.md`)
+**Status: module system implemented.** Standard-library APIs are not part of this milestone.
 
-- `use` / `share` / namespaces, resolution, whole-program compilation, circular-import errors — specified
-- Do not start compiler work until that spec is the accepted design
-- Then: strings and collections; arrays, lists, maps, and sets
-- File handling and JSON parsing
-- Sorting, searching, math, statistics
-- Error handling
-- Written in YUKT where possible; runtime only where the language cannot express it
+- `use` / `share` / `as` / `.` qualification
+- Whole-program DAG: resolve, load, cycle detection, canonical identity
+- Default-private exports; qualified calls only
+- One YUKT IR module, one LLVM module, one host-native executable
+- `std/` reserved and empty of APIs; tests inject a fixture stdlib root
+- 0.11 tests remain green; `v0.11.0` is not rewritten
 
-Goal: build useful applications without depending on external languages.
+Next (still called 0.12 in the original roadmap, now a follow-on): strings and collections; maps and sets; files and JSON; math. Written in YUKT where possible.
 
 Preserve 0.11 benchmarks (`benchmarks/results-0.11.json`). Do not overwrite them in place.
 

@@ -196,5 +196,51 @@ int main() {
         REQUIRE(say != nullptr && as<yukt::IndexExpr>(say->value.get()) != nullptr);
     }
 
+    {
+        const auto result = parse(
+            "use math\n"
+            "use std/math as m\n"
+            "share create add(a, b):\n"
+            "    give a + b\n"
+            "\n"
+            "create main:\n"
+            "    say math.add(1, 2)\n"
+            "    say m.add(3, 4)\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        REQUIRE(result.program != nullptr && result.program->uses.size() == 2);
+        REQUIRE(result.program->uses[0].path.size() == 1 && result.program->uses[0].alias == "math");
+        REQUIRE(result.program->uses[1].path.size() == 2 && result.program->uses[1].alias == "m");
+        const auto* add = function_named(*result.program, "add");
+        REQUIRE(add != nullptr && add->shared);
+        const auto* main = function_named(*result.program, "main");
+        REQUIRE(main != nullptr && main->body.size() == 2);
+        const auto* say = as<yukt::SayStmt>(main->body[0].get());
+        const auto* call = say != nullptr ? as<yukt::CallExpr>(say->value.get()) : nullptr;
+        REQUIRE(call != nullptr && call->qualifier == "math" && call->callee == "add");
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    use math\n"
+            "    say 1\n");
+        REQUIRE(result.diagnostics->has_errors());
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    say 1\n"
+            "use math\n");
+        REQUIRE(result.diagnostics->has_errors());
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    say math.add\n");
+        REQUIRE(result.diagnostics->has_errors());
+    }
+
     return yukt::test::summary("parser");
 }

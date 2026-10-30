@@ -46,6 +46,15 @@ TokenKind keyword_kind(std::string_view text) {
     if (text == "false") {
         return TokenKind::KwFalse;
     }
+    if (text == "use") {
+        return TokenKind::KwUse;
+    }
+    if (text == "share") {
+        return TokenKind::KwShare;
+    }
+    if (text == "as") {
+        return TokenKind::KwAs;
+    }
     return TokenKind::Identifier;
 }
 
@@ -260,11 +269,7 @@ Token Lexer::scan_token() {
             if (match('.')) {
                 return make_token(TokenKind::DotDot, "..", start);
             }
-            diagnostics_.error(
-                start, "Unexpected character",
-                "Found `.`, which is not valid on its own.",
-                "Use `..` to write a range, for example `1..10`.");
-            return scan_token();
+            return make_token(TokenKind::Dot, ".", start);
         default:
             diagnostics_.error(
                 start, "Unexpected character",
@@ -368,6 +373,9 @@ Token Lexer::make_token(TokenKind kind, std::string lexeme, SourceLocation locat
     token.kind = kind;
     token.lexeme = std::move(lexeme);
     token.location = location;
+    if (token.location.file.empty()) {
+        token.location.file = diagnostics_.file();
+    }
     return token;
 }
 

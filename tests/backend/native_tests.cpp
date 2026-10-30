@@ -313,5 +313,30 @@ int main() {
         yukt_runtime_release();
     }
 
+    {
+        const auto result = run_file("tests/modules/ok/app.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "5\n");
+        REQUIRE(result.exit_code == 0);
+    }
+
+    {
+        const auto result = run_file("tests/modules/nested/a.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "7\n");
+    }
+
+    {
+        const auto result = run_file("tests/modules/two_add/app.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "5\n6\n");
+    }
+
+    {
+        const auto result = run_file("tests/modules/mangle/app.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "1\n2\n");
+    }
+
     return yukt::test::summary("native");
 }

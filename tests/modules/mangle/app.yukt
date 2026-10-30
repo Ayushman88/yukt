@@ -1,0 +1,6 @@
+use a/b_c as left
+use a_b/c as right
+
+create main:
+    say left.ping()
+    say right.ping()

@@ -27,6 +27,9 @@ enum class TokenKind {
     KwGive,
     KwTrue,
     KwFalse,
+    KwUse,
+    KwShare,
+    KwAs,
 
     Plus,
     Minus,
@@ -47,6 +50,7 @@ enum class TokenKind {
     RBracket,
     Comma,
     Colon,
+    Dot,
     DotDot,
 };
 
@@ -92,6 +96,12 @@ inline constexpr std::string_view token_kind_name(TokenKind kind) {
             return "TRUE";
         case TokenKind::KwFalse:
             return "FALSE";
+        case TokenKind::KwUse:
+            return "USE";
+        case TokenKind::KwShare:
+            return "SHARE";
+        case TokenKind::KwAs:
+            return "AS";
         case TokenKind::Plus:
             return "PLUS";
         case TokenKind::Minus:
@@ -128,6 +138,8 @@ inline constexpr std::string_view token_kind_name(TokenKind kind) {
             return "COMMA";
         case TokenKind::Colon:
             return "COLON";
+        case TokenKind::Dot:
+            return "DOT";
         case TokenKind::DotDot:
             return "DOT_DOT";
     }
@@ -172,6 +184,8 @@ inline constexpr std::string_view token_kind_spelling(TokenKind kind) {
             return ",";
         case TokenKind::Colon:
             return ":";
+        case TokenKind::Dot:
+            return ".";
         case TokenKind::DotDot:
             return "..";
         default:
@@ -182,7 +196,8 @@ inline constexpr std::string_view token_kind_spelling(TokenKind kind) {
 inline constexpr bool is_keyword(TokenKind kind) {
     return kind == TokenKind::KwCreate || kind == TokenKind::KwSay || kind == TokenKind::KwIf ||
            kind == TokenKind::KwOtherwise || kind == TokenKind::KwRepeat || kind == TokenKind::KwIn ||
-           kind == TokenKind::KwGive || kind == TokenKind::KwTrue || kind == TokenKind::KwFalse;
+           kind == TokenKind::KwGive || kind == TokenKind::KwTrue || kind == TokenKind::KwFalse ||
+           kind == TokenKind::KwUse || kind == TokenKind::KwShare || kind == TokenKind::KwAs;
 }
 
 }  // namespace yukt

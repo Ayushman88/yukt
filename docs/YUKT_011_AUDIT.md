@@ -1,6 +1,6 @@
 # YUKT 0.11 freeze audit
 
-Audit of the four freeze areas. 0.12 is not started.
+Audit of the four freeze areas. 0.11 remains tagged `v0.11.0`. The 0.12 module system is implemented separately; this document is the 0.11 freeze record.
 
 ## 1. Parallel reductions — integer overflow and float order
 
@@ -51,4 +51,4 @@ The previous run on `be4be29` (`40997972412`) failed Linux at `configure_target`
 
 ## Freeze rule
 
-**YUKT 0.11 is frozen** (tag `v0.11.0`). The 0.12 module system is specified in `docs/LANGUAGE_SPEC.md`; do not implement it in the compiler until that design is accepted.
+**YUKT 0.11 is frozen** (tag `v0.11.0`). The 0.12 module system is implemented (`docs/LANGUAGE_SPEC.md` § 0.12, `docs/YUKT_012_DESIGN.md`). This freeze record is not rewritten.

@@ -21,7 +21,7 @@ Make the compiler reliable on Apple Silicon macOS and Linux x86-64 as **host-nat
 
 - Cross-compilation to a non-host triple.
 - New syntax, keywords, or `use`/modules.
-- Maps, sets, JSON, file I/O (those are 0.12 and need a module story).
+- Maps, sets, JSON, file I/O (those wait for stdlib APIs after the 0.12 module system).
 - Ownership, structs, pointers (0.13).
 - Async, thread APIs, or CUDA (0.14). CUDA is Linux+NVIDIA only when it exists; Apple Silicon has no CUDA.
 
@@ -49,9 +49,9 @@ repeat
 | `compiler/diagnostics/` | Notes, GNU line, color |
 | `compiler/backend/explain.cpp` | Triple, CPU, thresholds |
 | `runtime/yukt_runtime.c` | Size-class cache; reduction mutex |
-| `docs/STDLIB.md` | What 0.12 will need |
+| `docs/STDLIB.md` | What a later stdlib pass will need |
 | `docs/EXECUTION_ENGINE.md` | Updated contract |
 
 ## Non-goals that stay non-goals
 
-Benchmark numbers must not dictate language design. Intra-function list reuse waits for 0.13 ownership. A YUKT-written standard library waits for 0.12 modules.
+Benchmark numbers must not dictate language design. Intra-function list reuse waits for 0.13 ownership. A YUKT-written standard library waits for specified APIs after the 0.12 module system.

@@ -62,6 +62,9 @@ struct BinaryExpr final : Expr {
 };
 
 struct CallExpr final : Expr {
+    std::string qualifier;
+    SourceLocation qualifier_location;
+    SourceLocation dot_location;
     std::string callee;
     SourceLocation callee_location;
     std::vector<std::unique_ptr<Expr>> arguments;
@@ -124,8 +127,18 @@ struct RepeatStmt final : Stmt {
     void print(std::ostream& out, int indent) const override;
 };
 
+struct UseDecl {
+    SourceSpan span;
+    SourceLocation use_location;
+    std::vector<std::string> path;
+    std::string alias;
+    SourceLocation alias_location;
+    void print(std::ostream& out, int indent) const;
+};
+
 struct FunctionDecl {
     SourceSpan span;
+    bool shared = false;
     std::string name;
     SourceLocation name_location;
     std::vector<std::string> parameters;
@@ -135,6 +148,7 @@ struct FunctionDecl {
 
 struct Program {
     SourceSpan span;
+    std::vector<UseDecl> uses;
     std::vector<std::unique_ptr<FunctionDecl>> functions;
     void print(std::ostream& out, int indent = 0) const;
 };

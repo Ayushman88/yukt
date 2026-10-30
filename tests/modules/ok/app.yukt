@@ -1,0 +1,4 @@
+use math
+
+create main:
+    say math.add(2, 3)

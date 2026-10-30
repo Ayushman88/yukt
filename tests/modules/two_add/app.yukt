@@ -1,0 +1,6 @@
+use math
+use extra
+
+create main:
+    say math.add(2, 3)
+    say extra.add(2, 3)

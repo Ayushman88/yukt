@@ -1,0 +1,4 @@
+use b
+
+create main:
+    say c.value()

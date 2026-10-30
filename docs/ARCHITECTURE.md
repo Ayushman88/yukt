@@ -1,16 +1,16 @@
 # YUKT Architecture
 
-Version: 0.11
+Version: 0.12
 
 ## Pipeline
 
 ```
-.yukt source
-    → Lexer          tokens, including INDENT / DEDENT
-    → Parser         abstract syntax tree
-    → Semantic       types, scopes, validation
-    → YUKT IR        backend-neutral intermediate form
-    → LLVM backend   LLVM IR, object emission
+entry .yukt
+    → Lexer / Parser per file (never concatenated)
+    → ModuleGraph     resolve `use`, canonical identity, cycle check
+    → Semantic        whole-program types, share/private, aliases
+    → YUKT IR         one module, mangled names
+    → LLVM backend    one LLVM module, object emission
     → clang + runtime
     → native executable
 ```
@@ -32,7 +32,7 @@ compiler/
   lexer/          Token, Lexer
   ast/            expression, statement, and program nodes
   parser/         recursive-descent Parser
-  driver/         file loading and frontend orchestration
+  driver/         file loading, module graph, frontend orchestration
   semantic/       types, scopes, inference, validation
   ir/             YUKT IR and AST lowering
   backend/        LLVM lowering, object emission, linking
@@ -55,7 +55,8 @@ The lexer is indentation-aware:
 - Comment-only and blank lines do not affect the indent stack.
 - Tabs are rejected.
 - `1..5` is recognized as a range, not a float.
-- Every token stores a 1-based line and column.
+- Every token stores a 1-based line, column, and file path.
+- `use`, `share`, and `as` are keywords. `.` is a token; `1..5` and `3.14` are unchanged.
 
 Invalid characters and unterminated strings produce diagnostics and do not crash the lexer.
 
@@ -93,12 +94,13 @@ Color is used only when stderr is a TTY and `NO_COLOR` is unset. The compiler ex
 
 `compiler/semantic` walks a parsed program and does not depend on LLVM.
 
-1. Collect every `create` declaration. Function names are unique.
-2. Give each parameter and return type a fresh type variable.
-3. Analyze each body: resolve names, infer assignments, check operators, unify calls.
-4. Apply deferred numeric/string constraints after all call sites have been seen.
-5. Require exactly one parameterless `create main`.
-6. Report unresolved parameters, empty lists, and return types that never become concrete.
+1. Collect every `create` declaration, keyed by module and mangled IR name.
+2. Bind `use` aliases; default-private unless `share create`.
+3. Give each parameter and return type a fresh type variable in one TypeContext.
+4. Analyze each body: unqualified names are the current file; `alias.name` is a shared export.
+5. Apply deferred numeric/string constraints after all call sites have been seen.
+6. Require parameterless `create main` only on the entry module.
+7. Report unresolved parameters, empty lists, and return types that never become concrete.
 
 `--tokens` and `--ast` stop before this pass so an ill-typed program can still be inspected. `yukt file.yukt` and `yukt --types file.yukt` run it. Code generation runs only after type checking succeeds.
 
@@ -126,15 +128,15 @@ Color is used only when stderr is a TTY and `NO_COLOR` is unset. The compiler ex
 
 Integer and float list elements are accessed with GEPs through `YuktList.data` so LLVM can vectorize. Counted `repeat` loops lower to `k < niter` so LLVM sees a canonical trip count. Independent loops with estimated work ≥ 1e6 become an outlined range callback plus `yukt_parallel_for(..., work_per_iter)`. Simple `+`/`*` reductions may outline the same way and combine partials. The runtime may still sequentialize small live trip counts. List payloads are 16-byte aligned. Heap lists and concatenated strings are released when `yukt_main` returns; size-class payloads may be reused by the next allocation (see `docs/RUNTIME.md`). Loop decisions are recorded on YUKT IR and printed by `yukt --explain`. The object file targets the **host** triple and CPU; linking uses the LLVM clang the compiler was built against when it exists.
 
-The runtime implements `say`, string concatenation, lists, heap release, and the parallel loop helper. YUKT functions are emitted as `yukt_<name>`. A C `main` wrapper calls `yukt_main`. Signed overflow is undefined; float reduction rounding may change with chunking and CPU count (`docs/LANGUAGE_SPEC.md`).
+The runtime implements `say`, string concatenation, lists, heap release, and the parallel loop helper. YUKT functions are emitted as `yukt_<name>` (entry `main` stays `yukt_main`; other multi-file functions use `yukt_<prefix>$<name>` with `/` encoded as `$`). A C `main` wrapper calls `yukt_main`. Signed overflow is undefined; float reduction rounding may change with chunking and CPU count (`docs/LANGUAGE_SPEC.md`).
 
 ## CLI
 
 | Command | Behavior |
 | --- | --- |
-| `yukt --tokens file.yukt` | Lex and print tokens |
-| `yukt --ast file.yukt` | Parse and print the AST |
-| `yukt --types file.yukt` | Type-check and print inferred signatures |
+| `yukt --tokens file.yukt` | Lex only the named file |
+| `yukt --ast file.yukt` | Parse the `use` graph and print each file’s AST |
+| `yukt --types file.yukt` | Type-check the graph and print inferred signatures |
 | `yukt --emit-ir file.yukt` | Print YUKT IR |
 | `yukt --emit-llvm file.yukt` | Print LLVM IR |
 | `yukt --explain file.yukt` | Print verified loop execution decisions |
@@ -142,7 +144,7 @@ The runtime implements `say`, string concatenation, lists, heap release, and the
 | `yukt run file.yukt` | Compile, link, and execute |
 | `yukt file.yukt` | Parse and type-check |
 | `yukt --help` | Usage |
-| `yukt --version` | `0.11` |
+| `yukt --version` | `0.12` |
 
 `build` and `run` fail if type checking fails. They do not interpret the program.
 
@@ -155,7 +157,9 @@ CTest runs frontend, IR, and native suites:
 - `yukt_program_tests`
 - `yukt_semantic_tests`
 - `yukt_ir_tests`
+- `yukt_module_tests`
 - `yukt_native_tests`
 - `yukt --tokens`, `--ast`, `--types`, `--emit-ir`, `--explain`, type-check, and `run` of `examples/hello.yukt`
+- `yukt run` of `tests/modules/ok/app.yukt` and nested imports
 
 Native tests execute compiled binaries and compare stdout.
