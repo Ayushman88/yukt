@@ -29,7 +29,7 @@ ctest --test-dir build --output-on-failure
 [[ -x build/yukt ]] || fail "build/yukt is missing or not executable"
 
 version="$(build/yukt --version)"
-echo "$version" | grep -q "0.13.1" || fail "yukt --version is '$version', expected 0.13.1"
+echo "$version" | grep -q "0.13.2" || fail "yukt --version is '$version', expected 0.13.2"
 ok "yukt --version is $version"
 
 file_out="$(file build/yukt)"
@@ -97,5 +97,6 @@ expect_tag() {
 expect_tag v0.11.0 ef0e2fb043d3c1a589aff6c61c678175331cc7d9
 expect_tag v0.12.0 6a961e67b36cde45079abc6203c7caac5c466e20
 expect_tag v0.12.1 3b600754a36828b4e9f225591bcd1878a31f5c85
+expect_tag v0.13.1 fbc6ff80dc4296ad22e6cbd86b0402d16da97fd6
 
 echo "verify-release: all checks passed"

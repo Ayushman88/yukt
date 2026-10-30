@@ -519,13 +519,14 @@ LLVM stays in `compiler/backend`. No benchmark-named special cases. Sort stays `
 
 ## What happens next
 
-1. Review the 0.13.1 text in `docs/LANGUAGE_SPEC.md`.
-2. If accepted as the implementation contract, implement **only** 0.13.1 records. Stop.
-3. Do not implement ownership, refs, FFI, or errors until those sections are copied into the language spec as well.
+1. 0.13.1 records are specified and implemented.
+2. 0.13.2 ownership is specified in `docs/LANGUAGE_SPEC.md` and in progress on branch `yukt-0.13.2-ownership`. Implement **only** 0.13.2. Stop.
+3. Do not implement refs, FFI, or errors (0.13.3–0.13.6) until those sections are copied into the language spec as well.
 
 ## Approval
 
 Roadmap: **accepted as the six independently releasable slices.**  
 Revised design: **accepted.**  
 0.13.1 in `LANGUAGE_SPEC.md`: **specified and implemented on this tree.** There is no public `v0.13.1` tag yet.  
-Compiler implementation of 0.13.2–0.13.6: **held.**
+0.13.2 ownership in `LANGUAGE_SPEC.md`: **specified; implementation in progress on branch `yukt-0.13.2-ownership`.**  
+Compiler implementation of 0.13.3–0.13.6: **held.**
