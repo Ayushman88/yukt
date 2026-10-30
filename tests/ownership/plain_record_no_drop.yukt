@@ -1,0 +1,9 @@
+record Point:
+    x: integer
+    y: integer
+
+create main:
+    p = Point(1, 2)
+    q = p
+    say p.x
+    say q.x

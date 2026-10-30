@@ -3,12 +3,27 @@
 #include "test_harness.hpp"
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
+
+#ifndef YUKT_SOURCE_DIR
+#define YUKT_SOURCE_DIR "."
+#endif
 
 namespace {
 
+std::string source_path(const std::string& relative) {
+    return (std::filesystem::path(YUKT_SOURCE_DIR) / relative).string();
+}
+
 yukt::FrontendResult check(const std::string& source) {
     auto result = yukt::analyze_source("<test>", source);
+    yukt::analyze_types(result);
+    return result;
+}
+
+yukt::FrontendResult check_file(const std::string& relative) {
+    auto result = yukt::analyze_file(source_path(relative));
     yukt::analyze_types(result);
     return result;
 }
@@ -641,6 +656,24 @@ int main() {
             "    say count(a.items)\n");
         REQUIRE(has_title(result, "Type mismatch"));
         REQUIRE(!has_title(result, "Cannot infer type"));
+    }
+
+    // Named fixtures for Locked decisions 7, 12, and plain Point (no drop).
+    {
+        const auto result = check_file("tests/ownership/moved_reassign.yukt");
+        REQUIRE(has_title(result, "Use after move"));
+        REQUIRE(has_diagnostic(result, "Use after move", "`xs`", move_suggestion));
+    }
+
+    {
+        const auto result = check_file("tests/ownership/if_join.yukt");
+        REQUIRE(has_title(result, "Use after move"));
+        REQUIRE(has_diagnostic(result, "Use after move", "`xs`", move_suggestion));
+    }
+
+    {
+        const auto result = check_file("tests/ownership/plain_record_no_drop.yukt");
+        REQUIRE(!result.diagnostics->has_errors());
     }
 
     return yukt::test::summary("ownership");

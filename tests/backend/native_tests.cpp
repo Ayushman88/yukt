@@ -45,15 +45,6 @@ yukt::CompileOutput emit_llvm_file(const std::string& relative) {
     return yukt::compile_program(frontend, request, *frontend.diagnostics);
 }
 
-yukt::CompileOutput emit_llvm_source(const std::string& source) {
-    auto frontend = yukt::analyze_source("<test>", source);
-    yukt::analyze_types(frontend);
-    yukt::CompileRequest request;
-    request.action = yukt::CompileAction::EmitLlvm;
-    request.input_path = "<test>";
-    return yukt::compile_program(frontend, request, *frontend.diagnostics);
-}
-
 std::size_t count_direct_calls(const std::string& llvm_ir, const std::string& callee) {
     std::size_t count = 0;
     const std::string needle = "@" + callee;
@@ -471,6 +462,16 @@ int main() {
     }
 
     {
+        const auto result = run_file("tests/ownership/moved_reassign.yukt");
+        REQUIRE(!result.ok);
+    }
+
+    {
+        const auto result = run_file("tests/ownership/if_join.yukt");
+        REQUIRE(!result.ok);
+    }
+
+    {
         const auto result = run_file("tests/ownership/profile.yukt");
         REQUIRE_MSG(result.ok, result.program_output);
         REQUIRE(result.program_output == "4\n");
@@ -536,24 +537,15 @@ int main() {
     }
 
     {
-        const char* source =
-            "record Point:\n"
-            "    x: integer\n"
-            "    y: integer\n"
-            "\n"
-            "create main:\n"
-            "    p = Point(1, 2)\n"
-            "    q = p\n"
-            "    say p.x\n"
-            "    say q.x\n";
-        const auto result = run_source(source);
+        const auto result = run_file("tests/ownership/plain_record_no_drop.yukt");
         REQUIRE_MSG(result.ok, result.program_output);
         REQUIRE(result.program_output == "1\n1\n");
 
-        const auto llvm = emit_llvm_source(source);
+        const auto llvm = emit_llvm_file("tests/ownership/plain_record_no_drop.yukt");
         REQUIRE_MSG(llvm.ok, llvm.llvm_ir);
         const auto main_body = llvm_function_body(llvm.llvm_ir, "yukt_main");
         REQUIRE_MSG(!main_body.empty(), llvm.llvm_ir);
+        REQUIRE_MSG(count_direct_calls(llvm.llvm_ir, "yukt_release") == 0, llvm.llvm_ir);
         REQUIRE_MSG(count_direct_calls(main_body, "yukt_release") == 0, main_body);
         REQUIRE_MSG(count_direct_calls(main_body, "yukt_runtime_release") == 1, main_body);
     }
