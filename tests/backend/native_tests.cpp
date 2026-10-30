@@ -422,5 +422,32 @@ int main() {
         REQUIRE_MSG(count_direct_calls(main_body, "yukt_runtime_release") == 1, main_body);
     }
 
+    {
+        const auto result = run_file("tests/ownership/if_uninit_drop.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "1\n");
+        REQUIRE(result.exit_code == 0);
+    }
+
+    {
+        const auto result = run_source(
+            "create main:\n"
+            "    xs = zeros(1)\n"
+            "    if false:\n"
+            "        ys = xs\n"
+            "        say count(ys)\n"
+            "    say 1\n");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "1\n");
+        REQUIRE(result.exit_code == 0);
+    }
+
+    {
+        const auto result = run_file("tests/ownership/repeat_local.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.program_output == "1\n");
+        REQUIRE(result.exit_code == 0);
+    }
+
     return yukt::test::summary("native");
 }

@@ -161,6 +161,7 @@ private:
     bool ownership_pass_ = false;
     std::unordered_map<const Stmt*, std::vector<std::string>> drop_before_;
     std::unordered_map<const FunctionDecl*, std::vector<std::string>> drop_on_return_;
+    std::unordered_map<const RepeatStmt*, std::vector<std::string>> drop_on_iter_;
 };
 
 bool is_numeric(Type type) {
@@ -216,6 +217,7 @@ SemanticInfo Analyzer::run() {
     info.records = records_;
     info.drop_before = drop_before_;
     info.drop_on_return = drop_on_return_;
+    info.drop_on_iter = drop_on_iter_;
     const int module_count = graph_ == nullptr ? 1 : static_cast<int>(graph_->modules.size());
     for (int module_index = 0; module_index < module_count; ++module_index) {
         const Program* program = module_program(module_index);
@@ -730,6 +732,7 @@ void Analyzer::analyze_functions() {
     ownership_pass_ = true;
     drop_before_.clear();
     drop_on_return_.clear();
+    drop_on_iter_.clear();
     walk_functions();
     ownership_pass_ = false;
 }
@@ -1113,7 +1116,13 @@ void Analyzer::analyze_assignment(const AssignStmt& stmt) {
                 // `xs = xs` is a no-op move, not a drop of the only pointer.
                 if (ownership_pass_ && state != own_.end() && state->second.state == OwnState::Owned &&
                     moved_from != stmt.name) {
-                    drop_before_[&stmt].push_back(stmt.name);
+                    if (loop_protected_.contains(stmt.name)) {
+                        error(stmt.name_location, "Cannot move inside repeat",
+                              "Moving `" + stmt.name + "` inside `repeat` would leave later iterations with a moved value.",
+                              "Copy first, or restructure so the move happens outside the loop.");
+                    } else {
+                        drop_before_[&stmt].push_back(stmt.name);
+                    }
                 }
                 own_[stmt.name] = OwnName{OwnState::Owned, stmt.name_location};
             }
@@ -1332,6 +1341,7 @@ void Analyzer::analyze_repeat(const RepeatStmt& stmt) {
 
     // Names that already exist before the loop must not be moved inside it: the
     // first iteration would leave later iterations with a moved value.
+    const std::unordered_map<std::string, OwnName> snapshot = own_;
     std::vector<std::string> protected_here;
     for (const auto& [name, own] : own_) {
         if (loop_protected_.insert(name).second) {
@@ -1347,6 +1357,26 @@ void Analyzer::analyze_repeat(const RepeatStmt& stmt) {
         analyze_statement(body_stmt.get());
     }
     pop_scope();
+
+    if (ownership_pass_) {
+        std::vector<std::string> local_drops;
+        for (const auto& [name, own] : own_) {
+            if (own.state != OwnState::Owned) {
+                continue;
+            }
+            const auto was = snapshot.find(name);
+            if (was == snapshot.end() || was->second.state != OwnState::Owned) {
+                local_drops.push_back(name);
+            }
+        }
+        std::sort(local_drops.begin(), local_drops.end());
+        if (!local_drops.empty()) {
+            drop_on_iter_[&stmt] = local_drops;
+        }
+        for (const auto& name : local_drops) {
+            own_.erase(name);
+        }
+    }
 
     for (const auto& name : protected_here) {
         loop_protected_.erase(name);

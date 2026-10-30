@@ -271,5 +271,29 @@ int main() {
         REQUIRE(has_diagnostic(result, "Use after move", "`xs`", move_suggestion));
     }
 
+    // If-join of uses after the if is unchanged: any-Moved-wins, so this is
+    // Use after move even when the then branch does not run.
+    {
+        const auto result = check(
+            "create main:\n"
+            "    xs = zeros(1)\n"
+            "    if false:\n"
+            "        ys = xs\n"
+            "    say count(xs)\n");
+        REQUIRE(has_title(result, "Use after move"));
+        REQUIRE(has_diagnostic(result, "Use after move", "`xs`", move_suggestion));
+    }
+
+    // Overwriting an outer heap name inside repeat drops it; that is an error.
+    {
+        const auto result = check(
+            "create main:\n"
+            "    xs = zeros(1)\n"
+            "    repeat i in 1..2:\n"
+            "        xs = zeros(i)\n");
+        REQUIRE(has_title(result, "Cannot move inside repeat"));
+        REQUIRE(has_diagnostic(result, "Cannot move inside repeat", "`xs`", repeat_suggestion));
+    }
+
     return yukt::test::summary("ownership");
 }

@@ -1,0 +1,4 @@
+create main:
+    repeat i in 1..3:
+        xs = zeros(i)
+    say 1

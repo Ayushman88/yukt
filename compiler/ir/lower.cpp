@@ -2,11 +2,15 @@
 
 #include "lexer/token.hpp"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <map>
 #include <optional>
 #include <set>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -87,6 +91,10 @@ bool has_user_call(const Expr* expr) {
         return has_user_call(field->object.get());
     }
     return false;
+}
+
+bool ir_owns_heap(const IrType& type) {
+    return type.kind == IrTypeKind::List || type.kind == IrTypeKind::String;
 }
 
 bool expr_allocates(const Expr* expr) {
@@ -750,10 +758,11 @@ private:
     IrValue emit_field_get(const IrValue& object, const std::string& field, IrType type);
     IrValue emit_field_set(const IrValue& object, const std::string& field, const IrValue& value);
     void copy_records();
+    void lower_seq(const std::vector<const Stmt*>& stmts);
     void lower_say(const SayStmt& stmt);
     void lower_give(const GiveStmt& stmt);
     void lower_expr_stmt(const ExprStmt& stmt);
-    void lower_if(const IfStmt& stmt);
+    void lower_if(const IfStmt& stmt, const std::vector<const Stmt*>& rest);
     void lower_repeat(const RepeatStmt& stmt);
     void lower_counted_repeat(const RepeatStmt& stmt, IrValue start, IrValue end);
     void lower_parallel_repeat(const RepeatStmt& stmt, const std::vector<std::string>& captures,
@@ -793,7 +802,10 @@ private:
     void emit_drop(const IrValue& value);
     void emit_named_drops(const std::vector<std::string>& names);
     void emit_drops_before(const Stmt* stmt);
-    void emit_drops_on_return();
+    void emit_owned_drops();
+    void emit_path_exit();
+    void note_user_call_moves(const CallExpr& expr);
+    IrValue default_return_value() const;
 
     const Program* program_ = nullptr;
     std::vector<const Program*> programs_;
@@ -811,6 +823,8 @@ private:
     int in_loop_ = 0;
     std::string reduction_from_;
     std::string reduction_to_;
+    std::unordered_set<std::string> owned_;
+    std::function<void()> seq_footer_;
 };
 
 Lowerer::Lowerer(const Program& program, const SemanticInfo& semantic, std::string source_path)
@@ -892,27 +906,20 @@ void Lowerer::lower_function(const FunctionDecl& function) {
     function_->blocks.push_back(std::move(entry));
     current_block_ = "entry";
 
-    for (const auto& stmt : function.body) {
-        lower_statement(stmt.get());
+    owned_.clear();
+    seq_footer_ = {};
+    for (const auto& param : function_->params) {
+        if (ir_owns_heap(param.second)) {
+            owned_.insert(param.first);
+        }
     }
 
-    if (!current().terminated) {
-        IrValue value;
-        value.type = function_->return_type;
-        if (function_->return_type.kind == IrTypeKind::I64) {
-            value.kind = IrValue::Kind::ConstI64;
-        } else if (function_->return_type.kind == IrTypeKind::F64) {
-            value.kind = IrValue::Kind::ConstF64;
-        } else if (function_->return_type.kind == IrTypeKind::Bool) {
-            value.kind = IrValue::Kind::ConstBool;
-        } else if (function_->return_type.kind == IrTypeKind::Void) {
-            value.kind = IrValue::Kind::Undef;
-        } else {
-            value.kind = IrValue::Kind::Undef;
-        }
-        emit_drops_on_return();
-        finish_return(value);
+    std::vector<const Stmt*> body;
+    body.reserve(function.body.size());
+    for (const auto& stmt : function.body) {
+        body.push_back(stmt.get());
     }
+    lower_seq(body);
 
     function_ = nullptr;
     current_function_decl_ = nullptr;
@@ -956,7 +963,7 @@ void Lowerer::lower_statement(const Stmt* stmt) {
         return;
     }
     if (const auto* iff = dynamic_cast<const IfStmt*>(stmt)) {
-        lower_if(*iff);
+        lower_if(*iff, {});
         return;
     }
     if (const auto* repeat = dynamic_cast<const RepeatStmt*>(stmt)) {
@@ -965,10 +972,34 @@ void Lowerer::lower_statement(const Stmt* stmt) {
     }
 }
 
+void Lowerer::lower_seq(const std::vector<const Stmt*>& stmts) {
+    for (std::size_t i = 0; i < stmts.size(); ++i) {
+        if (current().terminated) {
+            return;
+        }
+        const Stmt* stmt = stmts[i];
+        if (const auto* iff = dynamic_cast<const IfStmt*>(stmt)) {
+            std::vector<const Stmt*> rest(stmts.begin() + static_cast<std::ptrdiff_t>(i) + 1, stmts.end());
+            lower_if(*iff, rest);
+            return;
+        }
+        lower_statement(stmt);
+    }
+    emit_path_exit();
+}
+
 void Lowerer::lower_assignment(const AssignStmt& stmt) {
     const IrValue value = lower_expression(stmt.value.get());
     ensure_local(stmt.name, value.type);
     emit_drops_before(&stmt);
+    if (ir_owns_heap(value.type)) {
+        if (const auto* id = dynamic_cast<const IdentifierExpr*>(stmt.value.get())) {
+            if (id->name != stmt.name) {
+                owned_.erase(id->name);
+            }
+        }
+        owned_.insert(stmt.name);
+    }
     emit_store(stmt.name, value);
 }
 
@@ -1089,7 +1120,10 @@ void Lowerer::lower_say(const SayStmt& stmt) {
 
 void Lowerer::lower_give(const GiveStmt& stmt) {
     const IrValue value = lower_expression(stmt.value.get());
-    emit_drops_before(&stmt);
+    if (const auto* id = dynamic_cast<const IdentifierExpr*>(stmt.value.get())) {
+        owned_.erase(id->name);
+    }
+    emit_owned_drops();
     finish_return(value);
 }
 
@@ -1097,30 +1131,32 @@ void Lowerer::lower_expr_stmt(const ExprStmt& stmt) {
     lower_expression(stmt.expr.get());
 }
 
-void Lowerer::lower_if(const IfStmt& stmt) {
+void Lowerer::lower_if(const IfStmt& stmt, const std::vector<const Stmt*>& rest) {
     const IrValue condition = lower_expression(stmt.condition.get());
     const std::string then_name = new_block("then").name;
     const std::string else_name = new_block("else").name;
-    const std::string merge_name = new_block("merge").name;
     finish_branch(condition, then_name, else_name);
 
+    const std::unordered_set<std::string> snapshot = owned_;
+
     switch_to(then_name);
+    std::vector<const Stmt*> then_seq;
+    then_seq.reserve(stmt.then_branch.size() + rest.size());
     for (const auto& then_stmt : stmt.then_branch) {
-        lower_statement(then_stmt.get());
+        then_seq.push_back(then_stmt.get());
     }
-    if (!current().terminated) {
-        finish_jump(merge_name);
-    }
+    then_seq.insert(then_seq.end(), rest.begin(), rest.end());
+    lower_seq(then_seq);
 
+    owned_ = snapshot;
     switch_to(else_name);
+    std::vector<const Stmt*> else_seq;
+    else_seq.reserve(stmt.otherwise_branch.size() + rest.size());
     for (const auto& otherwise_stmt : stmt.otherwise_branch) {
-        lower_statement(otherwise_stmt.get());
+        else_seq.push_back(otherwise_stmt.get());
     }
-    if (!current().terminated) {
-        finish_jump(merge_name);
-    }
-
-    switch_to(merge_name);
+    else_seq.insert(else_seq.end(), rest.begin(), rest.end());
+    lower_seq(else_seq);
 }
 
 bool Lowerer::can_parallelize(const RepeatStmt& stmt, std::vector<std::string>& captures, LoopDecision& decision,
@@ -1404,17 +1440,38 @@ void Lowerer::lower_counted_repeat(const RepeatStmt& stmt, IrValue start, IrValu
 
     switch_to(body_name);
     ++in_loop_;
-    for (const auto& body_stmt : stmt.body) {
-        lower_statement(body_stmt.get());
-    }
-    --in_loop_;
-    if (!current().terminated) {
-        const IrValue i = emit_load(stmt.iterator);
-        emit_store(stmt.iterator, emit_bin(IrBinOp::Add, i, const_i64(1), ir_i64()));
+    const std::unordered_set<std::string> snapshot = owned_;
+    std::function<void()> previous_footer = seq_footer_;
+    seq_footer_ = [this, iterator = stmt.iterator, k_name, cond_name, snapshot]() {
+        if (current().terminated) {
+            return;
+        }
+        std::vector<std::string> drops;
+        for (const auto& name : owned_) {
+            if (snapshot.find(name) == snapshot.end()) {
+                drops.push_back(name);
+            }
+        }
+        std::sort(drops.begin(), drops.end());
+        emit_named_drops(drops);
+        for (const auto& name : drops) {
+            owned_.erase(name);
+        }
+        const IrValue i = emit_load(iterator);
+        emit_store(iterator, emit_bin(IrBinOp::Add, i, const_i64(1), ir_i64()));
         const IrValue next_k = emit_bin(IrBinOp::Add, emit_load(k_name), const_i64(1), ir_i64());
         emit_store(k_name, next_k);
-        finish_jump(cond_name, stmt.iterator);
+        finish_jump(cond_name, iterator);
+    };
+    std::vector<const Stmt*> body;
+    body.reserve(stmt.body.size());
+    for (const auto& body_stmt : stmt.body) {
+        body.push_back(body_stmt.get());
     }
+    lower_seq(body);
+    seq_footer_ = std::move(previous_footer);
+    owned_ = snapshot;
+    --in_loop_;
 
     switch_to(after_name);
 }
@@ -1446,11 +1503,15 @@ void Lowerer::lower_parallel_repeat(const RepeatStmt& stmt, const std::vector<st
     const std::string parent_block = current_block_;
     const int parent_temp = next_temp_;
     const int parent_block_n = next_block_;
+    const std::unordered_set<std::string> parent_owned = owned_;
+    std::function<void()> parent_footer = seq_footer_;
 
     function_ = &outlined;
     next_temp_ = 0;
     next_block_ = 0;
     in_parallel_ = true;
+    owned_.clear();
+    seq_footer_ = {};
     if (reduction) {
         reduction_from_ = reduction->name;
         reduction_to_ = "$red";
@@ -1488,6 +1549,8 @@ void Lowerer::lower_parallel_repeat(const RepeatStmt& stmt, const std::vector<st
     current_block_ = parent_block;
     next_temp_ = parent_temp;
     next_block_ = parent_block_n;
+    owned_ = parent_owned;
+    seq_footer_ = std::move(parent_footer);
 
     const std::string outlined_name = outlined.name;
     outlined_.push_back(std::move(outlined));
@@ -1718,6 +1781,7 @@ IrValue Lowerer::lower_call(const CallExpr& expr) {
     }
     inst.dest = make_temp(type_of(&expr));
     emit(inst);
+    note_user_call_moves(expr);
     return inst.dest;
 }
 
@@ -1880,14 +1944,49 @@ void Lowerer::emit_drops_before(const Stmt* stmt) {
     }
 }
 
-void Lowerer::emit_drops_on_return() {
-    if (current_function_decl_ == nullptr) {
+void Lowerer::emit_owned_drops() {
+    std::vector<std::string> names(owned_.begin(), owned_.end());
+    std::sort(names.begin(), names.end());
+    emit_named_drops(names);
+}
+
+void Lowerer::emit_path_exit() {
+    if (current().terminated) {
         return;
     }
-    const auto found = semantic_.drop_on_return.find(current_function_decl_);
-    if (found != semantic_.drop_on_return.end()) {
-        emit_named_drops(found->second);
+    if (seq_footer_) {
+        seq_footer_();
+        return;
     }
+    emit_owned_drops();
+    finish_return(default_return_value());
+}
+
+void Lowerer::note_user_call_moves(const CallExpr& expr) {
+    const auto found = semantic_.call_ir_names.find(&expr);
+    if (found == semantic_.call_ir_names.end() || is_stdlib_runtime_ir(found->second)) {
+        return;
+    }
+    for (const auto& argument : expr.arguments) {
+        if (const auto* id = dynamic_cast<const IdentifierExpr*>(argument.get())) {
+            owned_.erase(id->name);
+        }
+    }
+}
+
+IrValue Lowerer::default_return_value() const {
+    IrValue value;
+    value.type = function_ != nullptr ? function_->return_type : ir_void();
+    if (value.type.kind == IrTypeKind::I64) {
+        value.kind = IrValue::Kind::ConstI64;
+    } else if (value.type.kind == IrTypeKind::F64) {
+        value.kind = IrValue::Kind::ConstF64;
+    } else if (value.type.kind == IrTypeKind::Bool) {
+        value.kind = IrValue::Kind::ConstBool;
+    } else {
+        value.kind = IrValue::Kind::Undef;
+    }
+    return value;
 }
 
 }  // namespace

@@ -371,5 +371,69 @@ int main() {
         REQUIRE(drops == 1);
     }
 
+    {
+        const auto module = ir_from(
+            "create main:\n"
+            "    n = 0\n"
+            "    if n > 0:\n"
+            "        xs = zeros(3)\n"
+            "    say 1\n");
+        const auto* main_fn = function_named(module, "main");
+        REQUIRE(main_fn != nullptr);
+        bool then_drops = false;
+        bool else_drops = false;
+        if (main_fn != nullptr) {
+            for (const auto& block : main_fn->blocks) {
+                bool has_zeros = false;
+                bool has_drop = false;
+                for (const auto& inst : block.insts) {
+                    if (inst.op == yukt::IrOp::Zeros) {
+                        has_zeros = true;
+                    }
+                    if (inst.op == yukt::IrOp::Drop) {
+                        has_drop = true;
+                    }
+                }
+                if (has_zeros && has_drop) {
+                    then_drops = true;
+                }
+                if (!has_zeros && has_drop && block.term.kind == yukt::IrTermKind::Return) {
+                    else_drops = true;
+                }
+            }
+        }
+        REQUIRE(then_drops);
+        REQUIRE(!else_drops);
+    }
+
+    {
+        const auto module = ir_from(
+            "create main:\n"
+            "    repeat i in 1..3:\n"
+            "        xs = zeros(i)\n"
+            "    say 1\n");
+        const auto* main_fn = function_named(module, "main");
+        REQUIRE(main_fn != nullptr);
+        bool drop_with_zeros = false;
+        if (main_fn != nullptr) {
+            for (const auto& block : main_fn->blocks) {
+                bool has_zeros = false;
+                bool has_drop = false;
+                for (const auto& inst : block.insts) {
+                    if (inst.op == yukt::IrOp::Zeros) {
+                        has_zeros = true;
+                    }
+                    if (inst.op == yukt::IrOp::Drop) {
+                        has_drop = true;
+                    }
+                }
+                if (has_zeros && has_drop) {
+                    drop_with_zeros = true;
+                }
+            }
+        }
+        REQUIRE(drop_with_zeros);
+    }
+
     return yukt::test::summary("ir");
 }

@@ -1,0 +1,5 @@
+create main:
+    n = 0
+    if n > 0:
+        xs = zeros(3)
+    say 1
