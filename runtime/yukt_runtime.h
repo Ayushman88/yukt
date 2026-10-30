@@ -101,6 +101,14 @@ void yukt_reduce_i64(int64_t* acc, int64_t partial, int64_t op);
 void yukt_reduce_f64(double* acc, double partial, int64_t op);
 void yukt_runtime_release(void);
 
+/* Unregister and free (or cache) one tracked allocation. NULL is a no-op.
+ * Aborts on double release or an untracked pointer. */
+void yukt_release(void* ptr);
+/* Fresh tracked, owned copy of a NUL-terminated string (NULL becomes ""). */
+char* yukt_str_from_lit(const char* s);
+/* Number of currently tracked allocations (for ownership tests). */
+int64_t yukt_debug_live_allocs(void);
+
 #ifdef __cplusplus
 }
 #endif

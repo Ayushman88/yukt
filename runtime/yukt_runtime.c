@@ -153,6 +153,49 @@ void yukt_runtime_release(void) {
     }
 }
 
+int64_t yukt_debug_live_allocs(void) {
+    int64_t n = 0;
+    for (YuktAlloc* p = yukt_allocs; p != NULL; p = p->next) {
+        n++;
+    }
+    return n;
+}
+
+static YuktAlloc* yukt_untrack(void* ptr) {
+    YuktAlloc** cursor = &yukt_allocs;
+    while (*cursor != NULL) {
+        if ((*cursor)->ptr == ptr) {
+            YuktAlloc* node = *cursor;
+            *cursor = node->next;
+            return node;
+        }
+        cursor = &(*cursor)->next;
+    }
+    return NULL;
+}
+
+void yukt_release(void* ptr) {
+    if (ptr == NULL) {
+        return;
+    }
+    YuktAlloc* node = yukt_untrack(ptr);
+    if (node == NULL) {
+        die("double release or untracked pointer");
+    }
+    if (node->kind == YUKT_ALLOC_LIST) {
+        YuktList* list = (YuktList*)node->ptr;
+        /* Task 6 fills owned-element drop. 0.13.1 lists have no owned slots. */
+        if (list->data != NULL && yukt_cache_put(yukt_list_bins, list->data, node->bytes)) {
+            list->data = NULL;
+        }
+        free(list->data);
+        free(list);
+    } else if (!yukt_cache_put(yukt_str_bins, node->ptr, node->bytes)) {
+        free(node->ptr);
+    }
+    free(node);
+}
+
 static void print_list(const YuktList* list);
 
 static void print_value(int64_t kind, const void* data, int64_t index) {
@@ -682,6 +725,13 @@ static char* yukt_str_from_bytes(const char* data, size_t len) {
     }
     out[len] = '\0';
     return out;
+}
+
+char* yukt_str_from_lit(const char* s) {
+    if (s == NULL) {
+        s = "";
+    }
+    return yukt_str_from_bytes(s, strlen(s));
 }
 
 int64_t yukt_str_len(const char* s) {

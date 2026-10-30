@@ -191,6 +191,13 @@ endif()
 add_test(NAME yukt_stdlib_tests COMMAND yukt_stdlib_tests)
 add_dependencies(yukt_stdlib_tests yukt)
 
+add_executable(yukt_ownership_runtime_tests tests/ownership/runtime_release_tests.c)
+target_link_libraries(yukt_ownership_runtime_tests PRIVATE yukt_runtime)
+add_test(NAME yukt_ownership_runtime_tests COMMAND yukt_ownership_runtime_tests)
+add_test(NAME yukt_ownership_double_release COMMAND yukt_ownership_runtime_tests double-release)
+set_tests_properties(yukt_ownership_double_release PROPERTIES
+    PASS_REGULAR_EXPRESSION "YUKT runtime error: double release or untracked pointer")
+
 add_test(NAME hello_tokens COMMAND yukt --tokens ${CMAKE_SOURCE_DIR}/examples/hello.yukt)
 add_test(NAME hello_ast COMMAND yukt --ast ${CMAKE_SOURCE_DIR}/examples/hello.yukt)
 add_test(NAME hello_types COMMAND yukt --types ${CMAKE_SOURCE_DIR}/examples/hello.yukt)
