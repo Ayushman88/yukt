@@ -1,0 +1,16 @@
+# 0.13.2 ownership: moves, overwrite, and give-transfer that all stay valid.
+
+create ident(xs):
+    give xs
+
+create main:
+    xs = zeros(3)
+    ys = xs
+    say count(ys)
+
+    first = zeros(2)
+    first = zeros(4)
+    say count(first)
+
+    moved = ident(zeros(5))
+    say count(moved)

@@ -2,6 +2,7 @@
 
 #include "driver/module.hpp"
 #include "lexer/token.hpp"
+#include "semantic/ownership.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -118,6 +119,12 @@ private:
     Symbol* lookup_local(const std::string& name);
     FunctionSymbol* lookup_function(const std::string& name);
 
+    // 0.13.2 ownership (use-after-move) tracking for heap-typed names.
+    bool name_is_heap(const std::string& name);
+    void own_check_read(const std::string& name, SourceLocation location);
+    void own_move(const std::string& name, SourceLocation location);
+    void own_move_call_args(const CallExpr& expr);
+
     bool expect_type(Type actual, Type expected, SourceLocation location, std::string title, std::string detail,
                      std::string suggestion);
     void error(SourceLocation location, std::string title, std::string detail, std::string suggestion);
@@ -146,6 +153,8 @@ private:
     std::vector<NonVoidUse> non_void_uses_;
     std::unordered_map<const Expr*, Type> expr_types_;
     FunctionSymbol* current_function_ = nullptr;
+    std::unordered_map<std::string, OwnName> own_;
+    std::unordered_set<std::string> loop_protected_;
 };
 
 bool is_numeric(Type type) {
@@ -921,6 +930,8 @@ void Analyzer::require_main() {
 void Analyzer::analyze_function(FunctionSymbol& function) {
     current_function_ = &function;
     scopes_.clear();
+    own_.clear();
+    loop_protected_.clear();
     push_scope();
 
     if (function.decl != nullptr) {
@@ -1026,6 +1037,20 @@ void Analyzer::analyze_assignment(const AssignStmt& stmt) {
     if (types_.prune(value_type).kind == TypeKind::Void) {
         return;
     }
+
+    const bool heap = type_owns_heap(types_, value_type);
+    // A direct move is `lhs = rhs` where `rhs` is a bare heap-typed name.
+    std::string moved_from;
+    SourceLocation moved_from_location;
+    if (heap) {
+        if (const auto* id = dynamic_cast<const IdentifierExpr*>(stmt.value.get())) {
+            if (lookup_local(id->name) != nullptr && name_is_heap(id->name)) {
+                moved_from = id->name;
+                moved_from_location = id->span.start;
+            }
+        }
+    }
+
     if (auto* existing = lookup_local(stmt.name)) {
         if (existing->iterator) {
             error(stmt.name_location, "Invalid assignment",
@@ -1041,10 +1066,32 @@ void Analyzer::analyze_assignment(const AssignStmt& stmt) {
                   {{existing->location, "first assigned here as " + types_.to_string(existing->type)}});
         }
         existing->assigned = true;
+        if (heap) {
+            auto state = own_.find(stmt.name);
+            if (state != own_.end() && state->second.state == OwnState::Moved) {
+                // Reassigning a moved-from name is not allowed in 0.13.2.
+                error(stmt.name_location, "Use after move",
+                      "`" + stmt.name + "` was moved, so it cannot be used here.",
+                      "This value was moved. Use the new owner, or copy with list.copy before moving.");
+            } else {
+                // Overwrite: the previous allocation is dropped in IR (Task 4);
+                // the name stays Owned.
+                own_[stmt.name] = OwnName{OwnState::Owned, stmt.name_location};
+            }
+        }
+        if (!moved_from.empty() && moved_from != stmt.name) {
+            own_move(moved_from, moved_from_location);
+        }
         return;
     }
 
     declare_local(stmt.name, value_type, stmt.name_location, false);
+    if (heap) {
+        own_[stmt.name] = OwnName{OwnState::Owned, stmt.name_location};
+    }
+    if (!moved_from.empty() && moved_from != stmt.name) {
+        own_move(moved_from, moved_from_location);
+    }
 }
 
 void Analyzer::analyze_index_assign(const IndexAssignStmt& stmt) {
@@ -1136,6 +1183,14 @@ void Analyzer::analyze_give(const GiveStmt& stmt) {
                   "` already gives " + types_.to_string(current_function_->return_type) + ".",
               "Every `give` in a function must have the same type.");
     }
+    // `give x` transfers ownership of a heap value to the caller: x is moved.
+    if (type_owns_heap(types_, type)) {
+        if (const auto* id = dynamic_cast<const IdentifierExpr*>(stmt.value.get())) {
+            if (lookup_local(id->name) != nullptr && name_is_heap(id->name)) {
+                own_move(id->name, id->span.start);
+            }
+        }
+    }
 }
 
 void Analyzer::analyze_expr_stmt(const ExprStmt& stmt) {
@@ -1152,12 +1207,46 @@ void Analyzer::analyze_if(const IfStmt& stmt) {
                 "`if` conditions must be boolean, but this condition has type " + types_.to_string(condition) + ".",
                 "Use a comparison such as `age > 18`.");
 
+    // Snapshot ownership, analyze each branch from the same snapshot, then join.
+    const std::unordered_map<std::string, OwnName> snapshot = own_;
     for (const auto& then_stmt : stmt.then_branch) {
         analyze_statement(then_stmt.get());
     }
+    const std::unordered_map<std::string, OwnName> after_then = own_;
+    own_ = snapshot;
     for (const auto& otherwise_stmt : stmt.otherwise_branch) {
         analyze_statement(otherwise_stmt.get());
     }
+    const std::unordered_map<std::string, OwnName> after_otherwise = own_;
+
+    std::unordered_set<std::string> names;
+    for (const auto& [name, own] : after_then) {
+        names.insert(name);
+    }
+    for (const auto& [name, own] : after_otherwise) {
+        names.insert(name);
+    }
+    auto branch_state = [&](const std::unordered_map<std::string, OwnName>& branch, const std::string& name) {
+        auto found = branch.find(name);
+        if (found != branch.end()) {
+            return found->second.state;
+        }
+        auto base = snapshot.find(name);
+        return base != snapshot.end() ? base->second.state : OwnState::Uninit;
+    };
+    std::unordered_map<std::string, OwnName> joined;
+    for (const auto& name : names) {
+        SourceLocation location;
+        auto then_it = after_then.find(name);
+        auto else_it = after_otherwise.find(name);
+        if (then_it != after_then.end()) {
+            location = then_it->second.location;
+        } else if (else_it != after_otherwise.end()) {
+            location = else_it->second.location;
+        }
+        joined[name] = OwnName{join_own(branch_state(after_then, name), branch_state(after_otherwise, name)), location};
+    }
+    own_ = std::move(joined);
 }
 
 void Analyzer::analyze_repeat(const RepeatStmt& stmt) {
@@ -1181,6 +1270,15 @@ void Analyzer::analyze_repeat(const RepeatStmt& stmt) {
               "Choose a different loop variable name.");
     }
 
+    // Names that already exist before the loop must not be moved inside it: the
+    // first iteration would leave later iterations with a moved value.
+    std::vector<std::string> protected_here;
+    for (const auto& [name, own] : own_) {
+        if (loop_protected_.insert(name).second) {
+            protected_here.push_back(name);
+        }
+    }
+
     push_scope();
     if (!declare_local(stmt.iterator, integer_type(), stmt.iterator_location, true)) {
         // declare_local already reported a collision with an existing name.
@@ -1189,6 +1287,10 @@ void Analyzer::analyze_repeat(const RepeatStmt& stmt) {
         analyze_statement(body_stmt.get());
     }
     pop_scope();
+
+    for (const auto& name : protected_here) {
+        loop_protected_.erase(name);
+    }
 }
 
 Type Analyzer::analyze_expression(const Expr* expr) {
@@ -1222,6 +1324,7 @@ Type Analyzer::analyze_expression_body(const Expr* expr) {
                       "`" + name->name + "` is used before it is assigned.",
                       "Assign `" + name->name + "` before using it.");
             }
+            own_check_read(name->name, name->span.start);
             return symbol->type;
         }
         if (lookup_function(name->name) != nullptr) {
@@ -1551,6 +1654,7 @@ Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
         for (std::size_t i = count; i < expr.arguments.size(); ++i) {
             analyze_expression(expr.arguments[i].get());
         }
+        own_move_call_args(expr);
         const Type result = function->return_type;
         if (result_used) {
             require_non_void(result, expr.callee_location,
@@ -1629,6 +1733,7 @@ Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
     for (std::size_t i = count; i < expr.arguments.size(); ++i) {
         analyze_expression(expr.arguments[i].get());
     }
+    own_move_call_args(expr);
 
     const Type result = function->return_type;
         if (result_used) {
@@ -1928,6 +2033,50 @@ FunctionSymbol* Analyzer::lookup_function(const std::string& name) {
         return nullptr;
     }
     return found->second;
+}
+
+bool Analyzer::name_is_heap(const std::string& name) {
+    Symbol* symbol = lookup_local(name);
+    if (symbol == nullptr) {
+        return false;
+    }
+    return type_owns_heap(types_, symbol->type);
+}
+
+void Analyzer::own_check_read(const std::string& name, SourceLocation location) {
+    auto found = own_.find(name);
+    if (found != own_.end() && found->second.state == OwnState::Moved) {
+        error(location, "Use after move",
+              "`" + name + "` was moved, so it cannot be used here.",
+              "This value was moved. Use the new owner, or copy with list.copy before moving.");
+    }
+}
+
+void Analyzer::own_move(const std::string& name, SourceLocation location) {
+    auto found = own_.find(name);
+    if (found == own_.end() || found->second.state != OwnState::Owned) {
+        return;
+    }
+    if (loop_protected_.contains(name)) {
+        error(location, "Cannot move inside repeat",
+              "Moving `" + name + "` inside `repeat` would leave later iterations with a moved value.",
+              "Copy first, or restructure so the move happens outside the loop.");
+        return;
+    }
+    found->second.state = OwnState::Moved;
+    found->second.location = location;
+}
+
+void Analyzer::own_move_call_args(const CallExpr& expr) {
+    for (const auto& argument : expr.arguments) {
+        const auto* id = dynamic_cast<const IdentifierExpr*>(argument.get());
+        if (id == nullptr) {
+            continue;
+        }
+        if (lookup_local(id->name) != nullptr && name_is_heap(id->name)) {
+            own_move(id->name, id->span.start);
+        }
+    }
 }
 
 bool Analyzer::expect_type(Type actual, Type expected, SourceLocation location, std::string title, std::string detail,

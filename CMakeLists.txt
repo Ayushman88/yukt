@@ -68,6 +68,7 @@ add_library(yukt_compiler
     compiler/ast/ast.cpp
     compiler/parser/parser.cpp
     compiler/semantic/type.cpp
+    compiler/semantic/ownership.cpp
     compiler/semantic/analyzer.cpp
     compiler/ir/ir.cpp
     compiler/ir/lower.cpp
@@ -190,6 +191,8 @@ if(APPLE AND DEFINED LLVM_LIBRARY_DIR)
 endif()
 add_test(NAME yukt_stdlib_tests COMMAND yukt_stdlib_tests)
 add_dependencies(yukt_stdlib_tests yukt)
+
+yukt_add_test(yukt_ownership_tests tests/ownership/ownership_tests.cpp)
 
 add_executable(yukt_ownership_runtime_tests tests/ownership/runtime_release_tests.c)
 target_link_libraries(yukt_ownership_runtime_tests PRIVATE yukt_runtime)
