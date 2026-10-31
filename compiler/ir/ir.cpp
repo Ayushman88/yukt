@@ -11,7 +11,7 @@ bool operator==(const IrType& left, const IrType& right) {
     if (left.kind == IrTypeKind::Record) {
         return left.record_id == right.record_id;
     }
-    if (left.kind != IrTypeKind::List && left.kind != IrTypeKind::Map) {
+    if (left.kind != IrTypeKind::List && left.kind != IrTypeKind::Map && left.kind != IrTypeKind::Task) {
         return true;
     }
     if (left.element == nullptr || right.element == nullptr) {
@@ -87,6 +87,13 @@ IrType ir_json() {
     return type;
 }
 
+IrType ir_task(IrType payload) {
+    IrType type;
+    type.kind = IrTypeKind::Task;
+    type.element = std::make_shared<IrType>(std::move(payload));
+    return type;
+}
+
 IrType ir_type_from(const Type& type) {
     switch (type.kind) {
         case TypeKind::Integer:
@@ -109,6 +116,8 @@ IrType ir_type_from(const Type& type) {
             return ir_set();
         case TypeKind::Json:
             return ir_json();
+        case TypeKind::Task:
+            return ir_task(type.element != nullptr ? ir_type_from(*type.element) : ir_void());
         case TypeKind::Void:
         case TypeKind::Variable:
             return ir_void();
@@ -138,6 +147,8 @@ std::string ir_type_name(const IrType& type) {
             return "set";
         case IrTypeKind::Json:
             return "json";
+        case IrTypeKind::Task:
+            return "task[" + (type.element != nullptr ? ir_type_name(*type.element) : "?") + "]";
     }
     return "void";
 }
@@ -159,6 +170,7 @@ int list_elem_kind(const IrType& type) {
         case IrTypeKind::Map:
         case IrTypeKind::Set:
         case IrTypeKind::Json:
+        case IrTypeKind::Task:
         case IrTypeKind::Void:
             return -1;
     }

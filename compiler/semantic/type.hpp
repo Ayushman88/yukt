@@ -21,6 +21,7 @@ enum class TypeKind {
     Map,
     Set,
     Json,
+    Task,
 };
 
 struct Type {
@@ -43,6 +44,7 @@ Type result_type(Type payload, int record_id = -1);
 Type map_type(Type value);
 Type set_type();
 Type json_type();
+Type task_type(Type payload);
 
 class TypeContext {
 public:

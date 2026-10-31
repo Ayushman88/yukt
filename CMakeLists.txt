@@ -272,3 +272,10 @@ add_test(NAME errors_ok_fail_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/erro
 add_test(NAME stdlib_map_set_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/stdlib/map_set.yukt)
 add_test(NAME stdlib_file_json_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/stdlib/file_json.yukt)
 add_test(NAME suite013_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/suite013/all.yukt)
+
+add_executable(yukt_task_tests tests/tasks/task_tests.cpp)
+target_link_libraries(yukt_task_tests PRIVATE yukt_compiler)
+target_include_directories(yukt_task_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_compile_definitions(yukt_task_tests PRIVATE YUKT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+yukt_set_warnings(yukt_task_tests)
+add_test(NAME yukt_task_tests COMMAND yukt_task_tests)

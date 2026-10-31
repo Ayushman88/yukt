@@ -1,0 +1,5 @@
+use work
+
+create main:
+    t = start work.work(3)
+    say wait t

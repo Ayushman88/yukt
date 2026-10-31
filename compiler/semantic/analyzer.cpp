@@ -110,6 +110,8 @@ private:
     Type analyze_unary(const UnaryExpr& expr);
     Type analyze_binary(const BinaryExpr& expr);
     Type analyze_call(const CallExpr& expr, bool result_used);
+    Type analyze_start(const StartExpr& expr);
+    Type analyze_wait(const WaitExpr& expr, bool result_used);
     Type analyze_constructor(RecordInfo& record, const CallExpr& expr);
     Type analyze_stdlib_call(FunctionSymbol& function, const CallExpr& expr, bool result_used);
     Type analyze_list(const ListExpr& expr);
@@ -132,6 +134,10 @@ private:
     void note_unhandled_result(const std::string& name, SourceLocation location);
     void handle_result(const std::string& name);
     void check_unhandled_results();
+    void note_unused_task(const std::string& name, SourceLocation location);
+    void handle_task(const std::string& name);
+    void check_unused_tasks();
+    void own_start_args(const StartExpr& expr);
     ResultFlow flow_of(const std::string& name) const;
 
     bool declare_local(const std::string& name, Type type, SourceLocation location, bool iterator);
@@ -172,6 +178,7 @@ private:
     std::vector<std::unordered_map<std::string, int>> aliases_;
     std::unordered_map<const FunctionDecl*, std::string> function_ir_names_;
     std::unordered_map<const CallExpr*, std::string> call_ir_names_;
+    std::unordered_map<const StartExpr*, std::string> start_ir_names_;
     int current_module_ = 0;
     bool single_file_ = true;
     std::vector<std::unordered_map<std::string, Symbol>> scopes_;
@@ -188,6 +195,7 @@ private:
     std::unordered_map<std::string, int> result_record_ids_;
     std::unordered_map<std::string, ResultFlow> result_flow_;
     std::unordered_map<std::string, SourceLocation> unhandled_results_;
+    std::unordered_map<std::string, SourceLocation> unused_tasks_;
 };
 
 bool is_numeric(Type type) {
@@ -246,6 +254,7 @@ SemanticInfo Analyzer::run() {
     SemanticInfo info;
     info.function_ir_names = function_ir_names_;
     info.call_ir_names = call_ir_names_;
+    info.start_ir_names = start_ir_names_;
     info.record_constructors = record_constructors_;
     info.records = records_;
     const int module_count = graph_ == nullptr ? 1 : static_cast<int>(graph_->modules.size());
@@ -545,12 +554,15 @@ Type Analyzer::make_result(Type payload) {
 void Analyzer::bind_result_layouts(Type& type) {
     type = types_.prune(type);
     if (type.element != nullptr &&
-        (type.kind == TypeKind::List || type.kind == TypeKind::Result || type.kind == TypeKind::Map)) {
+        (type.kind == TypeKind::List || type.kind == TypeKind::Result || type.kind == TypeKind::Map ||
+         type.kind == TypeKind::Task)) {
         bind_result_layouts(*type.element);
         if (type.kind == TypeKind::List) {
             type = list_type(*type.element);
         } else if (type.kind == TypeKind::Map) {
             type = map_type(*type.element);
+        } else if (type.kind == TypeKind::Task) {
+            type = task_type(*type.element);
         }
     }
     if (type.kind == TypeKind::Error) {
@@ -774,6 +786,7 @@ bool Analyzer::field_abi(Type type, std::int64_t& size, std::int64_t& align) {
         case TypeKind::Map:
         case TypeKind::Set:
         case TypeKind::Json:
+        case TypeKind::Task:
             size = 8;
             align = 8;
             return true;
@@ -903,7 +916,8 @@ void Analyzer::compute_record_layouts() {
 
 bool Analyzer::type_contains_private_record(Type type, int module_index) {
     type = types_.prune(type);
-    if ((type.kind == TypeKind::List || type.kind == TypeKind::Result || type.kind == TypeKind::Map) &&
+    if ((type.kind == TypeKind::List || type.kind == TypeKind::Result || type.kind == TypeKind::Map ||
+         type.kind == TypeKind::Task) &&
         type.element != nullptr) {
         return type_contains_private_record(*type.element, module_index);
     }
@@ -1183,6 +1197,7 @@ void Analyzer::analyze_function(FunctionSymbol& function) {
     loop_protected_.clear();
     result_flow_.clear();
     unhandled_results_.clear();
+    unused_tasks_.clear();
     push_scope();
 
     if (function.decl != nullptr) {
@@ -1222,6 +1237,9 @@ void Analyzer::analyze_function(FunctionSymbol& function) {
             }
             if (types_.prune(function.parameters[i]).kind == TypeKind::Result) {
                 note_unhandled_result(name, param_location);
+            }
+            if (types_.prune(function.parameters[i]).kind == TypeKind::Task) {
+                note_unused_task(name, param_location);
             }
         }
 
@@ -1292,6 +1310,7 @@ void Analyzer::analyze_function(FunctionSymbol& function) {
             }
         }
         check_unhandled_results();
+        check_unused_tasks();
     }
 
     pop_scope();
@@ -1400,6 +1419,9 @@ void Analyzer::analyze_assignment(const AssignStmt& stmt) {
         if (types_.prune(value_type).kind == TypeKind::Result) {
             note_unhandled_result(stmt.name, stmt.name_location);
         }
+        if (types_.prune(value_type).kind == TypeKind::Task) {
+            note_unused_task(stmt.name, stmt.name_location);
+        }
         if (heap) {
             auto state = own_.find(stmt.name);
             if (state != own_.end() && state->second.state == OwnState::Moved) {
@@ -1436,6 +1458,9 @@ void Analyzer::analyze_assignment(const AssignStmt& stmt) {
     }
     if (types_.prune(value_type).kind == TypeKind::Result) {
         note_unhandled_result(stmt.name, stmt.name_location);
+    }
+    if (types_.prune(value_type).kind == TypeKind::Task) {
+        note_unused_task(stmt.name, stmt.name_location);
     }
 }
 
@@ -1524,7 +1549,7 @@ void Analyzer::analyze_say(const SayStmt& stmt) {
                      "Call a function that gives a value, or print a literal.");
     const Type resolved = types_.prune(type);
     if (resolved.kind == TypeKind::Result || resolved.kind == TypeKind::Error || resolved.kind == TypeKind::Map ||
-        resolved.kind == TypeKind::Set || resolved.kind == TypeKind::Json) {
+        resolved.kind == TypeKind::Set || resolved.kind == TypeKind::Json || resolved.kind == TypeKind::Task) {
         error(stmt.span.start, "Type mismatch",
               "`say` cannot print " + types_.to_string(resolved) + ".",
               resolved.kind == TypeKind::Result ? "Handle the result with `if r.ok:` first."
@@ -1566,6 +1591,9 @@ void Analyzer::analyze_give(const GiveStmt& stmt) {
         if (types_.prune(type).kind == TypeKind::Result) {
             handle_result(id->name);
         }
+        if (types_.prune(type).kind == TypeKind::Task) {
+            handle_task(id->name);
+        }
     }
 }
 
@@ -1573,6 +1601,8 @@ void Analyzer::analyze_expr_stmt(const ExprStmt& stmt) {
     Type type;
     if (const auto* call = dynamic_cast<const CallExpr*>(stmt.expr.get())) {
         type = analyze_call(*call, false);
+    } else if (const auto* wait = dynamic_cast<const WaitExpr*>(stmt.expr.get())) {
+        type = analyze_wait(*wait, false);
     } else {
         type = analyze_expression(stmt.expr.get());
     }
@@ -1580,6 +1610,11 @@ void Analyzer::analyze_expr_stmt(const ExprStmt& stmt) {
         error(stmt.span.start, "Unused result",
               "This `result` is discarded.",
               "Assign it to a name and handle it with `if r.ok:`, or `give` it.");
+    }
+    if (types_.prune(type).kind == TypeKind::Task) {
+        error(stmt.span.start, "Unused task",
+              "This `task` is discarded.",
+              "Assign it to a name and `wait` it, or `give` it.");
     }
 }
 
@@ -1598,6 +1633,7 @@ void Analyzer::analyze_if(const IfStmt& stmt) {
     const std::unordered_map<std::string, OwnName> snapshot = own_;
     const auto flow_snapshot = result_flow_;
     const auto unhandled_snapshot = unhandled_results_;
+    const auto unused_task_snapshot = unused_tasks_;
     if (!scrutinee.empty()) {
         result_flow_[scrutinee] = ResultFlow::Ok;
     }
@@ -1606,9 +1642,11 @@ void Analyzer::analyze_if(const IfStmt& stmt) {
     }
     const std::unordered_map<std::string, OwnName> after_then = own_;
     const auto unhandled_then = unhandled_results_;
+    const auto unused_then = unused_tasks_;
     own_ = snapshot;
     result_flow_ = flow_snapshot;
     unhandled_results_ = unhandled_snapshot;
+    unused_tasks_ = unused_task_snapshot;
     if (!scrutinee.empty()) {
         result_flow_[scrutinee] = ResultFlow::Fail;
     }
@@ -1617,6 +1655,7 @@ void Analyzer::analyze_if(const IfStmt& stmt) {
     }
     const std::unordered_map<std::string, OwnName> after_otherwise = own_;
     const auto unhandled_else = unhandled_results_;
+    const auto unused_else = unused_tasks_;
 
     std::unordered_set<std::string> names;
     for (const auto& [name, own] : after_then) {
@@ -1650,6 +1689,10 @@ void Analyzer::analyze_if(const IfStmt& stmt) {
     unhandled_results_ = unhandled_then;
     for (const auto& [name, location] : unhandled_else) {
         unhandled_results_[name] = location;
+    }
+    unused_tasks_ = unused_then;
+    for (const auto& [name, location] : unused_else) {
+        unused_tasks_[name] = location;
     }
 }
 
@@ -1807,6 +1850,12 @@ Type Analyzer::analyze_expression_body(const Expr* expr) {
     }
     if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
         return analyze_field(*field);
+    }
+    if (const auto* start = dynamic_cast<const StartExpr*>(expr)) {
+        return analyze_start(*start);
+    }
+    if (const auto* wait = dynamic_cast<const WaitExpr*>(expr)) {
+        return analyze_wait(*wait, true);
     }
     return types_.fresh_variable();
 }
@@ -2242,6 +2291,157 @@ Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
                              "Call `" + expr.callee + "(...)` as a statement, or add a `give` to the function.");
         }
         return result;
+}
+
+Type Analyzer::analyze_start(const StartExpr& expr) {
+    auto analyze_remaining = [&]() {
+        for (const auto& argument : expr.arguments) {
+            analyze_expression(argument.get());
+        }
+    };
+    auto invalid_start = [&](SourceLocation location, const std::string& detail, const std::string& suggestion) {
+        error(location, "Invalid start", detail, suggestion);
+        analyze_remaining();
+        return task_type(types_.fresh_variable());
+    };
+
+    if (expr.callee == "ok" || expr.callee == "fail" || expr.callee == "count" || expr.callee == "zeros") {
+        return invalid_start(expr.callee_location, "`start` cannot run `" + expr.callee + "`.",
+                             "Start an ordinary `create` function.");
+    }
+
+    FunctionSymbol* function = nullptr;
+    if (!expr.qualifier.empty()) {
+        const auto alias = aliases_[static_cast<std::size_t>(current_module_)].find(expr.qualifier);
+        if (alias == aliases_[static_cast<std::size_t>(current_module_)].end()) {
+            if (auto* local = lookup_local(expr.qualifier)) {
+                error(expr.dot_location.line == 0 ? expr.callee_location : expr.dot_location, "Invalid expression",
+                      "`.` is field access or a module call, not valid on " + types_.to_string(local->type) + ".",
+                      "Call a function or access a record field.");
+                analyze_remaining();
+                return task_type(types_.fresh_variable());
+            }
+            error(expr.dot_location.line == 0 ? expr.callee_location : expr.dot_location, "Unknown name",
+                  "`" + expr.qualifier + "` is not defined in this scope.",
+                  "Assign it before use, or add `use " + expr.qualifier + "`.");
+            analyze_remaining();
+            return task_type(types_.fresh_variable());
+        }
+        if (lookup_shared_record(alias->second, expr.callee) != nullptr ||
+            lookup_record(alias->second, expr.callee) != nullptr) {
+            return invalid_start(expr.callee_location, "`start` cannot run a record constructor.",
+                                 "Start an ordinary `create` function.");
+        }
+        function = lookup_shared(alias->second, expr.callee);
+        const Program* imported = module_program(alias->second);
+        if (function == nullptr || function->decl == nullptr || !function->decl->shared) {
+            std::string shared_list = "this module shares no functions or records";
+            if (imported != nullptr) {
+                std::string names;
+                for (const auto& fn : imported->functions) {
+                    if (fn != nullptr && fn->shared) {
+                        if (!names.empty()) {
+                            names += ", ";
+                        }
+                        names += fn->name;
+                    }
+                }
+                if (!names.empty()) {
+                    shared_list = "shared: " + names;
+                }
+            }
+            error(expr.dot_location.line == 0 ? expr.callee_location : expr.dot_location, "Unknown function",
+                  "`" + expr.qualifier + "." + expr.callee + "` is not a shared function or record.",
+                  "Export it with `share create` or `share record`, or call a shared name.",
+                  {{expr.dot_location, shared_list}});
+            analyze_remaining();
+            return task_type(types_.fresh_variable());
+        }
+    } else {
+        if (lookup_record(current_module_, expr.callee) != nullptr) {
+            return invalid_start(expr.callee_location, "`start` cannot run a record constructor.",
+                                 "Start an ordinary `create` function.");
+        }
+        function = lookup_function(expr.callee);
+        if (function == nullptr) {
+            error(expr.callee_location, "Unknown function",
+                  "There is no function named `" + expr.callee + "`.",
+                  "Define it with `create " + expr.callee + "(...):` or fix the name.");
+            analyze_remaining();
+            return task_type(types_.fresh_variable());
+        }
+    }
+
+    if (function->foreign || (function->decl != nullptr && function->decl->name == "main")) {
+        return invalid_start(expr.callee_location,
+                             function->foreign ? "`start` cannot run a `foreign` function."
+                                               : "`start` cannot run `main`.",
+                             "Start an ordinary `create` function.");
+    }
+
+    for (std::size_t i = 0; i < function->param_is_ref.size(); ++i) {
+        if (function->param_is_ref[i]) {
+            error(expr.callee_location, "Cannot start a ref",
+                  "`" + expr.callee + "` takes a `ref` parameter, so it cannot be started.",
+                  "Start a function that takes owned values, or call it without `start`.");
+            analyze_remaining();
+            return task_type(function->return_type);
+        }
+    }
+
+    start_ir_names_[&expr] = function->ir_name;
+    if (expr.arguments.size() != function->parameters.size()) {
+        error(expr.callee_location, "Wrong number of arguments",
+              "`" + expr.callee + "` takes " + std::to_string(function->parameters.size()) + " argument" +
+                  (function->parameters.size() == 1 ? "" : "s") + ", but this call passes " +
+                  std::to_string(expr.arguments.size()) + ".",
+              "Pass exactly " + std::to_string(function->parameters.size()) + " argument" +
+                  (function->parameters.size() == 1 ? "" : "s") + ".");
+    }
+    const std::size_t count = std::min(expr.arguments.size(), function->parameters.size());
+    for (std::size_t i = 0; i < count; ++i) {
+        const Type argument = analyze_expression(expr.arguments[i].get());
+        if (!types_.unify(argument, function->parameters[i])) {
+            const std::string param =
+                function->decl != nullptr && i < function->decl->parameters.size() ? function->decl->parameters[i]
+                                                                                   : "argument";
+            error(expr.arguments[i] != nullptr ? expr.arguments[i]->span.start : expr.callee_location, "Type mismatch",
+                  "Argument `" + param + "` of `" + expr.callee + "` has type " +
+                      types_.to_string(function->parameters[i]) + ", but this call passes " +
+                      types_.to_string(argument) + ".",
+                  "Pass a value of type " + types_.to_string(function->parameters[i]) + ".");
+        }
+    }
+    for (std::size_t i = count; i < expr.arguments.size(); ++i) {
+        analyze_expression(expr.arguments[i].get());
+    }
+    own_start_args(expr);
+    return task_type(function->return_type);
+}
+
+Type Analyzer::analyze_wait(const WaitExpr& expr, bool result_used) {
+    const Type operand = analyze_expression(expr.task.get());
+    const Type resolved = types_.prune(operand);
+    if (resolved.kind != TypeKind::Task) {
+        error(expr.span.start, "Type mismatch",
+              "`wait` expects a `task`, not " + types_.to_string(operand) + ".",
+              "Wait a value produced by `start`.");
+        return types_.fresh_variable();
+    }
+    Type payload = resolved.element != nullptr ? *resolved.element : void_type();
+    payload = types_.prune(payload);
+    if (payload.kind == TypeKind::Void && result_used) {
+        error(expr.span.start, "Type mismatch",
+              "`wait` of `task[void]` does not give a value.",
+              "Write `wait t` as a statement.");
+        consume_heap_expr(expr.task.get());
+        return void_type();
+    }
+    consume_heap_expr(expr.task.get());
+    if (const auto* id = dynamic_cast<const IdentifierExpr*>(expr.task.get())) {
+        handle_task(id->name);
+    }
+    return payload;
 }
 
 Type Analyzer::analyze_stdlib_call(FunctionSymbol& function, const CallExpr& expr, bool result_used) {
@@ -2770,6 +2970,38 @@ void Analyzer::check_unhandled_results() {
     }
 }
 
+void Analyzer::note_unused_task(const std::string& name, SourceLocation location) {
+    if (name.empty()) {
+        return;
+    }
+    if (unused_tasks_.contains(name)) {
+        error(location, "Unused task",
+              "`" + name + "` already holds a `task` that was never waited.",
+              "Wait it with `wait " + name + "` before overwriting.");
+    }
+    unused_tasks_[name] = location;
+}
+
+void Analyzer::handle_task(const std::string& name) {
+    if (!name.empty()) {
+        unused_tasks_.erase(name);
+    }
+}
+
+void Analyzer::check_unused_tasks() {
+    for (const auto& [name, location] : unused_tasks_) {
+        error(location, "Unused task",
+              "`" + name + "` is a `task` that was never waited.",
+              "Wait it with `wait " + name + "`, or `give` it.");
+    }
+}
+
+void Analyzer::own_start_args(const StartExpr& expr) {
+    for (const auto& argument : expr.arguments) {
+        consume_heap_expr(argument.get());
+    }
+}
+
 std::string Analyzer::borrow_place_name(const Expr* expr) const {
     if (expr == nullptr) {
         return {};
@@ -2852,6 +3084,9 @@ void Analyzer::consume_heap_expr(const Expr* expr) {
         }
         if (lookup_local(id->name) != nullptr && name_is_heap(id->name)) {
             own_move(id->name, id->span.start);
+            if (types_.prune(lookup_local(id->name)->type).kind == TypeKind::Task) {
+                handle_task(id->name);
+            }
         }
         return;
     }
@@ -3036,6 +3271,8 @@ void print_types(const SemanticInfo& info, std::ostream& out) {
                 return "set";
             case TypeKind::Json:
                 return "json";
+            case TypeKind::Task:
+                return "task";
         }
         return "?";
     };

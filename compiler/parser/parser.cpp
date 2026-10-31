@@ -919,7 +919,7 @@ std::unique_ptr<Expr> Parser::parse_start() {
     expr->span.start = keyword.location;
     expr->span.end = keyword.location;
 
-    if (!check(TokenKind::Identifier)) {
+    if (!check(TokenKind::Identifier) && !check(TokenKind::KwOk) && !check(TokenKind::KwFail)) {
         error_at(peek(), "Unexpected token",
                  "Expected a function name after `start`. Found " + token_description(peek()) + ".",
                  "Write `start name(args)` or `start alias.name(args)`.");

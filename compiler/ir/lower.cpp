@@ -95,7 +95,7 @@ bool has_user_call(const Expr* expr) {
 
 bool ir_is_heap_pointer(const IrType& type) {
     return type.kind == IrTypeKind::List || type.kind == IrTypeKind::String || type.kind == IrTypeKind::Map ||
-           type.kind == IrTypeKind::Set || type.kind == IrTypeKind::Json;
+           type.kind == IrTypeKind::Set || type.kind == IrTypeKind::Json || type.kind == IrTypeKind::Task;
 }
 
 bool call_name_allocates(const std::string& qualifier, const std::string& callee) {

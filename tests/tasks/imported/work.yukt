@@ -1,0 +1,2 @@
+share create work(n):
+    give n + 1

@@ -1,0 +1,5 @@
+use hidden
+
+create main:
+    t = start hidden.hidden(1)
+    say wait t

@@ -60,6 +60,7 @@ struct SemanticInfo {
     std::unordered_map<std::string, std::unordered_map<std::string, Type>> local_types;
     std::unordered_map<const FunctionDecl*, std::string> function_ir_names;
     std::unordered_map<const CallExpr*, std::string> call_ir_names;
+    std::unordered_map<const StartExpr*, std::string> start_ir_names;
     std::unordered_map<const CallExpr*, int> record_constructors;
     std::unordered_set<std::string> foreign_functions;
 };

@@ -23,6 +23,7 @@ enum class IrTypeKind {
     Map,
     Set,
     Json,
+    Task,
 };
 
 struct IrType {
@@ -61,6 +62,7 @@ IrType ir_record(int record_id);
 IrType ir_map(IrType value);
 IrType ir_set();
 IrType ir_json();
+IrType ir_task(IrType payload);
 IrType ir_type_from(const Type& type);
 std::string ir_type_name(const IrType& type);
 int list_elem_kind(const IrType& type);

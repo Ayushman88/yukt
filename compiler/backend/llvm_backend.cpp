@@ -136,6 +136,7 @@ llvm::Type* llvm_type(llvm::LLVMContext& context, const IrType& type) {
         case IrTypeKind::Map:
         case IrTypeKind::Set:
         case IrTypeKind::Json:
+        case IrTypeKind::Task:
             return llvm::PointerType::getUnqual(context);
         case IrTypeKind::Record:
             return llvm::PointerType::getUnqual(context);
@@ -1379,6 +1380,7 @@ void LlvmEmitter::emit_print_value(llvm::Value* value, const IrType& type) {
         case IrTypeKind::Map:
         case IrTypeKind::Set:
         case IrTypeKind::Json:
+        case IrTypeKind::Task:
         case IrTypeKind::Void:
             return;
     }

@@ -24,6 +24,7 @@ bool type_owns_heap(const TypeContext& types, Type type, const std::vector<Recor
         case TypeKind::Map:
         case TypeKind::Set:
         case TypeKind::Json:
+        case TypeKind::Task:
             return true;
         case TypeKind::Record: {
             if (records == nullptr || type.record_id < 0 ||
