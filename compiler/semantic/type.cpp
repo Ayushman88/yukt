@@ -5,23 +5,33 @@
 namespace yukt {
 
 Type integer_type() {
-    return Type{.kind = TypeKind::Integer};
+    Type type;
+    type.kind = TypeKind::Integer;
+    return type;
 }
 
 Type float_type() {
-    return Type{.kind = TypeKind::Float};
+    Type type;
+    type.kind = TypeKind::Float;
+    return type;
 }
 
 Type boolean_type() {
-    return Type{.kind = TypeKind::Boolean};
+    Type type;
+    type.kind = TypeKind::Boolean;
+    return type;
 }
 
 Type string_type() {
-    return Type{.kind = TypeKind::String};
+    Type type;
+    type.kind = TypeKind::String;
+    return type;
 }
 
 Type void_type() {
-    return Type{.kind = TypeKind::Void};
+    Type type;
+    type.kind = TypeKind::Void;
+    return type;
 }
 
 Type list_type(Type element) {
@@ -64,11 +74,15 @@ Type map_type(Type value) {
 }
 
 Type set_type() {
-    return Type{.kind = TypeKind::Set};
+    Type type;
+    type.kind = TypeKind::Set;
+    return type;
 }
 
 Type json_type() {
-    return Type{.kind = TypeKind::Json};
+    Type type;
+    type.kind = TypeKind::Json;
+    return type;
 }
 
 Type TypeContext::fresh_variable() {

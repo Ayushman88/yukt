@@ -25,23 +25,33 @@ bool operator!=(const IrType& left, const IrType& right) {
 }
 
 IrType ir_i64() {
-    return IrType{.kind = IrTypeKind::I64};
+    IrType type;
+    type.kind = IrTypeKind::I64;
+    return type;
 }
 
 IrType ir_f64() {
-    return IrType{.kind = IrTypeKind::F64};
+    IrType type;
+    type.kind = IrTypeKind::F64;
+    return type;
 }
 
 IrType ir_bool() {
-    return IrType{.kind = IrTypeKind::Bool};
+    IrType type;
+    type.kind = IrTypeKind::Bool;
+    return type;
 }
 
 IrType ir_string() {
-    return IrType{.kind = IrTypeKind::String};
+    IrType type;
+    type.kind = IrTypeKind::String;
+    return type;
 }
 
 IrType ir_void() {
-    return IrType{.kind = IrTypeKind::Void};
+    IrType type;
+    type.kind = IrTypeKind::Void;
+    return type;
 }
 
 IrType ir_list(IrType element) {
@@ -66,11 +76,15 @@ IrType ir_map(IrType value) {
 }
 
 IrType ir_set() {
-    return IrType{.kind = IrTypeKind::Set};
+    IrType type;
+    type.kind = IrTypeKind::Set;
+    return type;
 }
 
 IrType ir_json() {
-    return IrType{.kind = IrTypeKind::Json};
+    IrType type;
+    type.kind = IrTypeKind::Json;
+    return type;
 }
 
 IrType ir_type_from(const Type& type) {
