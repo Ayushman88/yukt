@@ -514,6 +514,14 @@ std::unique_ptr<Stmt> Parser::parse_statement() {
         synchronize();
         return nullptr;
     }
+    if (check(TokenKind::KwStart) || check(TokenKind::KwWait)) {
+        auto stmt = std::make_unique<ExprStmt>();
+        stmt->span.start = peek().location;
+        stmt->expr = parse_expression();
+        expect_newline("after this expression");
+        stmt->span.end = previous().location;
+        return stmt;
+    }
     if (check(TokenKind::Identifier)) {
         return parse_assignment_or_call();
     }
@@ -735,6 +743,9 @@ std::unique_ptr<Expr> Parser::parse_unary() {
         expr->span.end = expr->operand != nullptr ? expr->operand->span.end : op.location;
         return expr;
     }
+    if (check(TokenKind::KwWait)) {
+        return parse_wait();
+    }
     return parse_postfix();
 }
 
@@ -825,6 +836,10 @@ std::unique_ptr<Expr> Parser::parse_primary() {
         return expr;
     }
 
+    if (check(TokenKind::KwStart)) {
+        return parse_start();
+    }
+
     if (check(TokenKind::KwOk) || check(TokenKind::KwFail)) {
         const Token name = advance();
         if (!check(TokenKind::LParen)) {
@@ -896,6 +911,66 @@ std::unique_ptr<Expr> Parser::parse_primary() {
         advance();
     }
     return nullptr;
+}
+
+std::unique_ptr<Expr> Parser::parse_start() {
+    const Token keyword = advance();
+    auto expr = std::make_unique<StartExpr>();
+    expr->span.start = keyword.location;
+    expr->span.end = keyword.location;
+
+    if (!check(TokenKind::Identifier)) {
+        error_at(peek(), "Unexpected token",
+                 "Expected a function name after `start`. Found " + token_description(peek()) + ".",
+                 "Write `start name(args)` or `start alias.name(args)`.");
+        return expr;
+    }
+
+    const Token first = advance();
+    if (check(TokenKind::Dot)) {
+        const Token dot = advance();
+        Token callee;
+        if (!take_function_name(callee, ".")) {
+            return expr;
+        }
+        expr->qualifier = first.lexeme;
+        expr->qualifier_location = first.location;
+        expr->dot_location = dot.location;
+        expr->callee = std::move(callee.lexeme);
+        expr->callee_location = callee.location;
+    } else {
+        expr->callee = first.lexeme;
+        expr->callee_location = first.location;
+    }
+
+    if (!check(TokenKind::LParen)) {
+        error_at(peek(), "Unexpected token",
+                 "Expected `(` after `start " +
+                     (expr->qualifier.empty() ? expr->callee : expr->qualifier + "." + expr->callee) + "`.",
+                 "Write `start " +
+                     (expr->qualifier.empty() ? expr->callee : expr->qualifier + "." + expr->callee) + "(...)`.");
+        return expr;
+    }
+
+    expr->arguments = parse_argument_list();
+    expr->span.end = previous().location;
+    return expr;
+}
+
+std::unique_ptr<Expr> Parser::parse_wait() {
+    const Token keyword = advance();
+    auto expr = std::make_unique<WaitExpr>();
+    expr->span.start = keyword.location;
+    expr->task = parse_unary();
+    if (expr->task == nullptr) {
+        error_at(peek(), "Unexpected token",
+                 "Expected an expression after `wait`.",
+                 "Write `wait t`.");
+        expr->span.end = keyword.location;
+        return expr;
+    }
+    expr->span.end = expr->task->span.end;
+    return expr;
 }
 
 std::unique_ptr<Expr> Parser::parse_call_from_name(Token name) {

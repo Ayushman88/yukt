@@ -41,6 +41,8 @@ private:
     std::unique_ptr<Expr> parse_unary();
     std::unique_ptr<Expr> parse_postfix();
     std::unique_ptr<Expr> parse_primary();
+    std::unique_ptr<Expr> parse_start();
+    std::unique_ptr<Expr> parse_wait();
     std::unique_ptr<Expr> parse_call_from_name(Token name);
     std::vector<std::unique_ptr<Expr>> parse_argument_list();
 

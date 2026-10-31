@@ -400,5 +400,201 @@ int main() {
         REQUIRE(reserved);
     }
 
+    {
+        const auto result = parse(
+            "create work(n):\n"
+            "    give n + 1\n"
+            "\n"
+            "create main:\n"
+            "    t = start work(3)\n"
+            "    say wait t\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* main = function_named(*result.program, "main");
+        REQUIRE(main != nullptr && main->body.size() == 2);
+        const auto* assign = main != nullptr ? as<yukt::AssignStmt>(main->body[0].get()) : nullptr;
+        REQUIRE(assign != nullptr && assign->name == "t");
+        const auto* start = assign != nullptr ? as<yukt::StartExpr>(assign->value.get()) : nullptr;
+        REQUIRE(start != nullptr);
+        REQUIRE(start != nullptr && start->qualifier.empty());
+        REQUIRE(start != nullptr && start->callee == "work");
+        REQUIRE(start != nullptr && start->arguments.size() == 1);
+        REQUIRE(start != nullptr && as<yukt::IntegerExpr>(start->arguments[0].get()) != nullptr);
+        REQUIRE(start != nullptr && as<yukt::IntegerExpr>(start->arguments[0].get())->value == 3);
+        REQUIRE(as<yukt::CallExpr>(assign != nullptr ? assign->value.get() : nullptr) == nullptr);
+        const auto* say = main != nullptr ? as<yukt::SayStmt>(main->body[1].get()) : nullptr;
+        const auto* wait = say != nullptr ? as<yukt::WaitExpr>(say->value.get()) : nullptr;
+        REQUIRE(wait != nullptr);
+        const auto* waited = wait != nullptr ? as<yukt::IdentifierExpr>(wait->task.get()) : nullptr;
+        REQUIRE(waited != nullptr && waited->name == "t");
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    t = start work()\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* main = function_named(*result.program, "main");
+        const auto* assign = main != nullptr && !main->body.empty() ? as<yukt::AssignStmt>(main->body[0].get()) : nullptr;
+        const auto* start = assign != nullptr ? as<yukt::StartExpr>(assign->value.get()) : nullptr;
+        REQUIRE(start != nullptr && start->callee == "work" && start->arguments.empty());
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    t = start alias.work(3)\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* main = function_named(*result.program, "main");
+        const auto* assign = main != nullptr && !main->body.empty() ? as<yukt::AssignStmt>(main->body[0].get()) : nullptr;
+        const auto* start = assign != nullptr ? as<yukt::StartExpr>(assign->value.get()) : nullptr;
+        REQUIRE(start != nullptr && start->qualifier == "alias" && start->callee == "work");
+        REQUIRE(start != nullptr && start->arguments.size() == 1);
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    t = start add(1, 2)\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* main = function_named(*result.program, "main");
+        const auto* assign = main != nullptr && !main->body.empty() ? as<yukt::AssignStmt>(main->body[0].get()) : nullptr;
+        const auto* start = assign != nullptr ? as<yukt::StartExpr>(assign->value.get()) : nullptr;
+        REQUIRE(start != nullptr && start->callee == "add" && start->arguments.size() == 2);
+        REQUIRE(as<yukt::IntegerExpr>(start->arguments[0].get()) != nullptr &&
+                as<yukt::IntegerExpr>(start->arguments[0].get())->value == 1);
+        REQUIRE(as<yukt::IntegerExpr>(start->arguments[1].get()) != nullptr &&
+                as<yukt::IntegerExpr>(start->arguments[1].get())->value == 2);
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    wait t\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* main = function_named(*result.program, "main");
+        const auto* stmt = main != nullptr && !main->body.empty() ? as<yukt::ExprStmt>(main->body[0].get()) : nullptr;
+        REQUIRE(stmt != nullptr);
+        const auto* wait = stmt != nullptr ? as<yukt::WaitExpr>(stmt->expr.get()) : nullptr;
+        REQUIRE(wait != nullptr);
+        const auto* name = wait != nullptr ? as<yukt::IdentifierExpr>(wait->task.get()) : nullptr;
+        REQUIRE(name != nullptr && name->name == "t");
+    }
+
+    {
+        const auto result = parse(
+            "create work:\n"
+            "    give wait t\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* work = function_named(*result.program, "work");
+        const auto* give = work != nullptr && !work->body.empty() ? as<yukt::GiveStmt>(work->body[0].get()) : nullptr;
+        REQUIRE(give != nullptr && as<yukt::WaitExpr>(give->value.get()) != nullptr);
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    say wait t + 1\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* main = function_named(*result.program, "main");
+        const auto* say = main != nullptr && !main->body.empty() ? as<yukt::SayStmt>(main->body[0].get()) : nullptr;
+        const auto* plus = say != nullptr ? as<yukt::BinaryExpr>(say->value.get()) : nullptr;
+        REQUIRE(plus != nullptr && plus->op == yukt::TokenKind::Plus);
+        REQUIRE(plus != nullptr && as<yukt::WaitExpr>(plus->left.get()) != nullptr);
+        REQUIRE(plus != nullptr && as<yukt::IntegerExpr>(plus->right.get()) != nullptr);
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    say wait wait t\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* main = function_named(*result.program, "main");
+        const auto* say = main != nullptr && !main->body.empty() ? as<yukt::SayStmt>(main->body[0].get()) : nullptr;
+        const auto* outer = say != nullptr ? as<yukt::WaitExpr>(say->value.get()) : nullptr;
+        const auto* inner = outer != nullptr ? as<yukt::WaitExpr>(outer->task.get()) : nullptr;
+        REQUIRE(inner != nullptr && as<yukt::IdentifierExpr>(inner->task.get()) != nullptr);
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    say wait xs[0]\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* main = function_named(*result.program, "main");
+        const auto* say = main != nullptr && !main->body.empty() ? as<yukt::SayStmt>(main->body[0].get()) : nullptr;
+        const auto* wait = say != nullptr ? as<yukt::WaitExpr>(say->value.get()) : nullptr;
+        REQUIRE(wait != nullptr && as<yukt::IndexExpr>(wait->task.get()) != nullptr);
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    greet(name)\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* main = function_named(*result.program, "main");
+        const auto* stmt = main != nullptr && !main->body.empty() ? as<yukt::ExprStmt>(main->body[0].get()) : nullptr;
+        REQUIRE(stmt != nullptr && as<yukt::CallExpr>(stmt->expr.get()) != nullptr);
+        REQUIRE(as<yukt::StartExpr>(stmt != nullptr ? stmt->expr.get() : nullptr) == nullptr);
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    starter = 1\n"
+            "    waiter = 2\n"
+            "    restart = 3\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* main = function_named(*result.program, "main");
+        REQUIRE(main != nullptr && main->body.size() == 3);
+        REQUIRE(as<yukt::AssignStmt>(main->body[0].get()) != nullptr &&
+                as<yukt::AssignStmt>(main->body[0].get())->name == "starter");
+        REQUIRE(as<yukt::AssignStmt>(main->body[1].get()) != nullptr &&
+                as<yukt::AssignStmt>(main->body[1].get())->name == "waiter");
+        REQUIRE(as<yukt::AssignStmt>(main->body[2].get()) != nullptr &&
+                as<yukt::AssignStmt>(main->body[2].get())->name == "restart");
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    t = start\n");
+        REQUIRE(result.diagnostics->has_errors());
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    t = start work\n");
+        REQUIRE(result.diagnostics->has_errors());
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    t = start (3)\n");
+        REQUIRE(result.diagnostics->has_errors());
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    t = start work(1,\n");
+        REQUIRE(result.diagnostics->has_errors());
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    wait\n");
+        REQUIRE(result.diagnostics->has_errors());
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    start = 1\n");
+        REQUIRE(result.diagnostics->has_errors());
+    }
+
     return yukt::test::summary("parser");
 }

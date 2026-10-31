@@ -106,6 +106,24 @@ void CallExpr::print(std::ostream& out, int indent) const {
     }
 }
 
+void StartExpr::print(std::ostream& out, int indent) const {
+    pad(out, indent);
+    out << "Start ";
+    if (!qualifier.empty()) {
+        out << qualifier << '.';
+    }
+    out << callee << '\n';
+    for (const auto& argument : arguments) {
+        print_child(out, argument.get(), indent + 1);
+    }
+}
+
+void WaitExpr::print(std::ostream& out, int indent) const {
+    pad(out, indent);
+    out << "Wait\n";
+    print_child(out, task.get(), indent + 1);
+}
+
 void ListExpr::print(std::ostream& out, int indent) const {
     pad(out, indent);
     out << "List\n";

@@ -71,6 +71,21 @@ struct CallExpr final : Expr {
     void print(std::ostream& out, int indent) const override;
 };
 
+struct StartExpr final : Expr {
+    std::string qualifier;
+    SourceLocation qualifier_location;
+    SourceLocation dot_location;
+    std::string callee;
+    SourceLocation callee_location;
+    std::vector<std::unique_ptr<Expr>> arguments;
+    void print(std::ostream& out, int indent) const override;
+};
+
+struct WaitExpr final : Expr {
+    std::unique_ptr<Expr> task;
+    void print(std::ostream& out, int indent) const override;
+};
+
 struct ListExpr final : Expr {
     std::vector<std::unique_ptr<Expr>> elements;
     void print(std::ostream& out, int indent) const override;
