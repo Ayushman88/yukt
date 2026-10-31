@@ -157,10 +157,10 @@ Goal: make YUKT suitable for serious systems programming.
 
 ## 0.14 — Concurrency and GPU foundations
 
-- Async execution, thread pools, tasks, and synchronization (CPU first)
-- GPU execution interface with a **CPU fallback**
-- NVIDIA CUDA backend prototype on **Linux+NVIDIA only**
-- CPU/GPU memory transfer abstractions
+**Status: 0.14.1 CPU fork-join specified** in `docs/YUKT_014_DESIGN.md` (not implemented). CUDA stays a later slice.
+
+- **0.14.1** — `start` / `wait`, `task[T]`, move-only args/results, existing thread pool, alloc mutex
+- Later: per-thread allocator caches; optional mutex; GPU interface with a **CPU fallback**; NVIDIA CUDA prototype on **Linux+NVIDIA only**
 
 Apple Silicon has no CUDA. Do not claim GPU execution on a Mac.
 
