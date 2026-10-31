@@ -79,9 +79,11 @@ target_include_directories(yukt_compiler PUBLIC ${CMAKE_SOURCE_DIR}/compiler)
 target_compile_definitions(yukt_compiler PUBLIC YUKT_STDLIB_DIR="${CMAKE_SOURCE_DIR}/std")
 yukt_set_warnings(yukt_compiler)
 
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
 add_library(yukt_runtime STATIC runtime/yukt_runtime.c runtime/yukt_013.c)
 target_include_directories(yukt_runtime PUBLIC ${CMAKE_SOURCE_DIR}/runtime)
-target_link_libraries(yukt_runtime PUBLIC m)
+target_link_libraries(yukt_runtime PUBLIC m Threads::Threads)
 
 add_library(yukt_backend
     compiler/backend/llvm_backend.cpp
@@ -279,3 +281,10 @@ target_include_directories(yukt_task_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests)
 target_compile_definitions(yukt_task_tests PRIVATE YUKT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 yukt_set_warnings(yukt_task_tests)
 add_test(NAME yukt_task_tests COMMAND yukt_task_tests)
+
+add_executable(yukt_task_runtime_tests tests/tasks/runtime_task_tests.c)
+target_link_libraries(yukt_task_runtime_tests PRIVATE yukt_runtime)
+add_test(NAME yukt_task_runtime_tests COMMAND yukt_task_runtime_tests)
+add_test(NAME yukt_task_double_wait COMMAND yukt_task_runtime_tests double-wait)
+set_tests_properties(yukt_task_double_wait PROPERTIES
+    PASS_REGULAR_EXPRESSION "YUKT runtime error: double wait or untracked task")

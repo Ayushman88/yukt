@@ -185,7 +185,9 @@ static void yukt_map_grow(YuktMap* map) {
 
 void* yukt_map_new(void) {
     YuktMap* map = yukt_map_alloc(8);
+    yukt_heap_lock();
     yukt_track_obj(map, sizeof(YuktMap));
+    yukt_heap_unlock();
     return map;
 }
 
@@ -630,7 +632,9 @@ void* yukt_json_parse(const char* text) {
         json_free_tree(json);
         json = json_new(YUKT_JSON_INVALID);
     }
+    yukt_heap_lock();
     yukt_track_obj(json, sizeof(YuktJson));
+    yukt_heap_unlock();
     return json;
 }
 
@@ -783,12 +787,15 @@ void yukt_013_free(void* ptr) {
     if (ptr == NULL) {
         return;
     }
+    yukt_heap_lock();
     int tag = *(int*)ptr;
     if (tag == YUKT_OBJ_MAP || tag == YUKT_OBJ_SET) {
         yukt_map_free((YuktMap*)ptr);
+        yukt_heap_unlock();
         return;
     }
     if (tag == YUKT_OBJ_JSON) {
         json_free_tree((YuktJson*)ptr);
     }
+    yukt_heap_unlock();
 }

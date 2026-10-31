@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 #include <math.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,7 +19,7 @@ static void die(const char* message) {
     exit(1);
 }
 
-enum { YUKT_ALLOC_LIST = 1, YUKT_ALLOC_STR = 2, YUKT_ALLOC_OBJ = 3 };
+enum { YUKT_ALLOC_LIST = 1, YUKT_ALLOC_STR = 2, YUKT_ALLOC_OBJ = 3, YUKT_ALLOC_TASK = 4 };
 
 typedef struct YuktAlloc {
     struct YuktAlloc* next;
@@ -44,9 +45,27 @@ typedef struct {
 static YuktCacheBin yukt_list_bins[YUKT_BIN_COUNT];
 static YuktCacheBin yukt_str_bins[YUKT_BIN_COUNT];
 static pthread_mutex_t yukt_reduce_mu = PTHREAD_MUTEX_INITIALIZER;
-/* List/string caches and yukt_allocs are single-threaded. The compiler will not
- * parallelize a loop that allocates. yukt_reduce_* is the only heap-adjacent
- * parallel path and uses yukt_reduce_mu. */
+static pthread_mutex_t yukt_heap_mu;
+static pthread_once_t yukt_heap_once = PTHREAD_ONCE_INIT;
+/* Tracker, bins, and 0.13 object alloc/free take yukt_heap_mu. Do not hold it
+ * across a user task body or a blocking wait. */
+
+static void yukt_heap_init(void) {
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&yukt_heap_mu, &attr);
+    pthread_mutexattr_destroy(&attr);
+}
+
+void yukt_heap_lock(void) {
+    pthread_once(&yukt_heap_once, yukt_heap_init);
+    pthread_mutex_lock(&yukt_heap_mu);
+}
+
+void yukt_heap_unlock(void) {
+    pthread_mutex_unlock(&yukt_heap_mu);
+}
 
 static int yukt_bin_index(size_t bytes) {
     for (int i = 0; i < YUKT_BIN_COUNT; ++i) {
@@ -66,20 +85,26 @@ static size_t yukt_alloc_size(size_t bytes) {
 }
 
 static void* yukt_cache_take(YuktCacheBin* bins, size_t bytes) {
+    yukt_heap_lock();
     const int idx = yukt_bin_index(bytes);
-    if (idx < 0 || bins[idx].count <= 0) {
-        return NULL;
+    void* ptr = NULL;
+    if (idx >= 0 && bins[idx].count > 0) {
+        ptr = bins[idx].slots[--bins[idx].count];
     }
-    return bins[idx].slots[--bins[idx].count];
+    yukt_heap_unlock();
+    return ptr;
 }
 
 static int yukt_cache_put(YuktCacheBin* bins, void* ptr, size_t bytes) {
+    yukt_heap_lock();
     const int idx = yukt_bin_index(bytes);
-    if (ptr == NULL || idx < 0 || bins[idx].count >= YUKT_BIN_SLOTS) {
-        return 0;
+    int ok = 0;
+    if (ptr != NULL && idx >= 0 && bins[idx].count < YUKT_BIN_SLOTS) {
+        bins[idx].slots[bins[idx].count++] = ptr;
+        ok = 1;
     }
-    bins[idx].slots[bins[idx].count++] = ptr;
-    return 1;
+    yukt_heap_unlock();
+    return ok;
 }
 
 static size_t yukt_pad16(size_t bytes) {
@@ -128,20 +153,27 @@ static void yukt_track(int kind, void* ptr, size_t bytes) {
     if (node == NULL) {
         die("out of memory");
     }
-    node->next = yukt_allocs;
     node->kind = kind;
     node->ptr = ptr;
     node->bytes = bytes;
+    yukt_heap_lock();
+    node->next = yukt_allocs;
     yukt_allocs = node;
+    yukt_heap_unlock();
 }
 
 void yukt_track_obj(void* ptr, size_t bytes) {
     yukt_track(YUKT_ALLOC_OBJ, ptr, bytes);
 }
 
+static void yukt_task_destroy_sync(void* ptr);
+
 void yukt_runtime_release(void) {
+    yukt_task_shutdown();
+    yukt_heap_lock();
     YuktAlloc* node = yukt_allocs;
     yukt_allocs = NULL;
+    yukt_heap_unlock();
     while (node != NULL) {
         YuktAlloc* next = node->next;
         if (node->kind == YUKT_ALLOC_LIST) {
@@ -153,6 +185,9 @@ void yukt_runtime_release(void) {
             free(list);
         } else if (node->kind == YUKT_ALLOC_OBJ) {
             yukt_013_free(node->ptr);
+        } else if (node->kind == YUKT_ALLOC_TASK) {
+            yukt_task_destroy_sync(node->ptr);
+            free(node->ptr);
         } else if (!yukt_cache_put(yukt_str_bins, node->ptr, node->bytes)) {
             free(node->ptr);
         }
@@ -162,24 +197,29 @@ void yukt_runtime_release(void) {
 }
 
 int64_t yukt_debug_live_allocs(void) {
+    yukt_heap_lock();
     int64_t n = 0;
     for (YuktAlloc* p = yukt_allocs; p != NULL; p = p->next) {
         n++;
     }
+    yukt_heap_unlock();
     return n;
 }
 
 static YuktAlloc* yukt_untrack(void* ptr) {
+    yukt_heap_lock();
     YuktAlloc** cursor = &yukt_allocs;
+    YuktAlloc* node = NULL;
     while (*cursor != NULL) {
         if ((*cursor)->ptr == ptr) {
-            YuktAlloc* node = *cursor;
+            node = *cursor;
             *cursor = node->next;
-            return node;
+            break;
         }
         cursor = &(*cursor)->next;
     }
-    return NULL;
+    yukt_heap_unlock();
+    return node;
 }
 
 void yukt_release(void* ptr) {
@@ -221,6 +261,9 @@ void yukt_release(void* ptr) {
         free(list);
     } else if (node->kind == YUKT_ALLOC_OBJ) {
         yukt_013_free(node->ptr);
+    } else if (node->kind == YUKT_ALLOC_TASK) {
+        yukt_task_destroy_sync(node->ptr);
+        free(node->ptr);
     } else if (!yukt_cache_put(yukt_str_bins, node->ptr, node->bytes)) {
         free(node->ptr);
     }
@@ -1406,4 +1449,261 @@ int64_t yukt_point_sum(const int64_t* point) {
 
 int8_t yukt_bool_and(int8_t a, int8_t b) {
     return (a != 0 && b != 0) ? 1 : 0;
+}
+
+enum {
+    YUKT_TASK_QUEUED = 0,
+    YUKT_TASK_RUNNING = 1,
+    YUKT_TASK_COMPLETED = 2,
+    YUKT_TASK_CONSUMED = 3,
+};
+
+typedef struct YuktTask {
+    atomic_int state;
+    atomic_int refs;
+    yukt_task_fn fn;
+    void* args;
+    void* result;
+    size_t result_bytes;
+    pthread_mutex_t mu;
+    pthread_cond_t done;
+} YuktTask;
+
+static pthread_mutex_t yukt_task_life_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t yukt_task_life_cv = PTHREAD_COND_INITIALIZER;
+static int yukt_task_inflight = 0;
+
+#if !defined(__APPLE__)
+typedef struct YuktTaskNode {
+    YuktTask* task;
+    struct YuktTaskNode* next;
+} YuktTaskNode;
+
+static pthread_mutex_t yukt_task_qmu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t yukt_task_qcv = PTHREAD_COND_INITIALIZER;
+static YuktTaskNode* yukt_task_qhead = NULL;
+static YuktTaskNode* yukt_task_qtail = NULL;
+static pthread_t yukt_task_threads[YUKT_PAR_MAX_TASKS];
+static int yukt_task_nthreads = 0;
+static int yukt_task_stop = 0;
+#endif
+
+static void yukt_task_destroy_sync(void* ptr) {
+    YuktTask* task = (YuktTask*)ptr;
+    if (task == NULL) {
+        return;
+    }
+    pthread_mutex_destroy(&task->mu);
+    pthread_cond_destroy(&task->done);
+}
+
+static void yukt_task_note_start(void) {
+    pthread_mutex_lock(&yukt_task_life_mu);
+    yukt_task_inflight++;
+    pthread_mutex_unlock(&yukt_task_life_mu);
+}
+
+static void yukt_task_note_done(void) {
+    pthread_mutex_lock(&yukt_task_life_mu);
+    yukt_task_inflight--;
+    pthread_cond_broadcast(&yukt_task_life_cv);
+    pthread_mutex_unlock(&yukt_task_life_mu);
+}
+
+static void yukt_task_run_body(YuktTask* task) {
+    if (task->fn != NULL) {
+        task->fn(task->args, task->result);
+    }
+    pthread_mutex_lock(&task->mu);
+    atomic_store(&task->state, YUKT_TASK_COMPLETED);
+    pthread_cond_broadcast(&task->done);
+    pthread_mutex_unlock(&task->mu);
+    yukt_task_note_done();
+}
+
+static void yukt_task_drop(YuktTask* task) {
+    if (task == NULL) {
+        return;
+    }
+    if (atomic_fetch_sub(&task->refs, 1) == 1) {
+        yukt_release(task);
+    }
+}
+
+void yukt_task_worker_try(void* task_ptr) {
+    YuktTask* task = (YuktTask*)task_ptr;
+    if (task == NULL) {
+        return;
+    }
+    int expected = YUKT_TASK_QUEUED;
+    if (atomic_compare_exchange_strong(&task->state, &expected, YUKT_TASK_RUNNING)) {
+        yukt_task_run_body(task);
+    }
+}
+
+#if !defined(__APPLE__)
+static void* yukt_task_pool_worker(void* arg) {
+    (void)arg;
+    for (;;) {
+        pthread_mutex_lock(&yukt_task_qmu);
+        while (!yukt_task_stop && yukt_task_qhead == NULL) {
+            pthread_cond_wait(&yukt_task_qcv, &yukt_task_qmu);
+        }
+        if (yukt_task_stop && yukt_task_qhead == NULL) {
+            pthread_mutex_unlock(&yukt_task_qmu);
+            return NULL;
+        }
+        YuktTaskNode* node = yukt_task_qhead;
+        yukt_task_qhead = node->next;
+        if (yukt_task_qhead == NULL) {
+            yukt_task_qtail = NULL;
+        }
+        pthread_mutex_unlock(&yukt_task_qmu);
+        yukt_task_worker_try(node->task);
+        yukt_task_drop(node->task);
+        free(node);
+    }
+}
+
+static void yukt_task_ensure_pool(void) {
+    if (yukt_task_nthreads > 0) {
+        return;
+    }
+    long ncpu = yukt_par_ncpu();
+    if (ncpu < 1) {
+        ncpu = 1;
+    }
+    if (ncpu > YUKT_PAR_MAX_TASKS) {
+        ncpu = YUKT_PAR_MAX_TASKS;
+    }
+    yukt_task_stop = 0;
+    for (int t = 0; t < ncpu; ++t) {
+        if (pthread_create(&yukt_task_threads[t], NULL, yukt_task_pool_worker, NULL) != 0) {
+            break;
+        }
+        yukt_task_nthreads = t + 1;
+    }
+}
+
+static void yukt_task_enqueue(YuktTask* task) {
+    pthread_mutex_lock(&yukt_task_qmu);
+    yukt_task_ensure_pool();
+    if (yukt_task_nthreads < 1) {
+        pthread_mutex_unlock(&yukt_task_qmu);
+        yukt_task_worker_try(task);
+        yukt_task_drop(task);
+        return;
+    }
+    YuktTaskNode* node = (YuktTaskNode*)malloc(sizeof(YuktTaskNode));
+    if (node == NULL) {
+        pthread_mutex_unlock(&yukt_task_qmu);
+        die("out of memory");
+    }
+    node->task = task;
+    node->next = NULL;
+    if (yukt_task_qtail == NULL) {
+        yukt_task_qhead = node;
+        yukt_task_qtail = node;
+    } else {
+        yukt_task_qtail->next = node;
+        yukt_task_qtail = node;
+    }
+    pthread_cond_signal(&yukt_task_qcv);
+    pthread_mutex_unlock(&yukt_task_qmu);
+}
+#endif
+
+void* yukt_task_start(yukt_task_fn fn, void* args, size_t result_bytes, size_t result_align) {
+    if (fn == NULL) {
+        die("task function is null");
+    }
+    if (result_align < 1) {
+        result_align = 1;
+    }
+    size_t prefix = sizeof(YuktTask);
+    if (result_bytes > 0) {
+        const size_t rem = prefix % result_align;
+        if (rem != 0) {
+            prefix += result_align - rem;
+        }
+    }
+    const size_t total = prefix + result_bytes;
+    YuktTask* task = (YuktTask*)calloc(1, total);
+    if (task == NULL) {
+        die("out of memory");
+    }
+    atomic_init(&task->state, YUKT_TASK_QUEUED);
+    atomic_init(&task->refs, 2);
+    task->fn = fn;
+    task->args = args;
+    task->result_bytes = result_bytes;
+    task->result = result_bytes == 0 ? NULL : (void*)((char*)task + prefix);
+    if (pthread_mutex_init(&task->mu, NULL) != 0 || pthread_cond_init(&task->done, NULL) != 0) {
+        free(task);
+        die("out of memory");
+    }
+    yukt_track(YUKT_ALLOC_TASK, task, total);
+    yukt_task_note_start();
+#if defined(__APPLE__)
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{
+        yukt_task_worker_try(task);
+        yukt_task_drop(task);
+    });
+#else
+    yukt_task_enqueue(task);
+#endif
+    return task;
+}
+
+static void yukt_task_consume(YuktTask* task, void* result_out) {
+    int expected = YUKT_TASK_COMPLETED;
+    if (!atomic_compare_exchange_strong(&task->state, &expected, YUKT_TASK_CONSUMED)) {
+        die("double wait or untracked task");
+    }
+    if (result_out != NULL && task->result != NULL && task->result_bytes > 0) {
+        memcpy(result_out, task->result, task->result_bytes);
+    }
+    yukt_task_drop(task);
+}
+
+void yukt_task_wait(void* task_ptr, void* result_out) {
+    YuktTask* task = (YuktTask*)task_ptr;
+    if (task == NULL) {
+        die("double wait or untracked task");
+    }
+    int expected = YUKT_TASK_QUEUED;
+    if (atomic_compare_exchange_strong(&task->state, &expected, YUKT_TASK_RUNNING)) {
+        yukt_task_run_body(task);
+        yukt_task_consume(task, result_out);
+        return;
+    }
+    pthread_mutex_lock(&task->mu);
+    while (atomic_load(&task->state) == YUKT_TASK_RUNNING) {
+        pthread_cond_wait(&task->done, &task->mu);
+    }
+    const int state = atomic_load(&task->state);
+    pthread_mutex_unlock(&task->mu);
+    if (state != YUKT_TASK_COMPLETED) {
+        die("double wait or untracked task");
+    }
+    yukt_task_consume(task, result_out);
+}
+
+void yukt_task_shutdown(void) {
+    pthread_mutex_lock(&yukt_task_life_mu);
+    while (yukt_task_inflight > 0) {
+        pthread_cond_wait(&yukt_task_life_cv, &yukt_task_life_mu);
+    }
+    pthread_mutex_unlock(&yukt_task_life_mu);
+#if !defined(__APPLE__)
+    pthread_mutex_lock(&yukt_task_qmu);
+    yukt_task_stop = 1;
+    pthread_cond_broadcast(&yukt_task_qcv);
+    pthread_mutex_unlock(&yukt_task_qmu);
+    for (int t = 0; t < yukt_task_nthreads; ++t) {
+        pthread_join(yukt_task_threads[t], NULL);
+    }
+    yukt_task_nthreads = 0;
+    yukt_task_stop = 0;
+#endif
 }

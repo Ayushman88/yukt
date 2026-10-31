@@ -4,7 +4,7 @@
  * Six classes: 16, 64, 256, 4096, 65536, 1048576 bytes.
  * Four slots per class; list and string caches are separate.
  * Max retained after yukt_runtime_release: 8,948,352 bytes.
- * Caches are not thread-safe. */
+ * Tracker, bins, and 0.13 object alloc/free take one recursive heap mutex. */
 
 #include <stddef.h>
 #include <stdint.h>
@@ -122,6 +122,14 @@ int8_t yukt_bool_and(int8_t a, int8_t b);
 
 void yukt_track_obj(void* ptr, size_t bytes);
 void yukt_013_free(void* ptr);
+void yukt_heap_lock(void);
+void yukt_heap_unlock(void);
+
+typedef void (*yukt_task_fn)(void* args, void* result);
+void* yukt_task_start(yukt_task_fn fn, void* args, size_t result_bytes, size_t result_align);
+void yukt_task_wait(void* task, void* result_out);
+void yukt_task_worker_try(void* task);
+void yukt_task_shutdown(void);
 
 void* yukt_map_new(void);
 void yukt_map_set_i64(void* map, const char* key, int64_t value);
