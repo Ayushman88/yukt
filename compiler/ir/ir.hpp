@@ -124,6 +124,8 @@ enum class IrOp {
     FieldSet,
     Drop,
     Addr,
+    Start,
+    Wait,
 };
 
 struct IrInst {

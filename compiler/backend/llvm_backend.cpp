@@ -923,6 +923,13 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
             }
             builder_.CreateCall(runtime("yukt_release"), {materialize(inst.args[0])});
             return nullptr;
+        case IrOp::Start:
+            return llvm::PoisonValue::get(type_of(inst.dest.type));
+        case IrOp::Wait:
+            if (inst.dest.type.kind == IrTypeKind::Void) {
+                return nullptr;
+            }
+            return llvm::PoisonValue::get(type_of(inst.dest.type));
         case IrOp::Addr: {
             llvm::Value* base = locals_.at(inst.name);
             if (inst.field_index < 0 || current_ir_fn_ == nullptr) {

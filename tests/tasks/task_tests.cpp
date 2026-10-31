@@ -1,4 +1,6 @@
 #include "driver/driver.hpp"
+#include "ir/ir.hpp"
+#include "ir/lower.hpp"
 #include "semantic/type.hpp"
 #include "test_harness.hpp"
 
@@ -192,6 +194,23 @@ int main() {
     {
         const auto result = check_file("tests/tasks/imported/app_private.yukt");
         REQUIRE(has_title(result, "Unknown function"));
+    }
+
+    {
+        const auto result = check_file("tests/tasks/basic.yukt");
+        REQUIRE(!result.diagnostics->has_errors());
+        yukt::IrModule module;
+        if (!result.graph.modules.empty()) {
+            module = yukt::lower_to_ir(result.graph, result.semantic);
+        } else {
+            module = yukt::lower_to_ir(*result.program, result.semantic, result.path);
+        }
+        std::ostringstream printed;
+        yukt::print_ir(module, printed);
+        const std::string ir = printed.str();
+        REQUIRE(ir.find(" = start ") != std::string::npos);
+        REQUIRE(ir.find(" = wait ") != std::string::npos);
+        REQUIRE(ir.find("t: task[i64]") != std::string::npos);
     }
 
     return yukt::test::summary("yukt_task_tests");

@@ -345,6 +345,20 @@ void print_ir(const IrModule& module, std::ostream& out) {
                         }
                         out << '\n';
                         break;
+                    case IrOp::Start:
+                        out << value_text(inst.dest) << " = start " << inst.name << '(';
+                        for (std::size_t i = 0; i < inst.args.size(); ++i) {
+                            if (i != 0) {
+                                out << ", ";
+                            }
+                            out << value_text(inst.args[i]);
+                        }
+                        out << ")\n";
+                        break;
+                    case IrOp::Wait:
+                        out << value_text(inst.dest) << " = wait " << (inst.args.empty() ? "undef" : value_text(inst.args[0]))
+                            << '\n';
+                        break;
                 }
             }
             out << "    ";

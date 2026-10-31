@@ -1,0 +1,6 @@
+create work(n):
+    give n + 1
+
+create main:
+    t = start work(3)
+    say wait t

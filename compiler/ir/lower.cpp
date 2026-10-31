@@ -52,6 +52,17 @@ bool expr_mentions(const Expr* expr, const std::string& name) {
     if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
         return expr_mentions(field->object.get(), name);
     }
+    if (const auto* start = dynamic_cast<const StartExpr*>(expr)) {
+        for (const auto& argument : start->arguments) {
+            if (expr_mentions(argument.get(), name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (const auto* wait = dynamic_cast<const WaitExpr*>(expr)) {
+        return expr_mentions(wait->task.get(), name);
+    }
     return false;
 }
 
@@ -89,6 +100,12 @@ bool has_user_call(const Expr* expr) {
     }
     if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
         return has_user_call(field->object.get());
+    }
+    if (dynamic_cast<const StartExpr*>(expr) != nullptr) {
+        return true;
+    }
+    if (const auto* wait = dynamic_cast<const WaitExpr*>(expr)) {
+        return has_user_call(wait->task.get());
     }
     return false;
 }
@@ -151,6 +168,16 @@ void collect_reads(const Expr* expr, std::set<std::string>& names) {
     }
     if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
         collect_reads(field->object.get(), names);
+        return;
+    }
+    if (const auto* start = dynamic_cast<const StartExpr*>(expr)) {
+        for (const auto& argument : start->arguments) {
+            collect_reads(argument.get(), names);
+        }
+        return;
+    }
+    if (const auto* wait = dynamic_cast<const WaitExpr*>(expr)) {
+        collect_reads(wait->task.get(), names);
     }
 }
 
@@ -777,6 +804,8 @@ private:
     IrValue lower_unary(const UnaryExpr& expr);
     IrValue lower_binary(const BinaryExpr& expr);
     IrValue lower_call(const CallExpr& expr);
+    IrValue lower_start(const StartExpr& expr);
+    IrValue lower_wait(const WaitExpr& expr);
     IrValue lower_addr(const Expr* expr);
     IrValue lower_list(const ListExpr& expr);
     IrValue lower_index(const IndexExpr& expr);
@@ -1523,6 +1552,17 @@ bool Lowerer::expr_allocates(const Expr* expr) const {
     if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
         return expr_allocates(field->object.get());
     }
+    if (const auto* start = dynamic_cast<const StartExpr*>(expr)) {
+        for (const auto& argument : start->arguments) {
+            if (expr_allocates(argument.get())) {
+                return true;
+            }
+        }
+        return true;
+    }
+    if (const auto* wait = dynamic_cast<const WaitExpr*>(expr)) {
+        return expr_allocates(wait->task.get());
+    }
     return false;
 }
 
@@ -1880,6 +1920,12 @@ IrValue Lowerer::lower_expression(const Expr* expr) {
     if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
         return emit_field_get(lower_expression(field->object.get()), field->field, type_of(expr));
     }
+    if (const auto* start = dynamic_cast<const StartExpr*>(expr)) {
+        return lower_start(*start);
+    }
+    if (const auto* wait = dynamic_cast<const WaitExpr*>(expr)) {
+        return lower_wait(*wait);
+    }
     IrValue value;
     value.kind = IrValue::Kind::Undef;
     return value;
@@ -2169,6 +2215,30 @@ IrValue Lowerer::lower_call(const CallExpr& expr) {
     inst.dest = make_temp(type_of(&expr));
     emit(inst);
     note_user_call_moves(expr);
+    return inst.dest;
+}
+
+IrValue Lowerer::lower_start(const StartExpr& expr) {
+    IrInst inst;
+    inst.op = IrOp::Start;
+    const auto found = semantic_.start_ir_names.find(&expr);
+    inst.name = found != semantic_.start_ir_names.end() ? found->second : expr.callee;
+    for (const auto& argument : expr.arguments) {
+        inst.args.push_back(lower_expression(argument.get()));
+        consume_heap_expr(argument.get());
+    }
+    inst.dest = make_temp(type_of(&expr));
+    emit(inst);
+    return inst.dest;
+}
+
+IrValue Lowerer::lower_wait(const WaitExpr& expr) {
+    IrInst inst;
+    inst.op = IrOp::Wait;
+    inst.args.push_back(lower_expression(expr.task.get()));
+    consume_heap_expr(expr.task.get());
+    inst.dest = make_temp(type_of(&expr));
+    emit(inst);
     return inst.dest;
 }
 
