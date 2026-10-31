@@ -400,7 +400,8 @@ void Analyzer::collect_functions() {
 
 bool is_builtin_type_name(const std::string& name) {
     return name == "integer" || name == "float" || name == "boolean" || name == "string" || name == "list" ||
-           name == "error" || name == "result" || name == "map" || name == "set" || name == "json";
+           name == "error" || name == "result" || name == "map" || name == "set" || name == "json" ||
+           name == "task";
 }
 
 void Analyzer::collect_records() {
@@ -704,6 +705,15 @@ Type Analyzer::resolve_type_name(const TypeName& name, int module_index, bool in
                 return make_result(types_.fresh_variable());
             }
             return make_result(resolve_type_name(name.arguments[0], module_index, in_shared_record));
+        }
+        if (name.name == "task") {
+            if (name.arguments.empty()) {
+                error(name.name_location, "Unexpected token",
+                      "`task` needs a payload type, for example `task[integer]`.",
+                      "Write `task[T]`.");
+                return task_type(types_.fresh_variable());
+            }
+            return task_type(resolve_type_name(name.arguments[0], module_index, in_shared_record));
         }
         if (name.name == "map") {
             return map_type(types_.fresh_variable());

@@ -41,7 +41,7 @@ That is an upper bound on **cached payloads**. Tracker nodes and live objects du
 
 ### Thread safety
 
-The caches and the allocation tracker are **not locked**. The 0.11 compiler refuses to parallelize a `repeat` whose body allocates (`zeros`, list literals, string concatenation). Parallel fills only write existing payloads. Parallel reduction combines use `yukt_reduce_mu`.
+One recursive mutex, `yukt_heap_mu`, covers the allocation tracker, size-class bins, and 0.13 object alloc/free. Task workers and parallel `repeat` bodies that allocate take this mutex. Do not hold it across a user `start` body or a blocking `wait`. Parallel reduction combines still use `yukt_reduce_mu`. The 0.11 compiler still refuses to parallelize a `repeat` whose body allocates (`zeros`, list literals, string concatenation).
 
 ## Parallel reductions
 
@@ -65,13 +65,35 @@ The caches and the allocation tracker are **not locked**. The 0.11 compiler refu
 
 ## Ownership release (0.13.2)
 
-`yukt_release(void* ptr)` unregisters one tracked list or string and returns
-its payload to the size-class cache or `free`. Lists drop owned elements
-first. The compiler inserts this call. `yukt_runtime_release` still runs
-when `yukt_main` returns and releases anything still registered.
+`yukt_release(void* ptr)` unregisters one tracked list, string, object, or
+task and returns its payload to the size-class cache or `free`. Lists drop
+owned elements first. The compiler inserts this call. `yukt_runtime_release`
+calls `yukt_task_shutdown` first, then releases anything still registered.
 Caps, six classes, and four slots are unchanged.
 
 Releasing null is a no-op. Releasing a pointer that is not registered, or a
 live object twice, traps. String literals are copied into tracked buffers when
 they become owned values; the static literal is never released. See
 `docs/LANGUAGE_SPEC.md` (0.13.2 — Ownership).
+
+## CPU tasks (0.14.1)
+
+`start` enqueues a function on a general task queue. It does **not** call
+`yukt_parallel_for`. macOS uses `dispatch_async` on the global queue. Linux
+uses dedicated persistent pthreads (≤32), separate from range-parallel workers.
+
+Task states are Queued → Running → Completed → Consumed, claimed with atomic
+CAS. `wait` that wins Queued→Running runs the body inline. Otherwise it blocks
+until Completed. A second `wait` traps (`double wait or untracked task`).
+
+Each task starts with two refs: the waiter and the dispatched worker. The last
+drop releases the wrapper. `yukt_task_shutdown` waits until no body is running
+and every worker callback has dropped, then joins the Linux pool. Main return
+calls shutdown before `yukt_runtime_release`.
+
+A trap in a worker (`die`) prints `YUKT runtime error:` and `exit(1)`. It does
+not become `fail`.
+
+Running-wait cycles can hang. 0.14.1 has no timeout or deadlock detector. The
+inline-claim rule only prevents waiting on a still-queued child from starving
+the pool.

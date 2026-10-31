@@ -1,9 +1,9 @@
 # YUKT Language Specification
 
-Version: 0.13.6 (implemented on `main`; `v0.13.1` exists locally and is not pushed; there is no `v0.13.2` / `v0.13.6` tag). 0.14.1 is **specified, not implemented**. 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`.  
-Status: 0.12 language plus **records** ([0.13.1 — Records](#0131--records)), **ownership** ([0.13.2 — Ownership](#0132--ownership)), **references** ([0.13.3 — References](#0133--references)), **foreign C** ([0.13.4 — Foreign C](#0134--foreign-c)), **errors** ([0.13.5 — Errors](#0135--errors)), **stdlib expansion** ([0.13.6 — Stdlib](#0136--stdlib)), and the approved **CPU task** surface ([0.14.1 — CPU tasks](#0141--cpu-tasks)). Numerical semantics for signed overflow and float rounding are unchanged.
+Version: 0.14.1 (implemented on `main`; no `v0.14.1` tag yet). `v0.13.1` exists locally and is not pushed; there is no `v0.13.2` / `v0.13.6` tag. 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`.  
+Status: 0.12 language plus **records** ([0.13.1 — Records](#0131--records)), **ownership** ([0.13.2 — Ownership](#0132--ownership)), **references** ([0.13.3 — References](#0133--references)), **foreign C** ([0.13.4 — Foreign C](#0134--foreign-c)), **errors** ([0.13.5 — Errors](#0135--errors)), **stdlib expansion** ([0.13.6 — Stdlib](#0136--stdlib)), and **CPU tasks** ([0.14.1 — CPU tasks](#0141--cpu-tasks)). Numerical semantics for signed overflow and float rounding are unchanged.
 
-This document is the source of truth for YUKT syntax. **0.13.1 through 0.13.6 are implemented.** **0.14.1 is specified and not implemented.** For implemented slices, if the compiler and this file disagree, that is a bug. The compiler must not accept `start` / `wait` / `task[T]` until 0.14.1 is implemented.
+This document is the source of truth for YUKT syntax. **0.13.1 through 0.14.1 are implemented.** For implemented slices, if the compiler and this file disagree, that is a bug.
 
 ## Design
 
@@ -18,7 +18,7 @@ YUKT is an English-inspired, statically typed, compiled language. The first synt
 - `repeat` iterates a range
 - `if` / `otherwise` choose a branch
 - `ok` / `fail` construct `result[T]` (0.13.5)
-- `start` / `wait` and `task[T]` run a function on the host pool (0.14.1; specified, not implemented)
+- `start` / `wait` and `task[T]` run a function on the host pool (0.14.1)
 
 The compiler does not invent additional syntax beyond this document.
 
@@ -47,9 +47,9 @@ start
 wait
 ```
 
-These cannot be used as variable names, parameter names, aliases, `repeat` iterators, record names, field names, or function names, with one exception: **`repeat`** may be a function name after `create` / `share create` and after `.` in a qualified call, so `std/str` can export `str.repeat(...)`. `create if`, `record if`, and `math.give(...)` remain errors. Statement position is unchanged: `repeat i in 1..5:` is still a loop. `use`, `share`, and `as` are reserved from 0.12. `record` is reserved from 0.13.1. `ref` is reserved from 0.13.3. `foreign` is reserved from 0.13.4. `ok` and `fail` are reserved from 0.13.5. `start` and `wait` are reserved keywords from 0.14.1. The lexer emits `START` / `WAIT` tokens, and the parser accepts `start name(args)` and `wait` expressions. Semantics, `task[T]`, and the runtime are not implemented yet. `task` is a builtin type name like `map`, not a reserved word.
+These cannot be used as variable names, parameter names, aliases, `repeat` iterators, record names, field names, or function names, with one exception: **`repeat`** may be a function name after `create` / `share create` and after `.` in a qualified call, so `std/str` can export `str.repeat(...)`. `create if`, `record if`, and `math.give(...)` remain errors. Statement position is unchanged: `repeat i in 1..5:` is still a loop. `use`, `share`, and `as` are reserved from 0.12. `record` is reserved from 0.13.1. `ref` is reserved from 0.13.3. `foreign` is reserved from 0.13.4. `ok` and `fail` are reserved from 0.13.5. `start` and `wait` are reserved keywords from 0.14.1. The lexer emits `START` / `WAIT` tokens, and the parser accepts `start name(args)` and `wait` expressions. `task` is a builtin type name like `map`, not a reserved word.
 
-**Compatibility.** Making `start` and `wait` reserved is a breaking change for 0.13 programs that use those spellings as identifiers. The 0.13.6 tree already does: `std/str.yukt` and `std/list.yukt` name a `slice` parameter `start`, and `tests/ownership/list_slice_owned_trap_start.yukt` binds `start = 0 - 1`. Those programs compile today and will not parse once 0.14.1 lands unless the identifiers are renamed. See [Reserved-word compatibility](#reserved-word-compatibility). This conflicts with the 0.14.1 design sentence “programs that never write `start` or `wait` stay valid,” which is true only if “write” means the task operations, not the identifier spellings. The approved design keeps reserved words; it does not authorize contextual keywords. Implementation must rename the existing identifiers. It must not invent a new keyword rule without a new approval.
+**Compatibility.** Making `start` and `wait` reserved is a breaking change for 0.13 programs that used those spellings as identifiers. Those identifiers were renamed when 0.14.1 landed (`from` / `lo`). See [Reserved-word compatibility](#reserved-word-compatibility). Contextual keywords are not authorized.
 
 ## Lexical tokens
 
@@ -1120,7 +1120,7 @@ Map values in this slice are integer, float, boolean, or string. `std/array` is 
 
 ## 0.14.1 — CPU tasks
 
-**Status: specified, not implemented.** This section is the source of truth for the approved 0.14.1 language surface. It copies `docs/YUKT_014_DESIGN.md` without changing 0.13 meaning. The compiler must not accept this syntax until the slice is implemented. Implementation notes that are not language semantics live in `docs/YUKT_014_DESIGN.md`.
+**Status: implemented.** This section is the source of truth for the 0.14.1 language surface. Implementation notes that are not language semantics live in `docs/YUKT_014_DESIGN.md`.
 
 0.14.1 is independently releasable as a feature: a program that never uses the **operations** `start` / `wait` keeps 0.13 meaning. Reserving the **words** `start` and `wait` is a separate compatibility break; see [Reserved-word compatibility](#reserved-word-compatibility).
 
@@ -1211,6 +1211,7 @@ Nested records that contain heap fields move as they do today: the whole record 
 | `start` of an unknown name | `Unknown function` (existing) |
 | Heap arg used after `start` | `Use after move` |
 | `start foo(x)` where `foo` takes `ref` | `Cannot start a ref` |
+| `wait` of a `ref task[T]` | `Cannot move out of a ref` (existing) |
 | Unused task | `Unused task` |
 | `say t` / `wait` of non-task | `Type mismatch` |
 | `start` in a planned-parallel `repeat` | `Cannot start inside parallel repeat` |
@@ -1232,15 +1233,13 @@ Approved design: `start` and `wait` are reserved words.
 
 Conflict with the same design’s “programs that never write `start` or `wait` stay valid”:
 
-| Current 0.13.6 identifier | File | After 0.14.1 reserved words |
+| 0.13.6 identifier | File | 0.14.1 name |
 | --- | --- | --- |
-| parameter `start` | `std/str.yukt` `slice(s, start, end)` | parse error unless renamed |
-| parameter `start` | `std/list.yukt` `slice(src, start, end)` | parse error unless renamed |
-| local `start` | `tests/ownership/list_slice_owned_trap_start.yukt` | parse error unless renamed |
+| parameter `start` | `std/str.yukt` `slice` | `from` |
+| parameter `start` | `std/list.yukt` `slice` | `from` |
+| local `start` | `tests/ownership/list_slice_owned_trap_start.yukt` | `lo` |
 
-No current `.yukt` file uses `wait` as an identifier. `task` is not reserved.
-
-This is acknowledged, not redesigned. Implementation of 0.14.1 must rename those identifiers (for example `from` / `lo`) so stdlib and ownership tests keep their meaning. Contextual-keyword handling is **not** authorized.
+No current `.yukt` file uses `wait` as an identifier. `task` is not reserved. Contextual-keyword handling is **not** authorized.
 
 ### Regression gate (0.14.1)
 
@@ -1251,5 +1250,6 @@ This is acknowledged, not redesigned. Implementation of 0.14.1 must rename those
 - Two `start`s, `wait` in either order, both results correct
 - Spawned body may allocate a string and `give ok(...)`; `wait` returns that `result`
 - `start` inside a planned-parallel `repeat` is rejected
-- Do not claim Linux until the 0.13 Linux job is green
+- Worker traps abort the process with `YUKT runtime error:`
+- Running-wait cycles can hang; 0.14.1 has no timeout or detector
 

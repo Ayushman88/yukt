@@ -121,6 +121,36 @@ int main() {
 
     {
         const auto result = check_source(
+            "create take(t: ref task[integer]):\n"
+            "    give wait t\n"
+            "create work(n):\n"
+            "    give n\n"
+            "create main:\n"
+            "    t = start work(1)\n"
+            "    say take(t)\n");
+        REQUIRE(has_title(result, "Cannot move out of a ref"));
+    }
+
+    {
+        const auto result = check_source(
+            "record task:\n"
+            "    n: integer\n"
+            "create main:\n"
+            "    say 1\n");
+        REQUIRE(has_title(result, "Invalid record"));
+    }
+
+    {
+        const auto result = check_source(
+            "record Box:\n"
+            "    t: task[integer]\n"
+            "create main:\n"
+            "    say 1\n");
+        REQUIRE(!result.diagnostics->has_errors());
+    }
+
+    {
+        const auto result = check_source(
             "create work(n):\n"
             "    give n\n"
             "create main:\n"

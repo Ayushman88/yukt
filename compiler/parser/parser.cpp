@@ -294,11 +294,11 @@ TypeName Parser::parse_type_name() {
     type.name = first.lexeme;
     type.name_location = first.location;
     type.span.end = first.location;
-    if (type.name == "result" && match(TokenKind::LBracket)) {
+    if ((type.name == "result" || type.name == "task") && match(TokenKind::LBracket)) {
         type.arguments.push_back(parse_type_name());
         if (!consume(TokenKind::RBracket, "Unexpected token",
-                     "Expected `]` after the payload type of `result`.",
-                     "Write `result[integer]`.")) {
+                     "Expected `]` after the payload type of `" + type.name + "`.",
+                     "Write `" + type.name + "[integer]`.")) {
             return type;
         }
         type.span.end = previous().location;

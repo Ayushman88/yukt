@@ -1,10 +1,10 @@
 # YUKT 0.14 design — Concurrency foundations
 
-Status: **0.14.1 CPU fork-join specified, not implemented.** Language surface is in `docs/LANGUAGE_SPEC.md`. 0.13.1–0.13.6 are on `main` at `d296d80`. CUDA / GPU stay a later 0.14 slice. Linux x86-64 CI **ran on `d296d80` and failed** (GCC `-Werror=missing-field-initializers` in `compiler/semantic/type.cpp`). macOS arm64 CI passed. There is no `v0.13.6` tag.
+Status: **0.14.1 CPU fork-join implemented.** Language surface is in `docs/LANGUAGE_SPEC.md`. CUDA / GPU stay a later 0.14 slice. There is no `v0.13.6` tag and no `v0.14.1` tag yet. Type construction uses field assignment so GCC `-Werror=missing-field-initializers` does not fire.
 
 0.14 is a **language** milestone. A thread pool already exists for automatic `repeat`. 0.14.1 adds an explicit, typed way to run a function on that pool and wait for its value. It must not pretend implicit parallel loops are a task API.
 
-Do not implement 0.14.1 until this file’s syntax is copied into `docs/LANGUAGE_SPEC.md`.
+The 0.14.1 syntax lives in `docs/LANGUAGE_SPEC.md`. This file keeps implementation notes.
 
 ## Goal
 
@@ -134,7 +134,7 @@ This is the 0.13.2 state machine, not a new one.
 ## Approval
 
 Language surface, runtime, and gate: **accepted in design review (2026-10-31).**  
-Written spec: `docs/LANGUAGE_SPEC.md` § 0.14.1, copied from this file. Implementation waits for an implementation plan review and explicit authorization.
+Written spec: `docs/LANGUAGE_SPEC.md` § 0.14.1. Implementation follows `docs/superpowers/plans/2026-11-01-0141-cpu-tasks.md`.
 
 ## Implementation notes (not language changes)
 

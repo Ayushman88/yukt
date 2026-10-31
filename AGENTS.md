@@ -6,11 +6,11 @@ YUKT is a real programming language. The compiler is handwritten C++20. Do not i
 
 ## Current milestone
 
-**0.14 — planning** (0.13.1–0.13.6 are on `main` at `5463e7f`; 0.13.1 records are tagged `v0.13.1` locally, not pushed; 0.12 remains tagged `v0.12.1`; 0.11 remains tagged `v0.11.0`. There is no `v0.13.2` / `v0.13.6` tag).
+**0.14.1 — CPU tasks implemented** (0.13.1–0.13.6 remain on `main`; 0.13.1 records are tagged `v0.13.1` locally, not pushed; 0.12 remains tagged `v0.12.1`; 0.11 remains tagged `v0.11.0`. There is no `v0.13.2` / `v0.13.6` / `v0.14.1` tag).
 
-Implemented: lexer, parser, AST, diagnostics (notes, GNU line, TTY color, per-file locations), scopes, type inference, YUKT IR, LLVM lowering, host object emission, `yukt build`, `yukt run`, `yukt --explain`, LLVM O3, list indexing, `count` / `zeros`, work-based automatic parallelization, simple +/* parallel reductions, adaptive runtime parallelization, host-CPU SIMD via LLVM vectorize, counted-loop lowering, range-parallel runtime, aligned list payloads, size-class payload reuse, host-native CI (macOS arm64, Linux x86-64), the 0.08–0.10 performance sprints, the 0.12 module system (`use` / `share` / `as` / `.` qualification, whole-program DAG, one native executable), the 0.12.1 now-gated standard library (`std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`), 0.13.1 records, 0.13.2 ownership, 0.13.3 mutable `ref` parameters, 0.13.4 `foreign` C, 0.13.5 `result[T]` / `ok` / `fail`, and 0.13.6 `std/map`, `std/set`, `std/file`, `std/json`. Linux x86-64 CI has not been re-run for records through 0.13.6.
+Implemented: lexer, parser, AST, diagnostics (notes, GNU line, TTY color, per-file locations), scopes, type inference, YUKT IR, LLVM lowering, host object emission, `yukt build`, `yukt run`, `yukt --explain`, LLVM O3, list indexing, `count` / `zeros`, work-based automatic parallelization, simple +/* parallel reductions, adaptive runtime parallelization, host-CPU SIMD via LLVM vectorize, counted-loop lowering, range-parallel runtime, aligned list payloads, size-class payload reuse, host-native CI (macOS arm64, Linux x86-64), the 0.08–0.10 performance sprints, the 0.12 module system (`use` / `share` / `as` / `.` qualification, whole-program DAG, one native executable), the 0.12.1 now-gated standard library (`std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`), 0.13.1 records, 0.13.2 ownership, 0.13.3 mutable `ref` parameters, 0.13.4 `foreign` C, 0.13.5 `result[T]` / `ok` / `fail`, 0.13.6 `std/map`, `std/set`, `std/file`, `std/json`, and 0.14.1 `start` / `wait` / `task[T]` on the host pool.
 
-Not implemented: `std/array`, package management, cross-compilation to non-host triples, or 0.14 concurrency/GPU. 0.13 design: `docs/YUKT_013_DESIGN.md`.
+Not implemented: `std/array`, package management, cross-compilation to non-host triples, or later 0.14 mutex/async/GPU slices. 0.13 design: `docs/YUKT_013_DESIGN.md`. 0.14 design: `docs/YUKT_014_DESIGN.md`.
 
 Native execution is real when `yukt build` writes a host binary and `file` reports an executable for that architecture. Do not call a program "native" if it was interpreted.
 
@@ -63,7 +63,7 @@ The compiler entry point is `compiler/main.cpp`. Frontend/IR code lives in `yukt
 
 ## Language constraints
 
-YUKT 0.13.6 is indentation-sensitive. Blocks are introduced by `:` and a newline, then an indented suite.
+YUKT 0.14.1 is indentation-sensitive. Blocks are introduced by `:` and a newline, then an indented suite.
 
 Supported syntax is listed in `docs/LANGUAGE_SPEC.md`:
 
@@ -77,6 +77,7 @@ Supported syntax is listed in `docs/LANGUAGE_SPEC.md`:
 - `say`, `give`, `if` / `otherwise`, `repeat`
 - lists, indexing, `count`, `zeros`, including lists of records
 - `ref T` parameters (`create increment(value: ref integer):`)
+- `start` / `wait` and owned `task[T]`
 - `#` comments
 
 Do not add keywords, operators, or statements without updating the spec, tests, and this file.
@@ -109,4 +110,4 @@ If `--ast` fails, fix the parser. If `--types` fails, fix semantic analysis. If 
 - Package management
 - An interactive REPL
 - Cross-compilation to non-host triples
-- 0.14: explicit tasks, async, thread-safe allocator, CUDA / GPU
+- 0.14.2+: per-thread allocator caches, mutex types, async, CUDA / GPU
