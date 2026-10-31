@@ -1,6 +1,7 @@
 #include "semantic/analyzer.hpp"
 
 #include "driver/module.hpp"
+#include "ir/lower.hpp"
 #include "lexer/token.hpp"
 #include "semantic/ownership.hpp"
 
@@ -105,6 +106,7 @@ private:
     void analyze_expr_stmt(const ExprStmt& stmt);
     void analyze_if(const IfStmt& stmt);
     void analyze_repeat(const RepeatStmt& stmt);
+    void reject_start_in_parallel_repeat(const RepeatStmt& stmt);
     Type analyze_expression(const Expr* expr);
     Type analyze_expression_body(const Expr* expr);
     Type analyze_unary(const UnaryExpr& expr);
@@ -196,6 +198,7 @@ private:
     std::unordered_map<std::string, ResultFlow> result_flow_;
     std::unordered_map<std::string, SourceLocation> unhandled_results_;
     std::unordered_map<std::string, SourceLocation> unused_tasks_;
+    int repeat_depth_ = 0;
 };
 
 bool is_numeric(Type type) {
@@ -1203,6 +1206,7 @@ void Analyzer::analyze_function(FunctionSymbol& function) {
     result_flow_.clear();
     unhandled_results_.clear();
     unused_tasks_.clear();
+    repeat_depth_ = 0;
     push_scope();
 
     if (function.decl != nullptr) {
@@ -1732,6 +1736,8 @@ void Analyzer::analyze_repeat(const RepeatStmt& stmt) {
         }
     }
 
+    const bool nested = repeat_depth_ > 0;
+    ++repeat_depth_;
     push_scope();
     if (!declare_local(stmt.iterator, integer_type(), stmt.iterator_location, true)) {
         // declare_local already reported a collision with an existing name.
@@ -1740,6 +1746,11 @@ void Analyzer::analyze_repeat(const RepeatStmt& stmt) {
         analyze_statement(body_stmt.get());
     }
     pop_scope();
+    --repeat_depth_;
+    if (!ownership_pass_ && current_function_ != nullptr && current_function_->decl != nullptr &&
+        would_parallelize(stmt, *current_function_->decl, nested)) {
+        reject_start_in_parallel_repeat(stmt);
+    }
 
     if (ownership_pass_) {
         std::vector<std::string> local_drops;
@@ -1762,6 +1773,112 @@ void Analyzer::analyze_repeat(const RepeatStmt& stmt) {
 
     for (const auto& name : protected_here) {
         loop_protected_.erase(name);
+    }
+}
+
+void each_start_expr(const Expr* expr, const std::function<void(const StartExpr&)>& fn) {
+    if (expr == nullptr) {
+        return;
+    }
+    if (const auto* start = dynamic_cast<const StartExpr*>(expr)) {
+        fn(*start);
+        for (const auto& argument : start->arguments) {
+            each_start_expr(argument.get(), fn);
+        }
+        return;
+    }
+    if (const auto* wait = dynamic_cast<const WaitExpr*>(expr)) {
+        each_start_expr(wait->task.get(), fn);
+        return;
+    }
+    if (const auto* call = dynamic_cast<const CallExpr*>(expr)) {
+        for (const auto& argument : call->arguments) {
+            each_start_expr(argument.get(), fn);
+        }
+        return;
+    }
+    if (const auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+        each_start_expr(unary->operand.get(), fn);
+        return;
+    }
+    if (const auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+        each_start_expr(binary->left.get(), fn);
+        each_start_expr(binary->right.get(), fn);
+        return;
+    }
+    if (const auto* list = dynamic_cast<const ListExpr*>(expr)) {
+        for (const auto& element : list->elements) {
+            each_start_expr(element.get(), fn);
+        }
+        return;
+    }
+    if (const auto* index = dynamic_cast<const IndexExpr*>(expr)) {
+        each_start_expr(index->collection.get(), fn);
+        each_start_expr(index->index.get(), fn);
+        return;
+    }
+    if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
+        each_start_expr(field->object.get(), fn);
+    }
+}
+
+void each_start_stmt(const Stmt* stmt, const std::function<void(const StartExpr&)>& fn) {
+    if (stmt == nullptr) {
+        return;
+    }
+    if (const auto* assign = dynamic_cast<const AssignStmt*>(stmt)) {
+        each_start_expr(assign->value.get(), fn);
+        return;
+    }
+    if (const auto* index_assign = dynamic_cast<const IndexAssignStmt*>(stmt)) {
+        each_start_expr(index_assign->collection.get(), fn);
+        each_start_expr(index_assign->index.get(), fn);
+        each_start_expr(index_assign->value.get(), fn);
+        return;
+    }
+    if (const auto* field_assign = dynamic_cast<const FieldAssignStmt*>(stmt)) {
+        each_start_expr(field_assign->object.get(), fn);
+        each_start_expr(field_assign->value.get(), fn);
+        return;
+    }
+    if (const auto* say = dynamic_cast<const SayStmt*>(stmt)) {
+        each_start_expr(say->value.get(), fn);
+        return;
+    }
+    if (const auto* give = dynamic_cast<const GiveStmt*>(stmt)) {
+        each_start_expr(give->value.get(), fn);
+        return;
+    }
+    if (const auto* expr_stmt = dynamic_cast<const ExprStmt*>(stmt)) {
+        each_start_expr(expr_stmt->expr.get(), fn);
+        return;
+    }
+    if (const auto* iff = dynamic_cast<const IfStmt*>(stmt)) {
+        each_start_expr(iff->condition.get(), fn);
+        for (const auto& inner : iff->then_branch) {
+            each_start_stmt(inner.get(), fn);
+        }
+        for (const auto& inner : iff->otherwise_branch) {
+            each_start_stmt(inner.get(), fn);
+        }
+        return;
+    }
+    if (const auto* repeat = dynamic_cast<const RepeatStmt*>(stmt)) {
+        each_start_expr(repeat->start.get(), fn);
+        each_start_expr(repeat->end.get(), fn);
+        for (const auto& inner : repeat->body) {
+            each_start_stmt(inner.get(), fn);
+        }
+    }
+}
+
+void Analyzer::reject_start_in_parallel_repeat(const RepeatStmt& stmt) {
+    for (const auto& body_stmt : stmt.body) {
+        each_start_stmt(body_stmt.get(), [&](const StartExpr& start) {
+            error(start.span.start, "Cannot start inside parallel repeat",
+                  "`start` cannot run inside a `repeat` that the compiler would parallelize.",
+                  "Move the `start` outside the loop, or keep the loop below the parallel work threshold.");
+        });
     }
 }
 
@@ -2426,7 +2543,11 @@ Type Analyzer::analyze_start(const StartExpr& expr) {
 
 Type Analyzer::analyze_wait(const WaitExpr& expr, bool result_used) {
     const Type operand = analyze_expression(expr.task.get());
-    const Type resolved = types_.prune(operand);
+    Type resolved = types_.prune(operand);
+    if (resolved.kind == TypeKind::Variable) {
+        types_.unify(resolved, task_type(types_.fresh_variable()));
+        resolved = types_.prune(operand);
+    }
     if (resolved.kind != TypeKind::Task) {
         error(expr.span.start, "Type mismatch",
               "`wait` expects a `task`, not " + types_.to_string(operand) + ".",

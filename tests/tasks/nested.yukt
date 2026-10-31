@@ -1,0 +1,9 @@
+create inner(n):
+    give n + 1
+
+create outer(n):
+    t = start inner(n)
+    give wait t
+
+create main:
+    say wait start outer(3)

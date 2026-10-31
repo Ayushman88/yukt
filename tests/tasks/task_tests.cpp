@@ -30,6 +30,16 @@ yukt::FrontendResult check_file(const std::string& relative) {
     return result;
 }
 
+yukt::CompileOutput run_file(const std::string& relative) {
+    const auto path = source_path(relative);
+    auto frontend = yukt::analyze_file(path);
+    yukt::analyze_types(frontend);
+    yukt::CompileRequest request;
+    request.action = yukt::CompileAction::Run;
+    request.input_path = path;
+    return yukt::compile_program(frontend, request, *frontend.diagnostics);
+}
+
 bool has_title(const yukt::FrontendResult& result, const std::string& title) {
     if (result.diagnostics == nullptr) {
         return false;
@@ -228,51 +238,99 @@ int main() {
     }
 
     {
-        const auto path = source_path("tests/tasks/basic.yukt");
-        auto frontend = yukt::analyze_file(path);
-        yukt::analyze_types(frontend);
-        yukt::CompileRequest request;
-        request.action = yukt::CompileAction::Run;
-        request.input_path = path;
-        const auto output = yukt::compile_program(frontend, request, *frontend.diagnostics);
+        const auto output = run_file("tests/tasks/basic.yukt");
         REQUIRE_MSG(output.ok, output.program_output);
         REQUIRE(output.program_output == "4\n");
     }
 
     {
-        const auto path = source_path("tests/tasks/void_task.yukt");
-        auto frontend = yukt::analyze_file(path);
-        yukt::analyze_types(frontend);
-        yukt::CompileRequest request;
-        request.action = yukt::CompileAction::Run;
-        request.input_path = path;
-        const auto output = yukt::compile_program(frontend, request, *frontend.diagnostics);
+        const auto output = run_file("tests/tasks/void_task.yukt");
         REQUIRE_MSG(output.ok, output.program_output);
         REQUIRE(output.program_output == "1\n");
     }
 
     {
-        const auto path = source_path("tests/tasks/heap_result.yukt");
-        auto frontend = yukt::analyze_file(path);
-        yukt::analyze_types(frontend);
-        yukt::CompileRequest request;
-        request.action = yukt::CompileAction::Run;
-        request.input_path = path;
-        const auto output = yukt::compile_program(frontend, request, *frontend.diagnostics);
+        const auto output = run_file("tests/tasks/heap_result.yukt");
         REQUIRE_MSG(output.ok, output.program_output);
         REQUIRE(output.program_output == "ok\n");
     }
 
     {
-        const auto path = source_path("tests/tasks/result_ok.yukt");
-        auto frontend = yukt::analyze_file(path);
-        yukt::analyze_types(frontend);
-        yukt::CompileRequest request;
-        request.action = yukt::CompileAction::Run;
-        request.input_path = path;
-        const auto output = yukt::compile_program(frontend, request, *frontend.diagnostics);
+        const auto output = run_file("tests/tasks/result_ok.yukt");
         REQUIRE_MSG(output.ok, output.program_output);
         REQUIRE(output.program_output == "ok\n");
+    }
+
+    {
+        const auto output = run_file("tests/tasks/two_tasks.yukt");
+        REQUIRE_MSG(output.ok, output.program_output);
+        REQUIRE(output.program_output == "3\n2\n");
+    }
+
+    {
+        const auto output = run_file("tests/tasks/nested.yukt");
+        REQUIRE_MSG(output.ok, output.program_output);
+        REQUIRE(output.program_output == "4\n");
+    }
+
+    {
+        const auto output = run_file("tests/tasks/transfer_take.yukt");
+        REQUIRE_MSG(output.ok, output.program_output);
+        REQUIRE(output.program_output == "2\n");
+    }
+
+    {
+        const auto output = run_file("tests/tasks/transfer_give.yukt");
+        REQUIRE_MSG(output.ok, output.program_output);
+        REQUIRE(output.program_output == "2\n");
+    }
+
+    {
+        const auto result = check_source(
+            "create work(n):\n"
+            "    give n + 1\n"
+            "create take(t):\n"
+            "    give wait t\n"
+            "create main:\n"
+            "    u = start work(1)\n"
+            "    say take(u)\n"
+            "    say wait u\n");
+        REQUIRE(has_title(result, "Use after move"));
+    }
+
+    {
+        const auto result = check_source(
+            "create work:\n"
+            "    say 1\n"
+            "create main:\n"
+            "    repeat i in 1..3:\n"
+            "        wait start work()\n");
+        REQUIRE(!result.diagnostics->has_errors());
+    }
+
+    {
+        const auto result = check_source(
+            "create work(n):\n"
+            "    give n\n"
+            "create main:\n"
+            "    xs = zeros(1000000)\n"
+            "    repeat i in 1..1000000:\n"
+            "        xs[i] = i\n"
+            "        wait start work(i)\n");
+        REQUIRE(has_title(result, "Cannot start inside parallel repeat"));
+    }
+
+    {
+        const auto result = check_source(
+            "create work(n):\n"
+            "    give n\n"
+            "create main:\n"
+            "    xs = zeros(1000000)\n"
+            "    repeat i in 1..1000000:\n"
+            "        xs[i] = i\n"
+            "        if i > 0:\n"
+            "            wait start work(i)\n");
+        REQUIRE(has_title(result, "Cannot start inside parallel repeat"));
     }
 
     return yukt::test::summary("yukt_task_tests");

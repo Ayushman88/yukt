@@ -66,7 +66,11 @@ bool expr_mentions(const Expr* expr, const std::string& name) {
     return false;
 }
 
-bool has_user_call(const Expr* expr) {
+bool is_start_or_wait(const Expr* expr) {
+    return dynamic_cast<const StartExpr*>(expr) != nullptr || dynamic_cast<const WaitExpr*>(expr) != nullptr;
+}
+
+bool has_user_call(const Expr* expr, bool ignore_tasks = false) {
     if (expr == nullptr) {
         return false;
     }
@@ -75,37 +79,46 @@ bool has_user_call(const Expr* expr) {
             return true;
         }
         for (const auto& argument : call->arguments) {
-            if (has_user_call(argument.get())) {
+            if (has_user_call(argument.get(), ignore_tasks)) {
                 return true;
             }
         }
         return false;
     }
     if (const auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
-        return has_user_call(unary->operand.get());
+        return has_user_call(unary->operand.get(), ignore_tasks);
     }
     if (const auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
-        return has_user_call(binary->left.get()) || has_user_call(binary->right.get());
+        return has_user_call(binary->left.get(), ignore_tasks) || has_user_call(binary->right.get(), ignore_tasks);
     }
     if (const auto* list = dynamic_cast<const ListExpr*>(expr)) {
         for (const auto& element : list->elements) {
-            if (has_user_call(element.get())) {
+            if (has_user_call(element.get(), ignore_tasks)) {
                 return true;
             }
         }
         return false;
     }
     if (const auto* index = dynamic_cast<const IndexExpr*>(expr)) {
-        return has_user_call(index->collection.get()) || has_user_call(index->index.get());
+        return has_user_call(index->collection.get(), ignore_tasks) ||
+               has_user_call(index->index.get(), ignore_tasks);
     }
     if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
-        return has_user_call(field->object.get());
+        return has_user_call(field->object.get(), ignore_tasks);
     }
-    if (dynamic_cast<const StartExpr*>(expr) != nullptr) {
-        return true;
+    if (const auto* start = dynamic_cast<const StartExpr*>(expr)) {
+        if (!ignore_tasks) {
+            return true;
+        }
+        for (const auto& argument : start->arguments) {
+            if (has_user_call(argument.get(), true)) {
+                return true;
+            }
+        }
+        return false;
     }
     if (const auto* wait = dynamic_cast<const WaitExpr*>(expr)) {
-        return has_user_call(wait->task.get());
+        return has_user_call(wait->task.get(), ignore_tasks);
     }
     return false;
 }
@@ -646,13 +659,14 @@ bool reduction_used_unsafely(const std::vector<std::unique_ptr<Stmt>>& stmts, co
 
 void collect_loop_effects(const std::vector<std::unique_ptr<Stmt>>& stmts, const std::string& iterator,
                           std::set<std::string>& assigned, std::set<std::string>& reads,
-                          std::set<std::string>& inner_iterators, bool& ok, std::string& reason) {
+                          std::set<std::string>& inner_iterators, bool& ok, std::string& reason,
+                          bool ignore_tasks = false) {
     for (const auto& stmt : stmts) {
         if (!ok) {
             return;
         }
         if (const auto* assign = dynamic_cast<const AssignStmt*>(stmt.get())) {
-            if (has_user_call(assign->value.get())) {
+            if (has_user_call(assign->value.get(), ignore_tasks)) {
                 ok = false;
                 reason = "body contains a user function call";
                 return;
@@ -664,7 +678,8 @@ void collect_loop_effects(const std::vector<std::unique_ptr<Stmt>>& stmts, const
         if (const auto* index_assign = dynamic_cast<const IndexAssignStmt*>(stmt.get())) {
             const auto* collection = dynamic_cast<const IdentifierExpr*>(index_assign->collection.get());
             if (collection == nullptr || !expr_mentions(index_assign->index.get(), iterator) ||
-                has_user_call(index_assign->index.get()) || has_user_call(index_assign->value.get())) {
+                has_user_call(index_assign->index.get(), ignore_tasks) ||
+                has_user_call(index_assign->value.get(), ignore_tasks)) {
                 ok = false;
                 reason = "list write is not indexed solely by this iterator";
                 return;
@@ -684,7 +699,8 @@ void collect_loop_effects(const std::vector<std::unique_ptr<Stmt>>& stmts, const
             if (indexed != nullptr) {
                 const auto* collection = dynamic_cast<const IdentifierExpr*>(indexed->collection.get());
                 if (collection == nullptr || !expr_mentions(indexed->index.get(), iterator) ||
-                    has_user_call(indexed->index.get()) || has_user_call(field_assign->value.get())) {
+                    has_user_call(indexed->index.get(), ignore_tasks) ||
+                    has_user_call(field_assign->value.get(), ignore_tasks)) {
                     ok = false;
                     reason = "list write is not indexed solely by this iterator";
                     return;
@@ -695,7 +711,7 @@ void collect_loop_effects(const std::vector<std::unique_ptr<Stmt>>& stmts, const
                 continue;
             }
             if (const auto* ident = dynamic_cast<const IdentifierExpr*>(cursor)) {
-                if (has_user_call(field_assign->value.get())) {
+                if (has_user_call(field_assign->value.get(), ignore_tasks)) {
                     ok = false;
                     reason = "body contains a user function call";
                     return;
@@ -719,6 +735,15 @@ void collect_loop_effects(const std::vector<std::unique_ptr<Stmt>>& stmts, const
             return;
         }
         if (const auto* expr_stmt = dynamic_cast<const ExprStmt*>(stmt.get())) {
+            if (ignore_tasks && is_start_or_wait(expr_stmt->expr.get())) {
+                if (has_user_call(expr_stmt->expr.get(), true)) {
+                    ok = false;
+                    reason = "body contains a user function call";
+                    return;
+                }
+                collect_reads(expr_stmt->expr.get(), reads);
+                continue;
+            }
             const auto* call = dynamic_cast<const CallExpr*>(expr_stmt->expr.get());
             if (call == nullptr || (call->callee != "count" && call->callee != "zeros")) {
                 ok = false;
@@ -729,21 +754,23 @@ void collect_loop_effects(const std::vector<std::unique_ptr<Stmt>>& stmts, const
             continue;
         }
         if (const auto* iff = dynamic_cast<const IfStmt*>(stmt.get())) {
-            if (has_user_call(iff->condition.get())) {
+            if (has_user_call(iff->condition.get(), ignore_tasks)) {
                 ok = false;
                 reason = "body contains a user function call";
                 return;
             }
             collect_reads(iff->condition.get(), reads);
-            collect_loop_effects(iff->then_branch, iterator, assigned, reads, inner_iterators, ok, reason);
-            collect_loop_effects(iff->otherwise_branch, iterator, assigned, reads, inner_iterators, ok, reason);
+            collect_loop_effects(iff->then_branch, iterator, assigned, reads, inner_iterators, ok, reason,
+                                 ignore_tasks);
+            collect_loop_effects(iff->otherwise_branch, iterator, assigned, reads, inner_iterators, ok, reason,
+                                 ignore_tasks);
             continue;
         }
         if (const auto* repeat = dynamic_cast<const RepeatStmt*>(stmt.get())) {
             inner_iterators.insert(repeat->iterator);
             collect_reads(repeat->start.get(), reads);
             collect_reads(repeat->end.get(), reads);
-            collect_loop_effects(repeat->body, iterator, assigned, reads, inner_iterators, ok, reason);
+            collect_loop_effects(repeat->body, iterator, assigned, reads, inner_iterators, ok, reason, ignore_tasks);
             continue;
         }
         ok = false;
@@ -2532,6 +2559,139 @@ void Lowerer::note_user_call_moves(const CallExpr& expr) {
     }
 }
 
+bool expr_allocates_ignore_tasks(const Expr* expr) {
+    if (expr == nullptr) {
+        return false;
+    }
+    if (dynamic_cast<const StringExpr*>(expr) != nullptr || dynamic_cast<const ListExpr*>(expr) != nullptr) {
+        return true;
+    }
+    if (const auto* call = dynamic_cast<const CallExpr*>(expr)) {
+        if (call_name_allocates(call->qualifier, call->callee)) {
+            return true;
+        }
+        for (const auto& argument : call->arguments) {
+            if (expr_allocates_ignore_tasks(argument.get())) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (const auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+        return expr_allocates_ignore_tasks(unary->operand.get());
+    }
+    if (const auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+        return expr_allocates_ignore_tasks(binary->left.get()) || expr_allocates_ignore_tasks(binary->right.get());
+    }
+    if (const auto* index = dynamic_cast<const IndexExpr*>(expr)) {
+        return expr_allocates_ignore_tasks(index->collection.get()) || expr_allocates_ignore_tasks(index->index.get());
+    }
+    if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
+        return expr_allocates_ignore_tasks(field->object.get());
+    }
+    if (const auto* start = dynamic_cast<const StartExpr*>(expr)) {
+        for (const auto& argument : start->arguments) {
+            if (expr_allocates_ignore_tasks(argument.get())) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (const auto* wait = dynamic_cast<const WaitExpr*>(expr)) {
+        return expr_allocates_ignore_tasks(wait->task.get());
+    }
+    return false;
+}
+
+bool stmts_allocate_ignore_tasks(const std::vector<std::unique_ptr<Stmt>>& stmts) {
+    for (const auto& stmt : stmts) {
+        if (const auto* assign = dynamic_cast<const AssignStmt*>(stmt.get())) {
+            if (expr_allocates_ignore_tasks(assign->value.get())) {
+                return true;
+            }
+            continue;
+        }
+        if (const auto* index_assign = dynamic_cast<const IndexAssignStmt*>(stmt.get())) {
+            if (expr_allocates_ignore_tasks(index_assign->index.get()) ||
+                expr_allocates_ignore_tasks(index_assign->value.get())) {
+                return true;
+            }
+            continue;
+        }
+        if (const auto* field_assign = dynamic_cast<const FieldAssignStmt*>(stmt.get())) {
+            if (expr_allocates_ignore_tasks(field_assign->object.get()) ||
+                expr_allocates_ignore_tasks(field_assign->value.get())) {
+                return true;
+            }
+            continue;
+        }
+        if (const auto* expr_stmt = dynamic_cast<const ExprStmt*>(stmt.get())) {
+            if (expr_allocates_ignore_tasks(expr_stmt->expr.get())) {
+                return true;
+            }
+            continue;
+        }
+        if (const auto* iff = dynamic_cast<const IfStmt*>(stmt.get())) {
+            if (expr_allocates_ignore_tasks(iff->condition.get()) || stmts_allocate_ignore_tasks(iff->then_branch) ||
+                stmts_allocate_ignore_tasks(iff->otherwise_branch)) {
+                return true;
+            }
+            continue;
+        }
+        if (const auto* repeat = dynamic_cast<const RepeatStmt*>(stmt.get())) {
+            if (expr_allocates_ignore_tasks(repeat->start.get()) || expr_allocates_ignore_tasks(repeat->end.get()) ||
+                stmts_allocate_ignore_tasks(repeat->body)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool would_parallelize_loop(const RepeatStmt& stmt, const FunctionDecl& function, bool nested) {
+    std::map<std::string, std::int64_t> env;
+    std::map<std::string, std::int64_t> list_len;
+    collect_const_env(function.body, &stmt, env, list_len);
+    if (!worth_parallelizing(stmt, nested, env, list_len)) {
+        return false;
+    }
+    std::set<std::string> assigned;
+    std::set<std::string> reads;
+    std::set<std::string> inner_iterators;
+    bool ok = true;
+    std::string effect_reason;
+    collect_loop_effects(stmt.body, stmt.iterator, assigned, reads, inner_iterators, ok, effect_reason, true);
+    if (!ok || stmts_allocate_ignore_tasks(stmt.body)) {
+        return false;
+    }
+    auto candidate = classify_simple_reduction(stmt.body);
+    if (candidate && reduction_used_unsafely(stmt.body, candidate->name)) {
+        candidate.reset();
+    }
+    for (const auto& name : assigned) {
+        if (candidate && name == candidate->name) {
+            continue;
+        }
+        bool found = false;
+        if (scan_used_after(function.body, &stmt, name, found)) {
+            return false;
+        }
+        bool seen = false;
+        const bool read_first = first_use_is_read(stmt.body, name, seen);
+        bool before_found = false;
+        const bool existed = assigned_before_loop(function.body, &stmt, name, before_found);
+        for (const auto& param : function.parameters) {
+            if (param == name && read_first) {
+                return false;
+            }
+        }
+        if (existed && read_first) {
+            return false;
+        }
+    }
+    return true;
+}
+
 IrValue Lowerer::default_return_value() const {
     IrValue value;
     value.type = function_ != nullptr ? function_->return_type : ir_void();
@@ -2550,6 +2710,10 @@ IrValue Lowerer::default_return_value() const {
 }
 
 }  // namespace
+
+bool would_parallelize(const RepeatStmt& stmt, const FunctionDecl& function, bool nested) {
+    return would_parallelize_loop(stmt, function, nested);
+}
 
 IrModule lower_to_ir(const Program& program, const SemanticInfo& semantic, const std::string& source_path) {
     Lowerer lowerer(program, semantic, source_path);

@@ -1,0 +1,9 @@
+create work(n):
+    give n + 1
+
+create take(t):
+    give wait t
+
+create main:
+    u = start work(1)
+    say take(u)

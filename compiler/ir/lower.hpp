@@ -12,4 +12,7 @@ namespace yukt {
 IrModule lower_to_ir(const Program& program, const SemanticInfo& semantic, const std::string& source_path);
 IrModule lower_to_ir(const ModuleGraph& graph, const SemanticInfo& semantic);
 
+// Hypothetical planned-parallel decision that ignores `start` / `wait`.
+bool would_parallelize(const RepeatStmt& stmt, const FunctionDecl& function, bool nested);
+
 }  // namespace yukt
