@@ -70,6 +70,12 @@ TokenKind keyword_kind(std::string_view text) {
     if (text == "fail") {
         return TokenKind::KwFail;
     }
+    if (text == "start") {
+        return TokenKind::KwStart;
+    }
+    if (text == "wait") {
+        return TokenKind::KwWait;
+    }
     return TokenKind::Identifier;
 }
 

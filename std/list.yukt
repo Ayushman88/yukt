@@ -13,8 +13,8 @@ share create fill(dest, value):
 share create reverse(dest):
     n = count(dest)
 
-share create slice(src, start, end):
-    a = start + 0
+share create slice(src, from, end):
+    a = from + 0
     b = end + 0
     n = count(src)
     give src

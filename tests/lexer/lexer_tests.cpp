@@ -50,7 +50,7 @@ const yukt::Token* first_kind(const std::vector<yukt::Token>& tokens, yukt::Toke
 
 int main() {
     {
-        const auto result = lex("create say if otherwise repeat in give true false use share as record ref foreign ok fail name\n");
+        const auto result = lex("create say if otherwise repeat in give true false use share as record ref foreign ok fail start wait name\n");
         REQUIRE(!result.diagnostics.has_errors());
         REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwCreate));
         REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwSay));
@@ -69,9 +69,42 @@ int main() {
         REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwForeign));
         REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwOk));
         REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwFail));
+        REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwStart));
+        REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwWait));
         const auto* ident = first_kind(result.tokens, yukt::TokenKind::Identifier);
         REQUIRE(ident != nullptr);
         REQUIRE(ident != nullptr && ident->lexeme == "name");
+    }
+
+    {
+        const auto result = lex("start\n");
+        REQUIRE(!result.diagnostics.has_errors());
+        REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwStart));
+        REQUIRE(first_kind(result.tokens, yukt::TokenKind::KwStart)->lexeme == "start");
+        REQUIRE(!contains_kind(result.tokens, yukt::TokenKind::Identifier));
+    }
+
+    {
+        const auto result = lex("wait\n");
+        REQUIRE(!result.diagnostics.has_errors());
+        REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwWait));
+        REQUIRE(first_kind(result.tokens, yukt::TokenKind::KwWait)->lexeme == "wait");
+        REQUIRE(!contains_kind(result.tokens, yukt::TokenKind::Identifier));
+    }
+
+    {
+        const auto result = lex("starter waiter restart\n");
+        REQUIRE(!result.diagnostics.has_errors());
+        REQUIRE(!contains_kind(result.tokens, yukt::TokenKind::KwStart));
+        REQUIRE(!contains_kind(result.tokens, yukt::TokenKind::KwWait));
+        int identifiers = 0;
+        for (const auto& token : result.tokens) {
+            if (token.kind == yukt::TokenKind::Identifier) {
+                ++identifiers;
+                REQUIRE(token.lexeme == "starter" || token.lexeme == "waiter" || token.lexeme == "restart");
+            }
+        }
+        REQUIRE(identifiers == 3);
     }
 
     {

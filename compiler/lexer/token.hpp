@@ -35,6 +35,8 @@ enum class TokenKind {
     KwForeign,
     KwOk,
     KwFail,
+    KwStart,
+    KwWait,
 
     Plus,
     Minus,
@@ -117,6 +119,10 @@ inline constexpr std::string_view token_kind_name(TokenKind kind) {
             return "OK";
         case TokenKind::KwFail:
             return "FAIL";
+        case TokenKind::KwStart:
+            return "START";
+        case TokenKind::KwWait:
+            return "WAIT";
         case TokenKind::Plus:
             return "PLUS";
         case TokenKind::Minus:
@@ -214,7 +220,8 @@ inline constexpr bool is_keyword(TokenKind kind) {
            kind == TokenKind::KwGive || kind == TokenKind::KwTrue || kind == TokenKind::KwFalse ||
            kind == TokenKind::KwUse || kind == TokenKind::KwShare || kind == TokenKind::KwAs ||
            kind == TokenKind::KwRecord || kind == TokenKind::KwRef || kind == TokenKind::KwForeign ||
-           kind == TokenKind::KwOk || kind == TokenKind::KwFail;
+           kind == TokenKind::KwOk || kind == TokenKind::KwFail || kind == TokenKind::KwStart ||
+           kind == TokenKind::KwWait;
 }
 
 }  // namespace yukt

@@ -8,8 +8,8 @@ share create at(s, i):
     n = i + 0
     give n
 
-share create slice(s, start, end):
-    a = start + 0
+share create slice(s, from, end):
+    a = from + 0
     b = end + 0
     give s
 
