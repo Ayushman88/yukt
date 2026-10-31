@@ -1,6 +1,6 @@
 # YUKT 0.13 design — Systems language foundations
 
-Status: **roadmap and this design are approved.** 0.13.1–0.13.6 are implemented on `yukt-0.13-series`. 0.13.1 is tagged `v0.13.1` locally (not pushed). `v0.12.1` is the last public tag. 0.13.2 Ownership is also on `yukt-0.13.2-ownership`.
+Status: **0.13.1–0.13.6 implemented on `main`.** 0.13.1 is tagged `v0.13.1` locally (not pushed). `v0.12.1` is the last public tag. There is no `v0.13.2` / `v0.13.6` tag. Linux x86-64 CI has not been re-run for this tree.
 
 0.13 is a **language** milestone. Maps, files, and JSON stay blocked until types, ownership, and errors exist as real language rules. They must not appear as C functions with fake YUKT wrappers.
 
@@ -519,14 +519,10 @@ LLVM stays in `compiler/backend`. No benchmark-named special cases. Sort stays `
 
 ## What happens next
 
-1. 0.13.1 records are specified and implemented.
-2. 0.13.2 ownership is specified in `docs/LANGUAGE_SPEC.md` and implemented on branch `yukt-0.13.2-ownership`.
-3. 0.13.3 refs are specified in `docs/LANGUAGE_SPEC.md` and in progress on `yukt-0.13-series`. Do not implement 0.13.4–0.13.6 until those sections are copied into the language spec as well.
+0.13.1–0.13.6 are specified in `docs/LANGUAGE_SPEC.md` and implemented on `main`. `std/array` remains out of 0.13. Next milestone is **0.14** (CPU concurrency first; CUDA only on Linux+NVIDIA). Do not implement 0.14 syntax until it is copied into `docs/LANGUAGE_SPEC.md`.
 
 ## Approval
 
 Roadmap: **accepted as the six independently releasable slices.**  
 Revised design: **accepted.**  
-0.13.1 in `LANGUAGE_SPEC.md`: **specified and implemented on this tree.** There is no public `v0.13.1` tag yet.  
-0.13.2 ownership in `LANGUAGE_SPEC.md`: **specified and implemented on branch `yukt-0.13.2-ownership`.** There is no `v0.13.2` tag.  
-Compiler implementation of 0.13.1–0.13.6: **on `yukt-0.13-series`.** `std/array` remains out of this slice.
+0.13.1–0.13.6 in `LANGUAGE_SPEC.md`: **specified and implemented on `main`.** There is no public `v0.13.1` tag yet. There is no `v0.13.2` / `v0.13.6` tag. `std/array` remains out of this slice.

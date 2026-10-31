@@ -142,7 +142,7 @@ Preserve 0.11 benchmarks (`benchmarks/results-0.11.json`). Do not overwrite them
 
 ## 0.13 — Memory and systems programming
 
-**Status: 0.13.1–0.13.6 implemented on `yukt-0.13-series` (0.13.2 also on `yukt-0.13.2-ownership`). Tagged `v0.13.1` locally (not pushed). No `v0.13.2` tag.** See `docs/YUKT_013_DESIGN.md`.
+**Status: 0.13.1–0.13.6 implemented on `main`.** Tagged `v0.13.1` locally (not pushed). No `v0.13.2` / `v0.13.6` tag. Linux x86-64 CI has not been re-run for records through 0.13.6. See `docs/YUKT_013_DESIGN.md`.
 
 - Records (named structs) and field access — **implemented** (`0.13.1`)
 - Ownership: move of heap values, free when the owning frame returns (no GC) — **implemented** (`0.13.2`)
