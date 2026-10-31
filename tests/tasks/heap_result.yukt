@@ -1,0 +1,5 @@
+create work:
+    give "ok"
+
+create main:
+    say wait start work()

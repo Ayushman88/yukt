@@ -1,0 +1,6 @@
+create work:
+    say 1
+
+create main:
+    t = start work()
+    wait t

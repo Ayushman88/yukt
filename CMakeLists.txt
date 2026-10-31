@@ -276,11 +276,22 @@ add_test(NAME stdlib_file_json_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/st
 add_test(NAME suite013_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/suite013/all.yukt)
 
 add_executable(yukt_task_tests tests/tasks/task_tests.cpp)
-target_link_libraries(yukt_task_tests PRIVATE yukt_compiler)
+target_link_libraries(yukt_task_tests PRIVATE yukt_backend yukt_runtime)
 target_include_directories(yukt_task_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests)
-target_compile_definitions(yukt_task_tests PRIVATE YUKT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_compile_definitions(yukt_task_tests PRIVATE
+    YUKT_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    YUKT_EXECUTABLE="$<TARGET_FILE:yukt>"
+    YUKT_RUNTIME_LIB="$<TARGET_FILE:yukt_runtime>"
+)
+if(NOT LLVM_ENABLE_RTTI)
+    target_compile_options(yukt_task_tests PRIVATE -fno-rtti)
+endif()
+if(APPLE AND DEFINED LLVM_LIBRARY_DIR)
+    target_link_options(yukt_task_tests PRIVATE "-Wl,-rpath,${LLVM_LIBRARY_DIR}")
+endif()
 yukt_set_warnings(yukt_task_tests)
 add_test(NAME yukt_task_tests COMMAND yukt_task_tests)
+add_dependencies(yukt_task_tests yukt)
 
 add_executable(yukt_task_runtime_tests tests/tasks/runtime_task_tests.c)
 target_link_libraries(yukt_task_runtime_tests PRIVATE yukt_runtime)

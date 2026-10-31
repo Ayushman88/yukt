@@ -29,6 +29,7 @@
 #include <llvm/IR/Attributes.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
+#include <llvm/IR/DataLayout.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Instructions.h>
@@ -168,6 +169,10 @@ private:
     llvm::Value* materialize(const IrValue& value);
     llvm::Value* materialize_owned(const IrValue& value);
     llvm::Value* emit_inst(const IrInst& inst);
+    llvm::Value* emit_start(const IrInst& inst);
+    llvm::Value* emit_wait(const IrInst& inst);
+    llvm::Function* make_task_thunk(const std::string& callee_name, llvm::StructType* pack_ty,
+                                   const IrType& payload);
     llvm::Value* emit_stdlib_call(const IrInst& inst);
     llvm::FunctionCallee runtime(const std::string& name) const;
     llvm::StructType* list_struct_type();
@@ -370,6 +375,11 @@ void LlvmEmitter::declare_runtime() {
     runtime_["yukt_reduce_i64"] = module_.getOrInsertFunction("yukt_reduce_i64", void_ty, ptr, i64, i64);
     runtime_["yukt_reduce_f64"] = module_.getOrInsertFunction("yukt_reduce_f64", void_ty, ptr, f64, i64);
     runtime_["yukt_runtime_release"] = module_.getOrInsertFunction("yukt_runtime_release", void_ty);
+    runtime_["yukt_task_start"] = module_.getOrInsertFunction("yukt_task_start", ptr, ptr, ptr, i64, i64);
+    runtime_["yukt_task_wait"] = module_.getOrInsertFunction("yukt_task_wait", void_ty, ptr, ptr);
+    runtime_["yukt_task_shutdown"] = module_.getOrInsertFunction("yukt_task_shutdown", void_ty);
+    runtime_["malloc"] = module_.getOrInsertFunction("malloc", ptr, i64);
+    runtime_["free"] = module_.getOrInsertFunction("free", void_ty, ptr);
     runtime_["yukt_release"] = module_.getOrInsertFunction("yukt_release", void_ty, ptr);
     runtime_["yukt_str_from_lit"] = module_.getOrInsertFunction("yukt_str_from_lit", ptr, ptr);
     runtime_["yukt_str_clone"] = module_.getOrInsertFunction("yukt_str_clone", ptr, ptr);
@@ -567,6 +577,7 @@ void LlvmEmitter::emit_function(const IrFunction& function) {
         switch (block.term.kind) {
             case IrTermKind::Return:
                 if (function.name == "main") {
+                    builder_.CreateCall(runtime("yukt_task_shutdown"), {});
                     builder_.CreateCall(runtime("yukt_runtime_release"), {});
                 }
                 if (function.return_type.kind == IrTypeKind::Void) {
@@ -924,12 +935,9 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
             builder_.CreateCall(runtime("yukt_release"), {materialize(inst.args[0])});
             return nullptr;
         case IrOp::Start:
-            return llvm::PoisonValue::get(type_of(inst.dest.type));
+            return emit_start(inst);
         case IrOp::Wait:
-            if (inst.dest.type.kind == IrTypeKind::Void) {
-                return nullptr;
-            }
-            return llvm::PoisonValue::get(type_of(inst.dest.type));
+            return emit_wait(inst);
         case IrOp::Addr: {
             llvm::Value* base = locals_.at(inst.name);
             if (inst.field_index < 0 || current_ir_fn_ == nullptr) {
@@ -959,6 +967,104 @@ const IrFunction* LlvmEmitter::find_ir_function(const std::string& name) const {
         }
     }
     return nullptr;
+}
+
+llvm::Function* LlvmEmitter::make_task_thunk(const std::string& callee_name, llvm::StructType* pack_ty,
+                                            const IrType& payload) {
+    auto* ptr = llvm::PointerType::getUnqual(context_);
+    auto* void_ty = llvm::Type::getVoidTy(context_);
+    auto* fn_ty = llvm::FunctionType::get(void_ty, {ptr, ptr}, false);
+    const std::string name = "yukt$task$thunk$" + std::to_string(next_thunk_++);
+    auto* fn = llvm::Function::Create(fn_ty, llvm::Function::InternalLinkage, name, module_);
+    fn->addFnAttr(llvm::Attribute::MustProgress);
+    fn->setDoesNotThrow();
+
+    auto* args_param = fn->getArg(0);
+    auto* result_param = fn->getArg(1);
+    args_param->setName("args");
+    result_param->setName("result");
+
+    auto* entry = llvm::BasicBlock::Create(context_, "entry", fn);
+    llvm::IRBuilder<> thunk(entry);
+
+    std::vector<llvm::Value*> call_args;
+    if (pack_ty != nullptr) {
+        const unsigned n = pack_ty->getNumElements();
+        call_args.reserve(n);
+        for (unsigned i = 0; i < n; ++i) {
+            llvm::Value* slot = thunk.CreateStructGEP(pack_ty, args_param, i);
+            call_args.push_back(thunk.CreateLoad(pack_ty->getElementType(i), slot));
+        }
+    }
+
+    auto* callee = functions_.at(callee_name);
+    llvm::Value* produced = thunk.CreateCall(callee->getFunctionType(), callee, call_args);
+    if (payload.kind != IrTypeKind::Void) {
+        thunk.CreateStore(produced, result_param);
+    }
+    if (pack_ty != nullptr) {
+        thunk.CreateCall(runtime("free"), {args_param});
+    }
+    thunk.CreateRetVoid();
+    return fn;
+}
+
+llvm::Value* LlvmEmitter::emit_start(const IrInst& inst) {
+    auto* ptr = llvm::PointerType::getUnqual(context_);
+    auto* i64 = llvm::Type::getInt64Ty(context_);
+    const llvm::DataLayout& layout = module_.getDataLayout();
+
+    std::vector<llvm::Type*> fields;
+    fields.reserve(inst.args.size());
+    for (const auto& arg : inst.args) {
+        fields.push_back(type_of(arg.type));
+    }
+    llvm::StructType* pack_ty = fields.empty() ? nullptr : llvm::StructType::get(context_, fields);
+
+    llvm::Value* args_ptr = llvm::ConstantPointerNull::get(ptr);
+    if (pack_ty != nullptr) {
+        const uint64_t bytes = layout.getTypeAllocSize(pack_ty);
+        args_ptr = builder_.CreateCall(runtime("malloc"), {llvm::ConstantInt::get(i64, bytes)});
+        for (unsigned i = 0; i < inst.args.size(); ++i) {
+            llvm::Value* slot = builder_.CreateStructGEP(pack_ty, args_ptr, i);
+            llvm::Value* value = inst.args[i].type.kind == IrTypeKind::String ? materialize_owned(inst.args[i])
+                                                                             : materialize(inst.args[i]);
+            builder_.CreateStore(value, slot);
+        }
+    }
+
+    IrType payload = ir_void();
+    if (inst.dest.type.kind == IrTypeKind::Task && inst.dest.type.element != nullptr) {
+        payload = *inst.dest.type.element;
+    }
+    llvm::Function* thunk = make_task_thunk(inst.name, pack_ty, payload);
+
+    uint64_t result_bytes = 0;
+    uint64_t result_align = 1;
+    if (payload.kind != IrTypeKind::Void) {
+        llvm::Type* result_ty = type_of(payload);
+        result_bytes = layout.getTypeAllocSize(result_ty);
+        result_align = layout.getABITypeAlign(result_ty).value();
+    }
+
+    return builder_.CreateCall(runtime("yukt_task_start"),
+                              {thunk, args_ptr, llvm::ConstantInt::get(i64, result_bytes),
+                               llvm::ConstantInt::get(i64, result_align)});
+}
+
+llvm::Value* LlvmEmitter::emit_wait(const IrInst& inst) {
+    auto* ptr = llvm::PointerType::getUnqual(context_);
+    llvm::Value* task = materialize(inst.args[0]);
+    if (inst.dest.type.kind == IrTypeKind::Void) {
+        builder_.CreateCall(runtime("yukt_task_wait"), {task, llvm::ConstantPointerNull::get(ptr)});
+        return nullptr;
+    }
+    llvm::Type* result_ty = type_of(inst.dest.type);
+    llvm::AllocaInst* slot = builder_.CreateAlloca(result_ty);
+    const llvm::Align align = module_.getDataLayout().getABITypeAlign(result_ty);
+    slot->setAlignment(align);
+    builder_.CreateCall(runtime("yukt_task_wait"), {task, slot});
+    return builder_.CreateLoad(result_ty, slot);
 }
 
 llvm::Value* LlvmEmitter::emit_stdlib_call(const IrInst& inst) {

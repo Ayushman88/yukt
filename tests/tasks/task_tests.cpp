@@ -1,3 +1,4 @@
+#include "backend/pipeline.hpp"
 #include "driver/driver.hpp"
 #include "ir/ir.hpp"
 #include "ir/lower.hpp"
@@ -139,6 +140,19 @@ int main() {
             "    say 1\n"
             "create main:\n"
             "    t = start work()\n"
+            "    wait t\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        std::ostringstream out;
+        yukt::print_types(result.semantic, out);
+        REQUIRE(out.str().find("t: task[void]") != std::string::npos);
+    }
+
+    {
+        const auto result = check_source(
+            "create work:\n"
+            "    say 1\n"
+            "create main:\n"
+            "    t = start work()\n"
             "    x = wait t\n");
         REQUIRE(has_title(result, "Type mismatch"));
     }
@@ -211,6 +225,54 @@ int main() {
         REQUIRE(ir.find(" = start ") != std::string::npos);
         REQUIRE(ir.find(" = wait ") != std::string::npos);
         REQUIRE(ir.find("t: task[i64]") != std::string::npos);
+    }
+
+    {
+        const auto path = source_path("tests/tasks/basic.yukt");
+        auto frontend = yukt::analyze_file(path);
+        yukt::analyze_types(frontend);
+        yukt::CompileRequest request;
+        request.action = yukt::CompileAction::Run;
+        request.input_path = path;
+        const auto output = yukt::compile_program(frontend, request, *frontend.diagnostics);
+        REQUIRE_MSG(output.ok, output.program_output);
+        REQUIRE(output.program_output == "4\n");
+    }
+
+    {
+        const auto path = source_path("tests/tasks/void_task.yukt");
+        auto frontend = yukt::analyze_file(path);
+        yukt::analyze_types(frontend);
+        yukt::CompileRequest request;
+        request.action = yukt::CompileAction::Run;
+        request.input_path = path;
+        const auto output = yukt::compile_program(frontend, request, *frontend.diagnostics);
+        REQUIRE_MSG(output.ok, output.program_output);
+        REQUIRE(output.program_output == "1\n");
+    }
+
+    {
+        const auto path = source_path("tests/tasks/heap_result.yukt");
+        auto frontend = yukt::analyze_file(path);
+        yukt::analyze_types(frontend);
+        yukt::CompileRequest request;
+        request.action = yukt::CompileAction::Run;
+        request.input_path = path;
+        const auto output = yukt::compile_program(frontend, request, *frontend.diagnostics);
+        REQUIRE_MSG(output.ok, output.program_output);
+        REQUIRE(output.program_output == "ok\n");
+    }
+
+    {
+        const auto path = source_path("tests/tasks/result_ok.yukt");
+        auto frontend = yukt::analyze_file(path);
+        yukt::analyze_types(frontend);
+        yukt::CompileRequest request;
+        request.action = yukt::CompileAction::Run;
+        request.input_path = path;
+        const auto output = yukt::compile_program(frontend, request, *frontend.diagnostics);
+        REQUIRE_MSG(output.ok, output.program_output);
+        REQUIRE(output.program_output == "ok\n");
     }
 
     return yukt::test::summary("yukt_task_tests");

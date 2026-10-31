@@ -1137,8 +1137,13 @@ void Analyzer::finalize_functions() {
                       "Remove `give` or return a value from every path you intend to use.");
             }
         }
+    }
 
-        if (function->decl == nullptr) {
+    // Locals such as `t = start work()` may be `task[void]`. Return types must
+    // already be bound; `functions_` is unordered, so this cannot share the
+    // previous loop.
+    for (auto& [name, function] : functions_) {
+        if (function == nullptr || function->decl == nullptr || is_stdlib_runtime_ir(name)) {
             continue;
         }
         for (std::size_t i = 0; i < function->parameters.size(); ++i) {

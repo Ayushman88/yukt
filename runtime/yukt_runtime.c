@@ -1518,7 +1518,6 @@ static void yukt_task_run_body(YuktTask* task) {
     atomic_store(&task->state, YUKT_TASK_COMPLETED);
     pthread_cond_broadcast(&task->done);
     pthread_mutex_unlock(&task->mu);
-    yukt_task_note_done();
 }
 
 static void yukt_task_drop(YuktTask* task) {
@@ -1527,6 +1526,7 @@ static void yukt_task_drop(YuktTask* task) {
     }
     if (atomic_fetch_sub(&task->refs, 1) == 1) {
         yukt_release(task);
+        yukt_task_note_done();
     }
 }
 

@@ -1,0 +1,7 @@
+create work:
+    give ok("ok")
+
+create main:
+    r = wait start work()
+    if r.ok:
+        say r.value
