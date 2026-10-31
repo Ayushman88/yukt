@@ -16,6 +16,11 @@ enum class TypeKind {
     List,
     Record,
     Variable,
+    Error,
+    Result,
+    Map,
+    Set,
+    Json,
 };
 
 struct Type {
@@ -33,6 +38,11 @@ Type string_type();
 Type void_type();
 Type list_type(Type element);
 Type record_type(int record_id, std::string record_name);
+Type error_type(int record_id = -1);
+Type result_type(Type payload, int record_id = -1);
+Type map_type(Type value);
+Type set_type();
+Type json_type();
 
 class TypeContext {
 public:

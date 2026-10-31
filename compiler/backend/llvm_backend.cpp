@@ -31,6 +31,7 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Instructions.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Metadata.h>
@@ -132,6 +133,9 @@ llvm::Type* llvm_type(llvm::LLVMContext& context, const IrType& type) {
             return llvm::Type::getInt1Ty(context);
         case IrTypeKind::String:
         case IrTypeKind::List:
+        case IrTypeKind::Map:
+        case IrTypeKind::Set:
+        case IrTypeKind::Json:
             return llvm::PointerType::getUnqual(context);
         case IrTypeKind::Record:
             return llvm::PointerType::getUnqual(context);
@@ -339,6 +343,7 @@ void LlvmEmitter::declare_runtime() {
     runtime_["yukt_say_cstr"] = module_.getOrInsertFunction("yukt_say_cstr", void_ty, ptr);
     runtime_["yukt_say_list"] = module_.getOrInsertFunction("yukt_say_list", void_ty, ptr);
     runtime_["yukt_str_concat"] = module_.getOrInsertFunction("yukt_str_concat", ptr, ptr, ptr);
+    runtime_["yukt_str_eq"] = module_.getOrInsertFunction("yukt_str_eq", i8, ptr, ptr);
     runtime_["yukt_list_new"] = module_.getOrInsertFunction("yukt_list_new", ptr, i64, i64);
     runtime_["yukt_list_new_rec"] = module_.getOrInsertFunction("yukt_list_new_rec", ptr, i64, i64);
     runtime_["yukt_list_set_rec"] = module_.getOrInsertFunction("yukt_list_set_rec", void_ty, ptr, i64, ptr, i64);
@@ -410,6 +415,33 @@ void LlvmEmitter::declare_runtime() {
     runtime_["yukt_stat_min_f"] = module_.getOrInsertFunction("yukt_stat_min_f", f64, ptr);
     runtime_["yukt_stat_max_f"] = module_.getOrInsertFunction("yukt_stat_max_f", f64, ptr);
     runtime_["yukt_stat_mean_f"] = module_.getOrInsertFunction("yukt_stat_mean_f", f64, ptr);
+    runtime_["yukt_map_new"] = module_.getOrInsertFunction("yukt_map_new", ptr);
+    runtime_["yukt_map_set_i64"] = module_.getOrInsertFunction("yukt_map_set_i64", void_ty, ptr, ptr, i64);
+    runtime_["yukt_map_set_f64"] = module_.getOrInsertFunction("yukt_map_set_f64", void_ty, ptr, ptr, f64);
+    runtime_["yukt_map_set_bool"] = module_.getOrInsertFunction("yukt_map_set_bool", void_ty, ptr, ptr, i8);
+    runtime_["yukt_map_set_cstr"] = module_.getOrInsertFunction("yukt_map_set_cstr", void_ty, ptr, ptr, ptr);
+    runtime_["yukt_map_has"] = module_.getOrInsertFunction("yukt_map_has", i8, ptr, ptr);
+    runtime_["yukt_map_get_i64"] = module_.getOrInsertFunction("yukt_map_get_i64", i64, ptr, ptr);
+    runtime_["yukt_map_get_f64"] = module_.getOrInsertFunction("yukt_map_get_f64", f64, ptr, ptr);
+    runtime_["yukt_map_get_bool"] = module_.getOrInsertFunction("yukt_map_get_bool", i8, ptr, ptr);
+    runtime_["yukt_map_get_cstr"] = module_.getOrInsertFunction("yukt_map_get_cstr", ptr, ptr, ptr);
+    runtime_["yukt_map_len"] = module_.getOrInsertFunction("yukt_map_len", i64, ptr);
+    runtime_["yukt_map_remove"] = module_.getOrInsertFunction("yukt_map_remove", void_ty, ptr, ptr);
+    runtime_["yukt_set_new"] = module_.getOrInsertFunction("yukt_set_new", ptr);
+    runtime_["yukt_set_add"] = module_.getOrInsertFunction("yukt_set_add", void_ty, ptr, ptr);
+    runtime_["yukt_set_has"] = module_.getOrInsertFunction("yukt_set_has", i8, ptr, ptr);
+    runtime_["yukt_set_len"] = module_.getOrInsertFunction("yukt_set_len", i64, ptr);
+    runtime_["yukt_set_remove"] = module_.getOrInsertFunction("yukt_set_remove", void_ty, ptr, ptr);
+    runtime_["yukt_file_exists"] = module_.getOrInsertFunction("yukt_file_exists", i8, ptr);
+    runtime_["yukt_file_read"] = module_.getOrInsertFunction("yukt_file_read", ptr, ptr);
+    runtime_["yukt_file_write"] = module_.getOrInsertFunction("yukt_file_write", i64, ptr, ptr);
+    runtime_["yukt_json_parse"] = module_.getOrInsertFunction("yukt_json_parse", ptr, ptr);
+    runtime_["yukt_json_is_valid"] = module_.getOrInsertFunction("yukt_json_is_valid", i8, ptr);
+    runtime_["yukt_json_has_int"] = module_.getOrInsertFunction("yukt_json_has_int", i8, ptr, ptr);
+    runtime_["yukt_json_has_string"] = module_.getOrInsertFunction("yukt_json_has_string", i8, ptr, ptr);
+    runtime_["yukt_json_get_int"] = module_.getOrInsertFunction("yukt_json_get_int", i64, ptr, ptr);
+    runtime_["yukt_json_get_string"] = module_.getOrInsertFunction("yukt_json_get_string", ptr, ptr, ptr);
+    runtime_["yukt_json_encode"] = module_.getOrInsertFunction("yukt_json_encode", ptr, ptr);
     if (auto* zeros = module_.getFunction("yukt_list_zeros")) {
         zeros->addRetAttr(llvm::Attribute::NoAlias);
     }
@@ -428,21 +460,33 @@ void LlvmEmitter::declare_functions() {
         std::vector<llvm::Type*> params;
         params.reserve(function.params.size());
         for (std::size_t i = 0; i < function.params.size(); ++i) {
-            if (i < function.param_is_ref.size() && function.param_is_ref[i]) {
+            const bool is_ref = i < function.param_is_ref.size() && function.param_is_ref[i];
+            if (is_ref) {
                 params.push_back(llvm::PointerType::getUnqual(context_));
+            } else if (function.foreign && function.params[i].second.kind == IrTypeKind::Bool) {
+                params.push_back(llvm::Type::getInt8Ty(context_));
             } else {
                 params.push_back(type_of(function.params[i].second));
             }
         }
-        auto* type = llvm::FunctionType::get(type_of(function.return_type), params, false);
-        const auto linkage =
-            function.name == "main" ? llvm::Function::ExternalLinkage : llvm::Function::InternalLinkage;
-        auto* llvm_fn = llvm::Function::Create(type, linkage, mangle(function.name), module_);
-        if (function.name != "main") {
-            llvm_fn->addFnAttr(function.name.rfind("$par$", 0) == 0 ? llvm::Attribute::AlwaysInline
-                                                                   : llvm::Attribute::InlineHint);
+        llvm::Type* return_ty = type_of(function.return_type);
+        if (function.foreign && function.return_type.kind == IrTypeKind::Bool) {
+            return_ty = llvm::Type::getInt8Ty(context_);
         }
-        llvm_fn->addFnAttr(llvm::Attribute::MustProgress);
+        auto* type = llvm::FunctionType::get(return_ty, params, false);
+        const auto linkage = function.foreign || function.name == "main" ? llvm::Function::ExternalLinkage
+                                                                         : llvm::Function::InternalLinkage;
+        const std::string llvm_name = function.foreign ? function.name : mangle(function.name);
+        auto* llvm_fn = llvm::Function::Create(type, linkage, llvm_name, module_);
+        if (function.foreign) {
+            llvm_fn->setCallingConv(llvm::CallingConv::C);
+        } else {
+            if (function.name != "main") {
+                llvm_fn->addFnAttr(function.name.rfind("$par$", 0) == 0 ? llvm::Attribute::AlwaysInline
+                                                                       : llvm::Attribute::InlineHint);
+            }
+            llvm_fn->addFnAttr(llvm::Attribute::MustProgress);
+        }
         unsigned index = 0;
         for (auto& arg : llvm_fn->args()) {
             arg.setName(function.params[index].first);
@@ -454,7 +498,9 @@ void LlvmEmitter::declare_functions() {
 
 void LlvmEmitter::emit_functions() {
     for (const auto& function : ir_.functions) {
-        emit_function(function);
+        if (!function.foreign) {
+            emit_function(function);
+        }
     }
 
     auto* i32 = llvm::Type::getInt32Ty(context_);
@@ -561,6 +607,8 @@ llvm::Value* LlvmEmitter::materialize(const IrValue& value) {
             return cstr_ptr(value.text);
         case IrValue::Kind::Undef:
             return llvm::PoisonValue::get(type_of(value.type));
+        case IrValue::Kind::Null:
+            return llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(context_));
     }
     return llvm::PoisonValue::get(llvm::Type::getInt64Ty(context_));
 }
@@ -593,6 +641,15 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
             if ((inst.bin == IrBinOp::Eq || inst.bin == IrBinOp::Ne) &&
                 inst.args[0].type.kind == IrTypeKind::Record) {
                 llvm::Value* eq = emit_record_eq(left, right, inst.args[0].type.record_id);
+                if (inst.bin == IrBinOp::Ne) {
+                    return builder_.CreateNot(eq);
+                }
+                return eq;
+            }
+            if ((inst.bin == IrBinOp::Eq || inst.bin == IrBinOp::Ne) &&
+                inst.args[0].type.kind == IrTypeKind::String) {
+                llvm::Value* raw = builder_.CreateCall(runtime("yukt_str_eq"), {left, right});
+                llvm::Value* eq = builder_.CreateICmpNE(raw, llvm::ConstantInt::get(llvm::Type::getInt8Ty(context_), 0));
                 if (inst.bin == IrBinOp::Ne) {
                     return builder_.CreateNot(eq);
                 }
@@ -641,21 +698,33 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
             }
             auto* callee = functions_.at(inst.name);
             const IrFunction* ir_callee = find_ir_function(inst.name);
+            const bool foreign = ir_callee != nullptr && ir_callee->foreign;
             std::vector<llvm::Value*> args;
             args.reserve(inst.args.size());
             for (std::size_t i = 0; i < inst.args.size(); ++i) {
                 const bool is_ref = ir_callee != nullptr && i < ir_callee->param_is_ref.size() &&
                                     ir_callee->param_is_ref[i];
-                if (is_ref) {
-                    args.push_back(materialize(inst.args[i]));
+                llvm::Value* arg = nullptr;
+                if (is_ref || foreign) {
+                    arg = materialize(inst.args[i]);
                 } else {
-                    args.push_back(inst.args[i].type.kind == IrTypeKind::String ? materialize_owned(inst.args[i])
-                                                                               : materialize(inst.args[i]));
+                    arg = inst.args[i].type.kind == IrTypeKind::String ? materialize_owned(inst.args[i])
+                                                                      : materialize(inst.args[i]);
                 }
+                if (foreign && !is_ref && inst.args[i].type.kind == IrTypeKind::Bool) {
+                    arg = builder_.CreateZExt(arg, llvm::Type::getInt8Ty(context_));
+                }
+                args.push_back(arg);
             }
-            llvm::Value* call = builder_.CreateCall(callee->getFunctionType(), callee, args);
+            llvm::CallInst* call = builder_.CreateCall(callee->getFunctionType(), callee, args);
+            if (foreign) {
+                call->setCallingConv(llvm::CallingConv::C);
+            }
             if (inst.dest.type.kind == IrTypeKind::Void) {
                 return nullptr;
+            }
+            if (foreign && inst.dest.type.kind == IrTypeKind::Bool) {
+                return builder_.CreateICmpNE(call, llvm::ConstantInt::get(llvm::Type::getInt8Ty(context_), 0));
             }
             return call;
         }
@@ -813,6 +882,9 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
         case IrOp::FieldGet: {
             const IrType object_type = inst.args[0].type;
             llvm::Value* object = materialize(inst.args[0]);
+            if (!llvm::isa<llvm::StructType>(object->getType())) {
+                return llvm::PoisonValue::get(type_of(inst.dest.type));
+            }
             llvm::Value* loaded =
                 builder_.CreateExtractValue(object, {record_llvm_index(object_type.record_id, inst.field_index)});
             const IrRecord* record = find_record(object_type.record_id);
@@ -1038,6 +1110,89 @@ llvm::Value* LlvmEmitter::emit_stdlib_call(const IrInst& inst) {
     if (name == "std$stat$mean_f") {
         return call_runtime("yukt_stat_mean_f", {args.at(0)});
     }
+    if (name == "std$map$new") {
+        return call_runtime("yukt_map_new", {});
+    }
+    if (name == "std$map$set") {
+        const IrType value_type = inst.args.size() > 2 ? inst.args[2].type : ir_i64();
+        if (value_type.kind == IrTypeKind::F64) {
+            return call_runtime("yukt_map_set_f64", {args.at(0), args.at(1), args.at(2)});
+        }
+        if (value_type.kind == IrTypeKind::Bool) {
+            llvm::Value* packed = builder_.CreateZExt(args.at(2), llvm::Type::getInt8Ty(context_));
+            return call_runtime("yukt_map_set_bool", {args.at(0), args.at(1), packed});
+        }
+        if (value_type.kind == IrTypeKind::String) {
+            return call_runtime("yukt_map_set_cstr", {args.at(0), args.at(1), args.at(2)});
+        }
+        return call_runtime("yukt_map_set_i64", {args.at(0), args.at(1), args.at(2)});
+    }
+    if (name == "std$map$has") {
+        return call_runtime("yukt_map_has", {args.at(0), args.at(1)});
+    }
+    if (name == "std$map$get_unchecked") {
+        if (inst.dest.type.kind == IrTypeKind::F64) {
+            return call_runtime("yukt_map_get_f64", {args.at(0), args.at(1)});
+        }
+        if (inst.dest.type.kind == IrTypeKind::Bool) {
+            return call_runtime("yukt_map_get_bool", {args.at(0), args.at(1)});
+        }
+        if (inst.dest.type.kind == IrTypeKind::String) {
+            return call_runtime("yukt_map_get_cstr", {args.at(0), args.at(1)});
+        }
+        return call_runtime("yukt_map_get_i64", {args.at(0), args.at(1)});
+    }
+    if (name == "std$map$len") {
+        return call_runtime("yukt_map_len", {args.at(0)});
+    }
+    if (name == "std$map$remove") {
+        return call_runtime("yukt_map_remove", {args.at(0), args.at(1)});
+    }
+    if (name == "std$set$new") {
+        return call_runtime("yukt_set_new", {});
+    }
+    if (name == "std$set$add") {
+        return call_runtime("yukt_set_add", {args.at(0), args.at(1)});
+    }
+    if (name == "std$set$has") {
+        return call_runtime("yukt_set_has", {args.at(0), args.at(1)});
+    }
+    if (name == "std$set$len") {
+        return call_runtime("yukt_set_len", {args.at(0)});
+    }
+    if (name == "std$set$remove") {
+        return call_runtime("yukt_set_remove", {args.at(0), args.at(1)});
+    }
+    if (name == "std$file$exists") {
+        return call_runtime("yukt_file_exists", {args.at(0)});
+    }
+    if (name == "std$file$read_unchecked") {
+        return call_runtime("yukt_file_read", {args.at(0)});
+    }
+    if (name == "std$file$write_unchecked") {
+        return call_runtime("yukt_file_write", {args.at(0), args.at(1)});
+    }
+    if (name == "std$json$parse_unchecked") {
+        return call_runtime("yukt_json_parse", {args.at(0)});
+    }
+    if (name == "std$json$is_valid") {
+        return call_runtime("yukt_json_is_valid", {args.at(0)});
+    }
+    if (name == "std$json$has_int") {
+        return call_runtime("yukt_json_has_int", {args.at(0), args.at(1)});
+    }
+    if (name == "std$json$has_string") {
+        return call_runtime("yukt_json_has_string", {args.at(0), args.at(1)});
+    }
+    if (name == "std$json$get_int_unchecked") {
+        return call_runtime("yukt_json_get_int", {args.at(0), args.at(1)});
+    }
+    if (name == "std$json$get_string_unchecked") {
+        return call_runtime("yukt_json_get_string", {args.at(0), args.at(1)});
+    }
+    if (name == "std$json$encode") {
+        return call_runtime("yukt_json_encode", {args.at(0)});
+    }
     return llvm::PoisonValue::get(type_of(inst.dest.type));
 }
 
@@ -1154,6 +1309,9 @@ llvm::Value* LlvmEmitter::emit_record_eq(llvm::Value* left, llvm::Value* right, 
             cmp = emit_record_eq(l, r, field.record_id);
         } else if (field.kind == IrTypeKind::F64) {
             cmp = builder_.CreateFCmpOEQ(l, r);
+        } else if (field.kind == IrTypeKind::String) {
+            llvm::Value* raw = builder_.CreateCall(runtime("yukt_str_eq"), {l, r});
+            cmp = builder_.CreateICmpNE(raw, llvm::ConstantInt::get(llvm::Type::getInt8Ty(context_), 0));
         } else {
             cmp = builder_.CreateICmpEQ(l, r);
         }
@@ -1218,6 +1376,9 @@ void LlvmEmitter::emit_print_value(llvm::Value* value, const IrType& type) {
         case IrTypeKind::List:
             emit_print_list(value, type);
             return;
+        case IrTypeKind::Map:
+        case IrTypeKind::Set:
+        case IrTypeKind::Json:
         case IrTypeKind::Void:
             return;
     }

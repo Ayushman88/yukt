@@ -1,0 +1,39 @@
+use std/file as file
+use std/json as json
+
+create main:
+    w = file.write("/tmp/yukt_0136_tmp.txt", "hello")
+    if w.ok:
+        say w.value
+    otherwise:
+        say w.error.code
+    t = file.read("/tmp/yukt_0136_tmp.txt")
+    if t.ok:
+        say t.value
+    otherwise:
+        say t.error.code
+    missing = file.read("yukt_0136_missing.txt")
+    if missing.ok:
+        say missing.value
+    otherwise:
+        say missing.error.code
+    parsed = json.parse("{\"n\": 9, \"s\": \"hi\"}")
+    if parsed.ok:
+        n = json.get_int(parsed.value, "n")
+        if n.ok:
+            say n.value
+        otherwise:
+            say n.error.code
+        s = json.get_string(parsed.value, "s")
+        if s.ok:
+            say s.value
+        otherwise:
+            say s.error.code
+        say json.encode(parsed.value)
+    otherwise:
+        say parsed.error.code
+    bad = json.parse("{")
+    if bad.ok:
+        say 1
+    otherwise:
+        say bad.error.code

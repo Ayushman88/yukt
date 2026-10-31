@@ -11,7 +11,7 @@ bool operator==(const IrType& left, const IrType& right) {
     if (left.kind == IrTypeKind::Record) {
         return left.record_id == right.record_id;
     }
-    if (left.kind != IrTypeKind::List) {
+    if (left.kind != IrTypeKind::List && left.kind != IrTypeKind::Map) {
         return true;
     }
     if (left.element == nullptr || right.element == nullptr) {
@@ -58,6 +58,21 @@ IrType ir_record(int record_id) {
     return type;
 }
 
+IrType ir_map(IrType value) {
+    IrType type;
+    type.kind = IrTypeKind::Map;
+    type.element = std::make_shared<IrType>(std::move(value));
+    return type;
+}
+
+IrType ir_set() {
+    return IrType{.kind = IrTypeKind::Set};
+}
+
+IrType ir_json() {
+    return IrType{.kind = IrTypeKind::Json};
+}
+
 IrType ir_type_from(const Type& type) {
     switch (type.kind) {
         case TypeKind::Integer:
@@ -71,7 +86,15 @@ IrType ir_type_from(const Type& type) {
         case TypeKind::List:
             return ir_list(type.element != nullptr ? ir_type_from(*type.element) : ir_i64());
         case TypeKind::Record:
+        case TypeKind::Error:
+        case TypeKind::Result:
             return ir_record(type.record_id);
+        case TypeKind::Map:
+            return ir_map(type.element != nullptr ? ir_type_from(*type.element) : ir_i64());
+        case TypeKind::Set:
+            return ir_set();
+        case TypeKind::Json:
+            return ir_json();
         case TypeKind::Void:
         case TypeKind::Variable:
             return ir_void();
@@ -95,6 +118,12 @@ std::string ir_type_name(const IrType& type) {
             return "list[" + (type.element != nullptr ? ir_type_name(*type.element) : "?") + "]";
         case IrTypeKind::Record:
             return "record#" + std::to_string(type.record_id);
+        case IrTypeKind::Map:
+            return "map[" + (type.element != nullptr ? ir_type_name(*type.element) : "?") + "]";
+        case IrTypeKind::Set:
+            return "set";
+        case IrTypeKind::Json:
+            return "json";
     }
     return "void";
 }
@@ -113,6 +142,9 @@ int list_elem_kind(const IrType& type) {
             return 4;
         case IrTypeKind::Record:
             return 5;
+        case IrTypeKind::Map:
+        case IrTypeKind::Set:
+        case IrTypeKind::Json:
         case IrTypeKind::Void:
             return -1;
     }
@@ -137,6 +169,8 @@ std::string value_text(const IrValue& value) {
             return "\"" + value.text + "\"";
         case IrValue::Kind::Undef:
             return "undef";
+        case IrValue::Kind::Null:
+            return "null";
     }
     return "undef";
 }

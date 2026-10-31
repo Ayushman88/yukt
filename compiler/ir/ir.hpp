@@ -20,6 +20,9 @@ enum class IrTypeKind {
     Void,
     List,
     Record,
+    Map,
+    Set,
+    Json,
 };
 
 struct IrType {
@@ -55,6 +58,9 @@ IrType ir_string();
 IrType ir_void();
 IrType ir_list(IrType element);
 IrType ir_record(int record_id);
+IrType ir_map(IrType value);
+IrType ir_set();
+IrType ir_json();
 IrType ir_type_from(const Type& type);
 std::string ir_type_name(const IrType& type);
 int list_elem_kind(const IrType& type);
@@ -85,6 +91,7 @@ struct IrValue {
         ConstBool,
         ConstString,
         Undef,
+        Null,
     };
 
     Kind kind = Kind::Undef;
@@ -171,6 +178,7 @@ struct IrFunction {
     IrType return_type;
     std::vector<std::pair<std::string, IrType>> params;
     std::vector<char> param_is_ref;
+    bool foreign = false;
     std::vector<std::pair<std::string, IrType>> locals;
     std::vector<IrBlock> blocks;
 };

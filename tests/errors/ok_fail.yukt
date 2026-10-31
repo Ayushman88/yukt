@@ -1,0 +1,24 @@
+create parse_int(text):
+    if text == "7":
+        give ok(7)
+    otherwise:
+        give fail("bad_int")
+
+create wrap(text):
+    r = parse_int(text)
+    if r.ok:
+        give ok(r.value)
+    otherwise:
+        give r
+
+create main:
+    a = wrap("7")
+    if a.ok:
+        say a.value
+    otherwise:
+        say a.error.code
+    b = wrap("no")
+    if b.ok:
+        say b.value
+    otherwise:
+        say b.error.code

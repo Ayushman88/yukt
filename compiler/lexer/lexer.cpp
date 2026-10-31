@@ -61,6 +61,15 @@ TokenKind keyword_kind(std::string_view text) {
     if (text == "ref") {
         return TokenKind::KwRef;
     }
+    if (text == "foreign") {
+        return TokenKind::KwForeign;
+    }
+    if (text == "ok") {
+        return TokenKind::KwOk;
+    }
+    if (text == "fail") {
+        return TokenKind::KwFail;
+    }
     return TokenKind::Identifier;
 }
 

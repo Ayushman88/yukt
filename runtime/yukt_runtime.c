@@ -18,7 +18,7 @@ static void die(const char* message) {
     exit(1);
 }
 
-enum { YUKT_ALLOC_LIST = 1, YUKT_ALLOC_STR = 2 };
+enum { YUKT_ALLOC_LIST = 1, YUKT_ALLOC_STR = 2, YUKT_ALLOC_OBJ = 3 };
 
 typedef struct YuktAlloc {
     struct YuktAlloc* next;
@@ -118,6 +118,8 @@ void yukt_reduce_f64(double* acc, double partial, int64_t op) {
     pthread_mutex_unlock(&yukt_reduce_mu);
 }
 
+void yukt_013_free(void* ptr);
+
 static void yukt_track(int kind, void* ptr, size_t bytes) {
     if (ptr == NULL) {
         return;
@@ -133,6 +135,10 @@ static void yukt_track(int kind, void* ptr, size_t bytes) {
     yukt_allocs = node;
 }
 
+void yukt_track_obj(void* ptr, size_t bytes) {
+    yukt_track(YUKT_ALLOC_OBJ, ptr, bytes);
+}
+
 void yukt_runtime_release(void) {
     YuktAlloc* node = yukt_allocs;
     yukt_allocs = NULL;
@@ -145,6 +151,8 @@ void yukt_runtime_release(void) {
             }
             free(list->data);
             free(list);
+        } else if (node->kind == YUKT_ALLOC_OBJ) {
+            yukt_013_free(node->ptr);
         } else if (!yukt_cache_put(yukt_str_bins, node->ptr, node->bytes)) {
             free(node->ptr);
         }
@@ -211,6 +219,8 @@ void yukt_release(void* ptr) {
         }
         free(list->data);
         free(list);
+    } else if (node->kind == YUKT_ALLOC_OBJ) {
+        yukt_013_free(node->ptr);
     } else if (!yukt_cache_put(yukt_str_bins, node->ptr, node->bytes)) {
         free(node->ptr);
     }
@@ -324,6 +334,16 @@ char* yukt_str_concat(const char* left, const char* right) {
     out[left_size + right_size] = '\0';
     yukt_track(YUKT_ALLOC_STR, out, bytes);
     return out;
+}
+
+int8_t yukt_str_eq(const char* left, const char* right) {
+    if (left == NULL) {
+        left = "";
+    }
+    if (right == NULL) {
+        right = "";
+    }
+    return strcmp(left, right) == 0 ? 1 : 0;
 }
 
 static size_t element_size(int64_t kind) {
@@ -1375,4 +1395,15 @@ double yukt_stat_mean_f(const YuktList* items) {
         total += data[i];
     }
     return total / (double)items->length;
+}
+
+int64_t yukt_point_sum(const int64_t* point) {
+    if (point == NULL) {
+        return 0;
+    }
+    return point[0] + point[1];
+}
+
+int8_t yukt_bool_and(int8_t a, int8_t b) {
+    return (a != 0 && b != 0) ? 1 : 0;
 }

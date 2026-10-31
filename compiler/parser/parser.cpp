@@ -59,6 +59,11 @@ std::unique_ptr<Program> Parser::parse_program() {
             } else {
                 program->uses.push_back(parse_use());
             }
+        } else if (check(TokenKind::KwForeign)) {
+            seen_item = true;
+            if (auto function = parse_foreign()) {
+                program->functions.push_back(std::move(function));
+            }
         } else if (check(TokenKind::KwShare) || check(TokenKind::KwCreate) || check(TokenKind::KwRecord)) {
             seen_item = true;
             bool shared = false;
@@ -88,7 +93,7 @@ std::unique_ptr<Program> Parser::parse_program() {
             }
         } else {
             error_at(peek(), "Unexpected token",
-                     "Top-level code must start with `use`, `record`, or a `create` function declaration. Found " +
+                     "Top-level code must start with `use`, `record`, `foreign`, or a `create` function declaration. Found " +
                          token_description(peek()) + ".",
                      "Wrap this code in `create main:` or move it into an existing function.");
             synchronize();
@@ -260,7 +265,7 @@ TypeName Parser::parse_type_name() {
     if (!check(TokenKind::Identifier)) {
         error_at(peek(), "Unexpected token",
                  "Expected a type name. Found " + token_description(peek()) + ".",
-                 "Use `integer`, `float`, `boolean`, or a record name.");
+                 "Use `integer`, `float`, `boolean`, `result[T]`, or a record name.");
         return type;
     }
     const Token first = advance();
@@ -289,6 +294,15 @@ TypeName Parser::parse_type_name() {
     type.name = first.lexeme;
     type.name_location = first.location;
     type.span.end = first.location;
+    if (type.name == "result" && match(TokenKind::LBracket)) {
+        type.arguments.push_back(parse_type_name());
+        if (!consume(TokenKind::RBracket, "Unexpected token",
+                     "Expected `]` after the payload type of `result`.",
+                     "Write `result[integer]`.")) {
+            return type;
+        }
+        type.span.end = previous().location;
+    }
     return type;
 }
 
@@ -352,6 +366,75 @@ std::unique_ptr<FunctionDecl> Parser::parse_function(bool shared) {
     }
 
     function->body = parse_block("function body");
+    function->span.end = previous().location;
+    return function;
+}
+
+std::unique_ptr<FunctionDecl> Parser::parse_foreign() {
+    const Token start = peek();
+    auto function = std::make_unique<FunctionDecl>();
+    function->span.start = start.location;
+    function->foreign = true;
+    if (!consume(TokenKind::KwForeign, "Unexpected token",
+                 "Expected `foreign` to start a C declaration.",
+                 "Write `foreign strlen(s: ref string): integer`.")) {
+        synchronize();
+        return nullptr;
+    }
+    Token name;
+    if (!take_function_name(name, "foreign")) {
+        synchronize();
+        return nullptr;
+    }
+    function->name = name.lexeme;
+    function->name_location = name.location;
+    if (!consume(TokenKind::LParen, "Unexpected token",
+                 "Expected `(` after `foreign " + function->name + "`.",
+                 "Write `foreign " + function->name + "(...): integer`.")) {
+        synchronize();
+        return nullptr;
+    }
+    if (!check(TokenKind::RParen)) {
+        do {
+            if (!check(TokenKind::Identifier)) {
+                error_at(peek(), "Unexpected token",
+                         "Expected a parameter name. Found " + token_description(peek()) + ".",
+                         "Foreign parameters look like `s: ref string`.");
+                synchronize();
+                return nullptr;
+            }
+            const Token param = advance();
+            function->parameters.push_back(param.lexeme);
+            function->parameter_locations.push_back(param.location);
+            if (!consume(TokenKind::Colon, "Unexpected token",
+                         "Foreign parameters need a type, for example `" + param.lexeme + ": ref string`.",
+                         "Write `" + param.lexeme + ": integer` or `" + param.lexeme + ": ref string`.")) {
+                synchronize();
+                return nullptr;
+            }
+            if (match(TokenKind::KwRef)) {
+                function->parameter_is_ref.push_back(1);
+            } else {
+                function->parameter_is_ref.push_back(0);
+            }
+            function->parameter_ref_types.push_back(parse_type_name());
+        } while (match(TokenKind::Comma));
+    }
+    if (!consume(TokenKind::RParen, "Unexpected token",
+                 "Expected `)` after the foreign parameter list.",
+                 "Close the parameter list before the return type.")) {
+        synchronize();
+        return nullptr;
+    }
+    if (!consume(TokenKind::Colon, "Unexpected token",
+                 "Expected `:` and a return type after `foreign " + function->name + "(...)`.",
+                 "Write `foreign " + function->name + "(...): integer`.")) {
+        synchronize();
+        return nullptr;
+    }
+    function->return_type_name = parse_type_name();
+    function->has_return_type = true;
+    expect_newline("after this foreign declaration");
     function->span.end = previous().location;
     return function;
 }
@@ -671,10 +754,10 @@ std::unique_ptr<Expr> Parser::parse_postfix() {
         }
         if (match(TokenKind::Dot)) {
             const Token dot = previous();
-            if (!check(TokenKind::Identifier)) {
+            if (!check(TokenKind::Identifier) && !check(TokenKind::KwOk)) {
                 error_at(peek(), "Unexpected token",
                          "Expected a field name after `.`. Found " + token_description(peek()) + ".",
-                         "Write `point.x`.");
+                         "Write `point.x` or `r.ok`.");
                 return expr;
             }
             const Token field = advance();
@@ -740,6 +823,21 @@ std::unique_ptr<Expr> Parser::parse_primary() {
         expr->span.end = token.location;
         expr->value = token.kind == TokenKind::KwTrue;
         return expr;
+    }
+
+    if (check(TokenKind::KwOk) || check(TokenKind::KwFail)) {
+        const Token name = advance();
+        if (!check(TokenKind::LParen)) {
+            error_at(peek(), "Unexpected token",
+                     "Expected `(` after `" + name.lexeme + "`.",
+                     "Write `" + name.lexeme + "(...)`.");
+            auto expr = std::make_unique<IdentifierExpr>();
+            expr->span.start = name.location;
+            expr->span.end = name.location;
+            expr->name = name.lexeme;
+            return expr;
+        }
+        return parse_call_from_name(name);
     }
 
     if (check(TokenKind::Identifier)) {

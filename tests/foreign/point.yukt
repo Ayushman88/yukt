@@ -1,0 +1,11 @@
+record Point:
+    x: integer
+    y: integer
+
+foreign yukt_point_sum(p: ref Point): integer
+
+create main:
+    p = Point(3, 4)
+    say yukt_point_sum(p)
+    p.x = 10
+    say yukt_point_sum(p)

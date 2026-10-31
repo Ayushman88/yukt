@@ -39,6 +39,38 @@ Type record_type(int record_id, std::string record_name) {
     return type;
 }
 
+Type error_type(int record_id) {
+    Type type;
+    type.kind = TypeKind::Error;
+    type.record_id = record_id;
+    type.record_name = "error";
+    return type;
+}
+
+Type result_type(Type payload, int record_id) {
+    Type type;
+    type.kind = TypeKind::Result;
+    type.element = std::make_shared<Type>(std::move(payload));
+    type.record_id = record_id;
+    type.record_name = "result";
+    return type;
+}
+
+Type map_type(Type value) {
+    Type type;
+    type.kind = TypeKind::Map;
+    type.element = std::make_shared<Type>(std::move(value));
+    return type;
+}
+
+Type set_type() {
+    return Type{.kind = TypeKind::Set};
+}
+
+Type json_type() {
+    return Type{.kind = TypeKind::Json};
+}
+
 Type TypeContext::fresh_variable() {
     Type type;
     type.kind = TypeKind::Variable;
@@ -60,6 +92,16 @@ Type TypeContext::prune(Type type) const {
     }
     if (type.kind == TypeKind::List && type.element != nullptr) {
         return list_type(prune(*type.element));
+    }
+    if (type.kind == TypeKind::Result && type.element != nullptr) {
+        Type out = type;
+        out.element = std::make_shared<Type>(prune(*type.element));
+        return out;
+    }
+    if (type.kind == TypeKind::Map && type.element != nullptr) {
+        Type out = type;
+        out.element = std::make_shared<Type>(prune(*type.element));
+        return out;
     }
     return type;
 }
@@ -87,7 +129,7 @@ bool TypeContext::unify(Type left, Type right) {
         return false;
     }
 
-    if (left.kind == TypeKind::List) {
+    if (left.kind == TypeKind::List || left.kind == TypeKind::Result || left.kind == TypeKind::Map) {
         if (left.element == nullptr || right.element == nullptr) {
             return false;
         }
@@ -106,7 +148,8 @@ bool TypeContext::is_resolved(Type type) const {
     if (type.kind == TypeKind::Variable) {
         return false;
     }
-    if (type.kind == TypeKind::List && type.element != nullptr) {
+    if ((type.kind == TypeKind::List || type.kind == TypeKind::Result || type.kind == TypeKind::Map) &&
+        type.element != nullptr) {
         return is_resolved(*type.element);
     }
     return true;
@@ -121,7 +164,7 @@ bool TypeContext::same(Type left, Type right) const {
     if (left.kind == TypeKind::Variable) {
         return left.variable == right.variable;
     }
-    if (left.kind == TypeKind::List) {
+    if (left.kind == TypeKind::List || left.kind == TypeKind::Result || left.kind == TypeKind::Map) {
         if (left.element == nullptr || right.element == nullptr) {
             return left.element == right.element;
         }
@@ -152,6 +195,16 @@ std::string TypeContext::to_string(Type type) const {
             return type.record_name.empty() ? "record" : type.record_name;
         case TypeKind::Variable:
             return "?";
+        case TypeKind::Error:
+            return "error";
+        case TypeKind::Result:
+            return "result[" + (type.element != nullptr ? to_string(*type.element) : "?") + "]";
+        case TypeKind::Map:
+            return "map[" + (type.element != nullptr ? to_string(*type.element) : "?") + "]";
+        case TypeKind::Set:
+            return "set";
+        case TypeKind::Json:
+            return "json";
     }
     return "unknown";
 }
@@ -161,7 +214,8 @@ bool TypeContext::occurs(int variable, const Type& type) const {
     if (pruned.kind == TypeKind::Variable) {
         return pruned.variable == variable;
     }
-    if (pruned.kind == TypeKind::List && pruned.element != nullptr) {
+    if ((pruned.kind == TypeKind::List || pruned.kind == TypeKind::Result || pruned.kind == TypeKind::Map) &&
+        pruned.element != nullptr) {
         return occurs(variable, *pruned.element);
     }
     return false;

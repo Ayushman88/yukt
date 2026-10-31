@@ -67,6 +67,39 @@ int main() {
 
     {
         const auto result = parse(
+            "foreign strlen(s: ref string): integer\n"
+            "\n"
+            "create main:\n"
+            "    say strlen(\"hi\")\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* strlen_fn = function_named(*result.program, "strlen");
+        REQUIRE(strlen_fn != nullptr);
+        REQUIRE(strlen_fn != nullptr && strlen_fn->foreign);
+        REQUIRE(strlen_fn != nullptr && strlen_fn->body.empty());
+        REQUIRE(strlen_fn != nullptr && strlen_fn->parameters.size() == 1);
+        REQUIRE(strlen_fn != nullptr && strlen_fn->parameter_is_ref.size() == 1 && strlen_fn->parameter_is_ref[0]);
+        REQUIRE(strlen_fn != nullptr && strlen_fn->parameter_ref_types[0].name == "string");
+        REQUIRE(strlen_fn != nullptr && strlen_fn->has_return_type);
+        REQUIRE(strlen_fn != nullptr && strlen_fn->return_type_name.name == "integer");
+    }
+
+    {
+        const auto result = parse(
+            "create main:\n"
+            "    r = ok(1)\n"
+            "    e = fail(\"x\")\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* main = function_named(*result.program, "main");
+        REQUIRE(main != nullptr);
+        REQUIRE(main != nullptr && main->body.size() == 2);
+        const auto* assign = main != nullptr ? as<yukt::AssignStmt>(main->body[0].get()) : nullptr;
+        REQUIRE(assign != nullptr);
+        const auto* call = assign != nullptr ? as<yukt::CallExpr>(assign->value.get()) : nullptr;
+        REQUIRE(call != nullptr && call->callee == "ok");
+    }
+
+    {
+        const auto result = parse(
             "create main:\n"
             "    greet(name)\n");
         REQUIRE(!result.diagnostics->has_errors());

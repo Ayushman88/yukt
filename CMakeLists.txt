@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(yukt VERSION 0.13.3 LANGUAGES C CXX)
+project(yukt VERSION 0.13.6 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -79,7 +79,7 @@ target_include_directories(yukt_compiler PUBLIC ${CMAKE_SOURCE_DIR}/compiler)
 target_compile_definitions(yukt_compiler PUBLIC YUKT_STDLIB_DIR="${CMAKE_SOURCE_DIR}/std")
 yukt_set_warnings(yukt_compiler)
 
-add_library(yukt_runtime STATIC runtime/yukt_runtime.c)
+add_library(yukt_runtime STATIC runtime/yukt_runtime.c runtime/yukt_013.c)
 target_include_directories(yukt_runtime PUBLIC ${CMAKE_SOURCE_DIR}/runtime)
 target_link_libraries(yukt_runtime PUBLIC m)
 
@@ -233,3 +233,42 @@ endif()
 add_test(NAME yukt_ref_tests COMMAND yukt_ref_tests)
 add_dependencies(yukt_ref_tests yukt)
 add_test(NAME refs_suite_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/refs/suite.yukt)
+
+add_executable(yukt_foreign_tests tests/foreign/foreign_tests.cpp)
+target_link_libraries(yukt_foreign_tests PRIVATE yukt_backend yukt_runtime)
+target_include_directories(yukt_foreign_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_compile_definitions(yukt_foreign_tests PRIVATE
+    YUKT_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    YUKT_EXECUTABLE="$<TARGET_FILE:yukt>"
+    YUKT_RUNTIME_LIB="$<TARGET_FILE:yukt_runtime>"
+)
+if(NOT LLVM_ENABLE_RTTI)
+    target_compile_options(yukt_foreign_tests PRIVATE -fno-rtti)
+endif()
+if(APPLE AND DEFINED LLVM_LIBRARY_DIR)
+    target_link_options(yukt_foreign_tests PRIVATE "-Wl,-rpath,${LLVM_LIBRARY_DIR}")
+endif()
+add_test(NAME yukt_foreign_tests COMMAND yukt_foreign_tests)
+add_dependencies(yukt_foreign_tests yukt)
+add_test(NAME foreign_strlen_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/foreign/strlen.yukt)
+
+add_executable(yukt_error_tests tests/errors/error_tests.cpp)
+target_link_libraries(yukt_error_tests PRIVATE yukt_backend yukt_runtime)
+target_include_directories(yukt_error_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_compile_definitions(yukt_error_tests PRIVATE
+    YUKT_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    YUKT_EXECUTABLE="$<TARGET_FILE:yukt>"
+    YUKT_RUNTIME_LIB="$<TARGET_FILE:yukt_runtime>"
+)
+if(NOT LLVM_ENABLE_RTTI)
+    target_compile_options(yukt_error_tests PRIVATE -fno-rtti)
+endif()
+if(APPLE AND DEFINED LLVM_LIBRARY_DIR)
+    target_link_options(yukt_error_tests PRIVATE "-Wl,-rpath,${LLVM_LIBRARY_DIR}")
+endif()
+add_test(NAME yukt_error_tests COMMAND yukt_error_tests)
+add_dependencies(yukt_error_tests yukt)
+add_test(NAME errors_ok_fail_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/errors/ok_fail.yukt)
+add_test(NAME stdlib_map_set_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/stdlib/map_set.yukt)
+add_test(NAME stdlib_file_json_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/stdlib/file_json.yukt)
+add_test(NAME suite013_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/suite013/all.yukt)

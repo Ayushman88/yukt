@@ -158,6 +158,7 @@ struct TypeName {
     std::string name;
     SourceLocation name_location;
     SourceSpan span;
+    std::vector<TypeName> arguments;
 };
 
 struct FieldDecl {
@@ -179,12 +180,15 @@ struct RecordDecl {
 struct FunctionDecl {
     SourceSpan span;
     bool shared = false;
+    bool foreign = false;
     std::string name;
     SourceLocation name_location;
     std::vector<std::string> parameters;
     std::vector<SourceLocation> parameter_locations;
     std::vector<char> parameter_is_ref;
     std::vector<TypeName> parameter_ref_types;
+    TypeName return_type_name;
+    bool has_return_type = false;
     std::vector<std::unique_ptr<Stmt>> body;
     void print(std::ostream& out, int indent) const;
 };

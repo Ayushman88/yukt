@@ -1,0 +1,83 @@
+use std/map as map
+use std/set as set
+use std/file as file
+use std/json as json
+
+record Point:
+    x: integer
+    y: integer
+
+foreign strlen(s: ref string): integer
+foreign yukt_point_sum(p: ref Point): integer
+
+create increment(n: ref integer):
+    n = n + 1
+
+create parse_int(text):
+    if text == "7":
+        give ok(7)
+    otherwise:
+        give fail("bad_int")
+
+create main:
+    n = 0
+    increment(n)
+    increment(n)
+    say n
+
+    p = Point(3, 4)
+    say yukt_point_sum(p)
+    say strlen("yukt")
+
+    parsed = parse_int("7")
+    if parsed.ok:
+        say parsed.value
+    otherwise:
+        say parsed.error.code
+
+    m = map.new()
+    total = 0
+    repeat i in 1..10000:
+        map.set(m, "k", i)
+        got = map.get(m, "k")
+        if got.ok:
+            total = total + got.value
+        otherwise:
+            say got.error.code
+    say total
+    say map.len(m)
+
+    s = set.new()
+    repeat i in 0..9999:
+        set.add(s, "v")
+    say set.len(s)
+
+    w = file.write("/tmp/yukt_0136_suite.txt", "suite")
+    if w.ok:
+        text = file.read("/tmp/yukt_0136_suite.txt")
+        if text.ok:
+            say strlen(text.value)
+        otherwise:
+            say text.error.code
+    otherwise:
+        say w.error.code
+
+    j = json.parse("{\"n\": 42}")
+    if j.ok:
+        num = json.get_int(j.value, "n")
+        if num.ok:
+            say num.value
+        otherwise:
+            say num.error.code
+        missing = json.get_int(j.value, "missing")
+        if missing.ok:
+            say missing.value
+        otherwise:
+            say missing.error.code
+    otherwise:
+        say j.error.code
+    bad = parse_int("no")
+    if bad.ok:
+        say bad.value
+    otherwise:
+        say bad.error.code

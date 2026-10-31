@@ -9,6 +9,7 @@
 #include <iosfwd>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -60,6 +61,7 @@ struct SemanticInfo {
     std::unordered_map<const FunctionDecl*, std::string> function_ir_names;
     std::unordered_map<const CallExpr*, std::string> call_ir_names;
     std::unordered_map<const CallExpr*, int> record_constructors;
+    std::unordered_set<std::string> foreign_functions;
 };
 
 SemanticInfo analyze_semantics(const Program& program, DiagnosticEngine& diagnostics);

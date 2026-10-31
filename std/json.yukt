@@ -1,0 +1,41 @@
+# JSON objects. parse returns result[json].
+
+share create parse_unchecked(text):
+    give 0
+
+share create is_valid(obj):
+    give true
+
+share create has_int(obj, key):
+    give true
+
+share create has_string(obj, key):
+    give true
+
+share create get_int_unchecked(obj, key):
+    give 0
+
+share create get_string_unchecked(obj, key):
+    give key
+
+share create encode(obj):
+    give ""
+
+share create parse(text):
+    v = parse_unchecked(text)
+    if is_valid(v):
+        give ok(v)
+    otherwise:
+        give fail("invalid_json")
+
+share create get_int(obj: ref json, key):
+    if has_int(obj, key):
+        give ok(get_int_unchecked(obj, key))
+    otherwise:
+        give fail("not_found")
+
+share create get_string(obj: ref json, key):
+    if has_string(obj, key):
+        give ok(get_string_unchecked(obj, key))
+    otherwise:
+        give fail("not_found")

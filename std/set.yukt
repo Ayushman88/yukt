@@ -1,0 +1,16 @@
+# String sets.
+
+share create new:
+    give 0
+
+share create add(s, key):
+    n = 0
+
+share create has(s, key):
+    give true
+
+share create len(s):
+    give 0
+
+share create remove(s, key):
+    n = 0

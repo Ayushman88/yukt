@@ -1,0 +1,5 @@
+foreign llabs(n: integer): integer
+
+create main:
+    say llabs(0 - 7)
+    say llabs(4)

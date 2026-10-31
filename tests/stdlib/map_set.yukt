@@ -1,0 +1,28 @@
+use std/map as map
+use std/set as set
+
+create main:
+    m = map.new()
+    map.set(m, "a", 1)
+    map.set(m, "b", 2)
+    r = map.get(m, "a")
+    if r.ok:
+        say r.value
+    otherwise:
+        say r.error.code
+    missing = map.get(m, "z")
+    if missing.ok:
+        say missing.value
+    otherwise:
+        say missing.error.code
+    say map.len(m)
+    say map.has(m, "b")
+    map.remove(m, "b")
+    say map.has(m, "b")
+    s = set.new()
+    set.add(s, "x")
+    set.add(s, "x")
+    say set.len(s)
+    say set.has(s, "x")
+    set.remove(s, "x")
+    say set.has(s, "x")

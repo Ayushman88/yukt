@@ -94,22 +94,25 @@ bool has_user_call(const Expr* expr) {
 }
 
 bool ir_is_heap_pointer(const IrType& type) {
-    return type.kind == IrTypeKind::List || type.kind == IrTypeKind::String;
+    return type.kind == IrTypeKind::List || type.kind == IrTypeKind::String || type.kind == IrTypeKind::Map ||
+           type.kind == IrTypeKind::Set || type.kind == IrTypeKind::Json;
 }
 
 bool call_name_allocates(const std::string& qualifier, const std::string& callee) {
     if (callee == "zeros") {
         return true;
     }
-    if (callee == "std$list$copy" || callee == "std$list$slice" || callee == "std$str$concat" ||
-        callee == "std$str$slice" || callee == "std$str$repeat" || callee == "std$str$join" ||
-        callee == "std$str$split") {
+    if (callee == "ok" || callee == "fail" || callee == "std$list$copy" || callee == "std$list$slice" ||
+        callee == "std$str$concat" || callee == "std$str$slice" || callee == "std$str$repeat" ||
+        callee == "std$str$join" || callee == "std$str$split" || callee == "std$map$new" ||
+        callee == "std$set$new" || callee == "std$json$parse_unchecked" || callee == "std$file$read_unchecked") {
         return true;
     }
     const std::string qualified = qualifier.empty() ? callee : qualifier + "." + callee;
     return qualified == "list.copy" || qualified == "list.slice" || qualified == "str.concat" ||
            qualified == "str.slice" || qualified == "str.repeat" || qualified == "str.join" ||
-           qualified == "str.split";
+           qualified == "str.split" || qualified == "map.new" || qualified == "set.new" ||
+           qualified == "json.parse" || qualified == "file.read";
 }
 
 void collect_reads(const Expr* expr, std::set<std::string>& names) {
@@ -805,6 +808,7 @@ private:
     const RecordInfo* semantic_record(int record_id) const;
     IrType field_ir_type(int record_id, const std::string& field) const;
     IrValue default_return_value() const;
+    IrValue emit_zero(const IrType& type);
 
     const Program* program_ = nullptr;
     std::vector<const Program*> programs_;
@@ -874,6 +878,7 @@ void Lowerer::lower_function(const FunctionDecl& function) {
     }
     IrFunction ir_fn;
     ir_fn.name = ir_name;
+    ir_fn.foreign = function.foreign;
     const auto return_found = semantic_.return_types.find(ir_name);
     ir_fn.return_type = return_found != semantic_.return_types.end() ? ir_type_from(return_found->second) : ir_void();
 
@@ -889,6 +894,12 @@ void Lowerer::lower_function(const FunctionDecl& function) {
         const char is_ref =
             refs_found != semantic_.parameter_refs.end() && i < refs_found->second.size() ? refs_found->second[i] : 0;
         ir_fn.param_is_ref.push_back(is_ref);
+    }
+
+    if (function.foreign) {
+        module_.functions.push_back(std::move(ir_fn));
+        current_function_decl_ = nullptr;
+        return;
     }
 
     const auto locals_found = semantic_.local_types.find(ir_name);
@@ -1952,7 +1963,84 @@ bool is_user_function(const Program& program, const std::string& name) {
     return false;
 }
 
+IrValue Lowerer::emit_zero(const IrType& type) {
+    IrValue value;
+    value.type = type;
+    switch (type.kind) {
+        case IrTypeKind::I64:
+            value.kind = IrValue::Kind::ConstI64;
+            return value;
+        case IrTypeKind::F64:
+            value.kind = IrValue::Kind::ConstF64;
+            return value;
+        case IrTypeKind::Bool:
+            value.kind = IrValue::Kind::ConstBool;
+            return value;
+        case IrTypeKind::Record: {
+            IrInst inst;
+            inst.op = IrOp::RecordNew;
+            const RecordInfo* record = semantic_record(type.record_id);
+            inst.name = record != nullptr ? record->identity : "record";
+            if (record != nullptr) {
+                for (const auto& field : record->fields) {
+                    inst.args.push_back(emit_zero(ir_type_from(field.type)));
+                }
+            }
+            inst.dest = make_temp(type);
+            emit(inst);
+            return inst.dest;
+        }
+        default:
+            value.kind = IrValue::Kind::Null;
+            return value;
+    }
+}
+
 IrValue Lowerer::lower_call(const CallExpr& expr) {
+    if (expr.qualifier.empty() && (expr.callee == "ok" || expr.callee == "fail") &&
+        (program_ == nullptr || !is_user_function(*program_, expr.callee))) {
+        const IrType result_ty = type_of(&expr);
+        const RecordInfo* record = semantic_record(result_ty.record_id);
+        IrInst inst;
+        inst.op = IrOp::RecordNew;
+        inst.name = record != nullptr ? record->identity : "result";
+        IrValue tag;
+        tag.kind = IrValue::Kind::ConstBool;
+        tag.type = ir_bool();
+        tag.boolean = expr.callee == "ok";
+        inst.args.push_back(tag);
+        IrType payload = ir_i64();
+        IrType error_ty = ir_record(-1);
+        if (record != nullptr && record->fields.size() >= 3) {
+            payload = ir_type_from(record->fields[1].type);
+            error_ty = ir_type_from(record->fields[2].type);
+        }
+        if (expr.callee == "ok") {
+            if (!expr.arguments.empty()) {
+                inst.args.push_back(lower_expression(expr.arguments[0].get()));
+                consume_heap_expr(expr.arguments[0].get());
+            } else {
+                inst.args.push_back(emit_zero(payload));
+            }
+            inst.args.push_back(emit_zero(error_ty));
+        } else {
+            inst.args.push_back(emit_zero(payload));
+            IrValue code = !expr.arguments.empty() ? lower_expression(expr.arguments[0].get()) : emit_zero(ir_string());
+            consume_heap_expr(expr.arguments.empty() ? nullptr : expr.arguments[0].get());
+            IrInst error_inst;
+            error_inst.op = IrOp::RecordNew;
+            const RecordInfo* error_record = semantic_record(error_ty.record_id);
+            error_inst.name = error_record != nullptr ? error_record->identity : "$error";
+            error_inst.args.push_back(code);
+            error_inst.dest = make_temp(error_ty);
+            emit(error_inst);
+            inst.args.push_back(error_inst.dest);
+        }
+        inst.dest = make_temp(result_ty);
+        emit(inst);
+        return inst.dest;
+    }
+
     if (expr.qualifier.empty() && expr.callee == "count" && program_ != nullptr &&
         !is_user_function(*program_, "count")) {
         IrInst inst;
@@ -2066,7 +2154,14 @@ IrValue Lowerer::lower_call(const CallExpr& expr) {
         const bool is_ref =
             refs_found != semantic_.parameter_refs.end() && i < refs_found->second.size() && refs_found->second[i];
         if (is_ref) {
-            inst.args.push_back(lower_addr(expr.arguments[i].get()));
+            const bool foreign_string = semantic_.foreign_functions.contains(inst.name) &&
+                                        expr.arguments[i] != nullptr &&
+                                        type_of(expr.arguments[i].get()).kind == IrTypeKind::String;
+            if (foreign_string) {
+                inst.args.push_back(lower_expression(expr.arguments[i].get()));
+            } else {
+                inst.args.push_back(lower_addr(expr.arguments[i].get()));
+            }
         } else {
             inst.args.push_back(lower_expression(expr.arguments[i].get()));
         }
@@ -2376,6 +2471,8 @@ IrValue Lowerer::default_return_value() const {
         value.kind = IrValue::Kind::ConstF64;
     } else if (value.type.kind == IrTypeKind::Bool) {
         value.kind = IrValue::Kind::ConstBool;
+    } else if (value.type.kind == IrTypeKind::Record) {
+        value.kind = IrValue::Kind::Undef;
     } else {
         value.kind = IrValue::Kind::Undef;
     }

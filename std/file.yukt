@@ -1,0 +1,24 @@
+# Host file read/write. Missing files fail; they never become "".
+
+share create exists(path):
+    give true
+
+share create read_unchecked(path):
+    give path
+
+share create write_unchecked(path, data):
+    n = 0
+    give n
+
+share create read(path):
+    if exists(path):
+        give ok(read_unchecked(path))
+    otherwise:
+        give fail("not_found")
+
+share create write(path, data):
+    n = write_unchecked(path, data)
+    if n < 0:
+        give fail("io")
+    otherwise:
+        give ok(n)

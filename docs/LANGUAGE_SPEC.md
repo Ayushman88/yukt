@@ -1,9 +1,9 @@
 # YUKT Language Specification
 
-Version: 0.13.3 (refs specified on this tree; `v0.13.1` exists locally and is not pushed; there is no `v0.13.2` tag; 0.13.4 not started). 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`.  
-Status: 0.12 language plus **records** ([0.13.1 — Records](#0131--records)), **ownership** ([0.13.2 — Ownership](#0132--ownership)), and **references** ([0.13.3 — References](#0133--references)). `foreign`, error values, and 0.13 stdlib expansion are **not** part of this slice. Numerical semantics for signed overflow and float rounding are unchanged.
+Version: 0.13.6 (errors and stdlib expansion specified on this tree; `v0.13.1` exists locally and is not pushed; there is no `v0.13.2` tag). 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`.  
+Status: 0.12 language plus **records** ([0.13.1 — Records](#0131--records)), **ownership** ([0.13.2 — Ownership](#0132--ownership)), **references** ([0.13.3 — References](#0133--references)), **foreign C** ([0.13.4 — Foreign C](#0134--foreign-c)), **errors** ([0.13.5 — Errors](#0135--errors)), and **stdlib expansion** ([0.13.6 — Stdlib](#0136--stdlib)). Numerical semantics for signed overflow and float rounding are unchanged.
 
-This document is the source of truth for YUKT syntax. **0.13.1, 0.13.2, and 0.13.3 are implemented.** If the compiler and this file disagree, that is a bug.
+This document is the source of truth for YUKT syntax. **0.13.1 through 0.13.6 are implemented.** If the compiler and this file disagree, that is a bug.
 
 ## Design
 
@@ -17,6 +17,7 @@ YUKT is an English-inspired, statically typed, compiled language. The first synt
 - `give` returns a value
 - `repeat` iterates a range
 - `if` / `otherwise` choose a branch
+- `ok` / `fail` construct `result[T]` (0.13.5)
 
 The compiler does not invent additional syntax beyond this document.
 
@@ -38,9 +39,12 @@ create  say  if  otherwise  repeat  in  give  true  false
 use  share  as
 record
 ref
+foreign
+ok
+fail
 ```
 
-These cannot be used as variable names, parameter names, aliases, `repeat` iterators, record names, field names, or function names, with one exception: **`repeat`** may be a function name after `create` / `share create` and after `.` in a qualified call, so `std/str` can export `str.repeat(...)`. `create if`, `record if`, and `math.give(...)` remain errors. Statement position is unchanged: `repeat i in 1..5:` is still a loop. `use`, `share`, and `as` are reserved from 0.12. `record` is reserved from 0.13.1. `ref` is reserved from 0.13.3. `foreign`, `ok`, and `fail` are **not** reserved in this slice.
+These cannot be used as variable names, parameter names, aliases, `repeat` iterators, record names, field names, or function names, with one exception: **`repeat`** may be a function name after `create` / `share create` and after `.` in a qualified call, so `std/str` can export `str.repeat(...)`. `create if`, `record if`, and `math.give(...)` remain errors. Statement position is unchanged: `repeat i in 1..5:` is still a loop. `use`, `share`, and `as` are reserved from 0.12. `record` is reserved from 0.13.1. `ref` is reserved from 0.13.3. `foreign` is reserved from 0.13.4. `ok` and `fail` are reserved from 0.13.5.
 
 ## Lexical tokens
 
@@ -916,7 +920,7 @@ Prints `2`. The caller writes `increment(n)`, not `increment(&n)`. There is no `
 
 ### Parameter annotations
 
-0.13.3 adds one annotation form: `name: ref T` on a `create` parameter. `T` is a type name (`integer`, `float`, `boolean`, `string`, `list`, or a record in scope). Other parameter, function, and local type annotations stay out.
+0.13.3 adds one annotation form: `name: ref T` on a `create` parameter. `T` is a type name (`integer`, `float`, `boolean`, `string`, `list`, `map`, `set`, `json`, or a record in scope). Other parameter, function, and local type annotations stay out.
 
 A `ref` parameter is not owned. Assignment through it mutates the caller's place. Reading it reads that place.
 
@@ -960,3 +964,151 @@ This is not Rust. One place, one story. All of the following are compile-time. T
 - Nested pass-along of a `ref` parameter accepted (`add_two` calling `increment` twice).
 - Storing `ref` in a record rejected.
 - `increment(n)` mutates the caller's integer.
+
+## 0.13.4 — Foreign C
+
+Independently releasable. Ordinary YUKT still has **no raw pointers**.
+
+```yukt
+foreign strlen(s: ref string): integer
+
+create main:
+    say strlen("")
+    say strlen("hello")
+```
+
+### Declaration
+
+- `foreign name(params): ReturnType` has **no body**. Parameter and return types are written.
+- The symbol name is the C identifier (`strlen`).
+- `foreign` is not `share`. Another file calls a `share create` wrapper in this file if it must.
+- `foreign` is a reserved word.
+
+### What may cross the boundary in 0.13.4
+
+| YUKT | C | Ownership |
+| --- | --- | --- |
+| `integer` | `int64_t` | copy |
+| `float` | `double` | copy |
+| `boolean` | `int8_t` | copy |
+| `ref string` | `const char*` | **borrow**; NUL-terminated YUKT buffer |
+| `ref Record` | pointer to the 0.13.1 layout | **borrow** of a scalar/nested-scalar record |
+
+Not in 0.13.4: owned `string` parameters, returned pointers, `list`, maps, `ref` to heap records, `void*`, nullable pointers.
+
+The compiler assumes the C callee does not store, `free`, mutate, or return the borrowed pointer. Empty string is `""`, never null. Returned types are only `integer` / `float` / `boolean`. A C `char*` return is not a YUKT `string`.
+
+### Linking
+
+Still `clang` + `libyukt_runtime.a` + `-lm` as today. Foreign symbols resolve against that link line (libc, libm, libSystem on macOS). Missing symbols are link errors.
+
+### Regression gate (0.13.4)
+
+- Previous slices green.
+- `foreign strlen` on a YUKT string matches C `strlen` for empty and non-empty.
+- Ordinary functions still show no pointer types in `--types`.
+
+## 0.13.5 — Errors
+
+Independently releasable. Traps stay for programmer bugs. I/O and parse failures are **values**.
+
+A function either returns a plain type `T` or a tagged `result[T]`. Mixing `give 1` and `give fail("x")` in the same function is a type error unless every `give` has type `result[integer]`.
+
+`result[T]` has two arms:
+
+| Tag | Payload |
+| --- | --- |
+| `ok` | a value of type `T` |
+| `fail` | a value of type `error` |
+
+`error` is a language type. Its only field is `error.code : string`. `fail("not_found")` builds that error.
+
+```yukt
+create parse_int(text):
+    if text == "7":
+        give ok(7)
+    otherwise:
+        give fail("bad_int")
+
+create main:
+    r = parse_int("7")
+    if r.ok:
+        say r.value
+    otherwise:
+        say r.error.code
+```
+
+- `ok(x)` has type `result[T]` if `x` has type `T`.
+- `fail(code)` has type `result[T]` for a `T` fixed by the function’s other `give`s. `code` is a string.
+- `r.ok` is boolean.
+- `r.value` is valid only on paths where `r.ok` is known true (`if r.ok` / `otherwise`).
+- `r.error` is valid only on paths where `r.ok` is known false.
+- `give r` propagates a `result[T]` when the function returns `result[T]`.
+- There is no `?` operator.
+- An unused `result` is a compile error. You cannot `say` a result.
+
+`ok` and `fail` are reserved words.
+
+### Regression gate (0.13.5)
+
+- Previous slices green.
+- `result` vs `T` mismatch errors.
+- `r.value` outside `if r.ok` rejected.
+- Unused result rejected.
+- `give r` propagates the same code string.
+- Traps (bad slice) still abort; they do not become `fail`.
+
+## 0.13.6 — Stdlib
+
+`std/map`, `std/set`, `std/file`, and `std/json` ship as ordinary modules. Maps, sets, and JSON values are opaque owned heap types. They are not thread-safe and must not appear in a parallel `repeat` body.
+
+Keys of `map` and elements of `set` are strings. A map has one value type, inferred from `set` / `get`. Inspection wrappers such as `map.get` and `json.get_int` take the container as `ref` so the caller keeps the owner.
+
+```yukt
+use std/map as map
+use std/set as set
+use std/file as file
+use std/json as json
+
+create main:
+    m = map.new()
+    map.set(m, "a", 1)
+    r = map.get(m, "a")
+    if r.ok:
+        say r.value
+    s = set.new()
+    set.add(s, "a")
+    say set.has(s, "a")
+    w = file.write("out.txt", "hi")
+    t = file.read("out.txt")
+    j = json.parse("{\"n\": 2}")
+```
+
+| Name | Type |
+| --- | --- |
+| `map.new()` | `map[V]` |
+| `map.set(m, key, value)` | void; `key` is string |
+| `map.has(m, key)` | boolean |
+| `map.get(m, key)` | `result[V]`; missing key is `fail("not_found")` |
+| `map.len(m)` | integer |
+| `map.remove(m, key)` | void |
+| `set.new()` | `set` |
+| `set.add(s, key)` | void |
+| `set.has(s, key)` | boolean |
+| `set.len(s)` | integer |
+| `set.remove(s, key)` | void |
+| `file.read(path)` | `result[string]`; missing file is `fail("not_found")` |
+| `file.write(path, data)` | `result[integer]` bytes written; failure is `fail("io")` |
+| `json.parse(text)` | `result[json]`; invalid input is `fail("invalid_json")` |
+| `json.get_int(obj, key)` | `result[integer]` |
+| `json.get_string(obj, key)` | `result[string]` |
+| `json.encode(obj)` | string |
+
+Map values in this slice are integer, float, boolean, or string. `std/array` is not in this slice.
+
+### Regression gate (0.13.6)
+
+- Previous slices green.
+- `map.get` missing key is `fail`, not a sentinel.
+- `file.read` of a missing path is `fail("not_found")`, never `""`.
+- JSON parse of invalid text is `fail("invalid_json")`.

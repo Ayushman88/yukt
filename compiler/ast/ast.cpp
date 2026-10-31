@@ -233,24 +233,39 @@ void FunctionDecl::print(std::ostream& out, int indent) const {
     if (shared) {
         out << "Share ";
     }
+    if (foreign) {
+        out << "Foreign ";
+    }
     out << "Function " << name << '(';
     for (std::size_t i = 0; i < parameters.size(); ++i) {
         if (i != 0) {
             out << ", ";
         }
+        out << parameters[i];
         if (i < parameter_is_ref.size() && parameter_is_ref[i]) {
-            out << parameters[i] << ": ref ";
+            out << ": ref ";
+        } else if (foreign && i < parameter_ref_types.size() && !parameter_ref_types[i].name.empty()) {
+            out << ": ";
+        }
+        if ((i < parameter_is_ref.size() && parameter_is_ref[i]) ||
+            (foreign && i < parameter_ref_types.size() && !parameter_ref_types[i].name.empty())) {
             if (i < parameter_ref_types.size() && !parameter_ref_types[i].qualifier.empty()) {
                 out << parameter_ref_types[i].qualifier << '.';
             }
             if (i < parameter_ref_types.size()) {
                 out << parameter_ref_types[i].name;
             }
-        } else {
-            out << parameters[i];
         }
     }
-    out << ")\n";
+    out << ")";
+    if (has_return_type && !return_type_name.name.empty()) {
+        out << ": ";
+        if (!return_type_name.qualifier.empty()) {
+            out << return_type_name.qualifier << '.';
+        }
+        out << return_type_name.name;
+    }
+    out << '\n';
     for (const auto& stmt : body) {
         print_child(out, stmt.get(), indent + 1);
     }

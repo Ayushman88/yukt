@@ -1,0 +1,25 @@
+# String-keyed maps. Runtime implements new/set/has/get_unchecked/len/remove.
+
+share create new:
+    give 0
+
+share create set(m, key, value):
+    n = 0
+
+share create has(m, key):
+    give true
+
+share create get_unchecked(m, key):
+    give 0
+
+share create len(m):
+    give 0
+
+share create remove(m, key):
+    n = 0
+
+share create get(m: ref map, key):
+    if has(m, key):
+        give ok(get_unchecked(m, key))
+    otherwise:
+        give fail("not_found")

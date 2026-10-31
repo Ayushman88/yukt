@@ -1,0 +1,11 @@
+foreign yukt_bool_and(a: boolean, b: boolean): boolean
+
+create main:
+    if yukt_bool_and(true, true):
+        say 1
+    otherwise:
+        say 0
+    if yukt_bool_and(true, false):
+        say 1
+    otherwise:
+        say 0

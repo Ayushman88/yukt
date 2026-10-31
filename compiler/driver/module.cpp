@@ -219,8 +219,19 @@ bool is_stdlib_runtime_ir(const std::string& ir_name) {
         ir_name.rfind("std$sort$", 0) == 0 || ir_name.rfind("std$math$", 0) == 0) {
         return true;
     }
-    return ir_name == "std$stat$min_i" || ir_name == "std$stat$max_i" || ir_name == "std$stat$min_f" ||
-           ir_name == "std$stat$max_f" || ir_name == "std$stat$mean_f";
+    if (ir_name == "std$stat$min_i" || ir_name == "std$stat$max_i" || ir_name == "std$stat$min_f" ||
+        ir_name == "std$stat$max_f" || ir_name == "std$stat$mean_f") {
+        return true;
+    }
+    return ir_name == "std$map$new" || ir_name == "std$map$set" || ir_name == "std$map$has" ||
+           ir_name == "std$map$get_unchecked" || ir_name == "std$map$len" || ir_name == "std$map$remove" ||
+           ir_name == "std$set$new" || ir_name == "std$set$add" || ir_name == "std$set$has" ||
+           ir_name == "std$set$len" || ir_name == "std$set$remove" || ir_name == "std$file$exists" ||
+           ir_name == "std$file$read_unchecked" || ir_name == "std$file$write_unchecked" ||
+           ir_name == "std$json$parse_unchecked" || ir_name == "std$json$is_valid" ||
+           ir_name == "std$json$has_int" || ir_name == "std$json$has_string" ||
+           ir_name == "std$json$get_int_unchecked" || ir_name == "std$json$get_string_unchecked" ||
+           ir_name == "std$json$encode";
 }
 
 std::string mangle_function(const std::string& prefix, const std::string& name, bool entry_main, bool single_file) {

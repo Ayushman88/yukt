@@ -1,6 +1,6 @@
 # YUKT 0.13 design — Systems language foundations
 
-Status: **roadmap and this design are approved.** 0.13.1 Records is implemented and tagged `v0.13.1` locally (not pushed). `v0.12.1` is the last public tag. 0.13.2 Ownership is implemented on branch `yukt-0.13.2-ownership`. 0.13.3 References is copied into `LANGUAGE_SPEC.md` and in progress on `yukt-0.13-series`. Do **not** start 0.13.4 until 0.13.3 is green.
+Status: **roadmap and this design are approved.** 0.13.1–0.13.6 are implemented on `yukt-0.13-series`. 0.13.1 is tagged `v0.13.1` locally (not pushed). `v0.12.1` is the last public tag. 0.13.2 Ownership is also on `yukt-0.13.2-ownership`.
 
 0.13 is a **language** milestone. Maps, files, and JSON stay blocked until types, ownership, and errors exist as real language rules. They must not appear as C functions with fake YUKT wrappers.
 
@@ -529,4 +529,4 @@ Roadmap: **accepted as the six independently releasable slices.**
 Revised design: **accepted.**  
 0.13.1 in `LANGUAGE_SPEC.md`: **specified and implemented on this tree.** There is no public `v0.13.1` tag yet.  
 0.13.2 ownership in `LANGUAGE_SPEC.md`: **specified and implemented on branch `yukt-0.13.2-ownership`.** There is no `v0.13.2` tag.  
-Compiler implementation of 0.13.4–0.13.6: **held.** 0.13.3 is in progress on `yukt-0.13-series`.
+Compiler implementation of 0.13.1–0.13.6: **on `yukt-0.13-series`.** `std/array` remains out of this slice.

@@ -35,6 +35,7 @@ struct FunctionSymbol {
     std::string ir_name;
     std::vector<Type> parameters;
     std::vector<char> param_is_ref;
+    bool foreign = false;
     Type return_type = void_type();
     bool saw_give = false;
     std::vector<LocalBinding> locals;
@@ -48,6 +49,8 @@ enum class ConstraintKind {
     NumericList,
     Field,
 };
+
+enum class ResultFlow { Unknown, Ok, Fail };
 
 struct Constraint {
     Type type;
@@ -117,6 +120,19 @@ private:
     bool type_contains_private_record(Type type, int module_index);
     static std::int64_t align_up(std::int64_t n, std::int64_t a);
     bool field_abi(Type type, std::int64_t& size, std::int64_t& align);
+    int ensure_error_record();
+    int intern_result_record(Type payload);
+    Type make_result(Type payload);
+    Type make_error();
+    void layout_record(RecordInfo& record);
+    void bind_result_layouts(Type& type);
+    void intern_all_result_layouts();
+    Type analyze_ok_fail(const CallExpr& expr, bool is_ok);
+    std::string result_scrutinee(const Expr* condition);
+    void note_unhandled_result(const std::string& name, SourceLocation location);
+    void handle_result(const std::string& name);
+    void check_unhandled_results();
+    ResultFlow flow_of(const std::string& name) const;
 
     bool declare_local(const std::string& name, Type type, SourceLocation location, bool iterator);
     Symbol* lookup_local(const std::string& name);
@@ -168,6 +184,10 @@ private:
     // False during type inference; true on the second walk, after parameter types
     // have been unified, so heap parameters can enter the ownership map as Owned.
     bool ownership_pass_ = false;
+    int error_record_id_ = -1;
+    std::unordered_map<std::string, int> result_record_ids_;
+    std::unordered_map<std::string, ResultFlow> result_flow_;
+    std::unordered_map<std::string, SourceLocation> unhandled_results_;
 };
 
 bool is_numeric(Type type) {
@@ -210,6 +230,7 @@ SemanticInfo Analyzer::run() {
     resolve_record_fields();
     compute_record_layouts();
     analyze_functions();
+    intern_all_result_layouts();
     check_shared_signatures();
     check_constraints();
     finalize_functions();
@@ -266,6 +287,9 @@ SemanticInfo Analyzer::run() {
             info.return_types[ir_name] = types_.prune(symbol.return_type);
             info.parameter_types[ir_name] = symbol.parameters;
             info.parameter_refs[ir_name] = symbol.param_is_ref;
+            if (symbol.foreign) {
+                info.foreign_functions.insert(ir_name);
+            }
             for (auto& parameter : info.parameter_types[ir_name]) {
                 parameter = types_.prune(parameter);
             }
@@ -296,6 +320,9 @@ const Program* Analyzer::module_program(int index) const {
 }
 
 std::string Analyzer::ir_name_for(int module_index, const FunctionDecl& function) const {
+    if (function.foreign) {
+        return function.name;
+    }
     const bool entry_main = module_index == 0 && function.name == "main";
     std::string prefix;
     if (graph_ != nullptr && static_cast<std::size_t>(module_index) < graph_->modules.size()) {
@@ -343,6 +370,7 @@ void Analyzer::collect_functions() {
             symbol->decl = function.get();
             symbol->module_index = module_index;
             symbol->ir_name = ir_name;
+            symbol->foreign = function->foreign;
             symbol->return_type = types_.fresh_variable();
             for (std::size_t i = 0; i < function->parameters.size(); ++i) {
                 symbol->parameters.push_back(types_.fresh_variable());
@@ -359,7 +387,8 @@ void Analyzer::collect_functions() {
 }
 
 bool is_builtin_type_name(const std::string& name) {
-    return name == "integer" || name == "float" || name == "boolean" || name == "string" || name == "list";
+    return name == "integer" || name == "float" || name == "boolean" || name == "string" || name == "list" ||
+           name == "error" || name == "result" || name == "map" || name == "set" || name == "json";
 }
 
 void Analyzer::collect_records() {
@@ -419,6 +448,138 @@ void Analyzer::collect_records() {
             module_records_[static_cast<std::size_t>(module_index)].emplace(record->name, info.id);
             records_.push_back(std::move(info));
         }
+    }
+}
+
+void Analyzer::layout_record(RecordInfo& record) {
+    std::int64_t offset = 0;
+    std::int64_t rec_align = 1;
+    for (auto& field : record.fields) {
+        std::int64_t size = 0;
+        std::int64_t align = 1;
+        if (!field_abi(field.type, size, align)) {
+            return;
+        }
+        offset = align_up(offset, align);
+        field.offset = offset;
+        field.size = size;
+        field.align = align;
+        offset += size;
+        if (align > rec_align) {
+            rec_align = align;
+        }
+    }
+    record.align = rec_align < 1 ? 1 : rec_align;
+    record.size = align_up(offset, record.align);
+    record.layout_ready = true;
+}
+
+int Analyzer::ensure_error_record() {
+    if (error_record_id_ >= 0) {
+        return error_record_id_;
+    }
+    RecordInfo info;
+    info.id = static_cast<int>(records_.size());
+    info.name = "error";
+    info.identity = "$error";
+    info.shared = true;
+    RecordFieldInfo code;
+    code.name = "code";
+    code.type = string_type();
+    info.fields.push_back(std::move(code));
+    error_record_id_ = info.id;
+    records_.push_back(std::move(info));
+    layout_record(records_.back());
+    return error_record_id_;
+}
+
+int Analyzer::intern_result_record(Type payload) {
+    payload = types_.prune(payload);
+    const std::string key = types_.to_string(payload);
+    if (const auto found = result_record_ids_.find(key); found != result_record_ids_.end()) {
+        return found->second;
+    }
+    // Intern `$error` first so its id is not reused by this result layout.
+    const int error_id = ensure_error_record();
+    RecordInfo info;
+    info.id = static_cast<int>(records_.size());
+    info.name = "result[" + key + "]";
+    info.identity = "$result$" + key;
+    info.shared = true;
+    RecordFieldInfo ok_field;
+    ok_field.name = "ok";
+    ok_field.type = boolean_type();
+    RecordFieldInfo value_field;
+    value_field.name = "value";
+    value_field.type = payload;
+    RecordFieldInfo error_field;
+    error_field.name = "error";
+    error_field.type = error_type(error_id);
+    info.fields.push_back(std::move(ok_field));
+    info.fields.push_back(std::move(value_field));
+    info.fields.push_back(std::move(error_field));
+    const int id = info.id;
+    result_record_ids_[key] = id;
+    records_.push_back(std::move(info));
+    layout_record(records_.back());
+    return id;
+}
+
+Type Analyzer::make_error() {
+    return error_type(ensure_error_record());
+}
+
+Type Analyzer::make_result(Type payload) {
+    payload = types_.prune(payload);
+    int id = -1;
+    if (types_.is_resolved(payload)) {
+        id = intern_result_record(payload);
+    }
+    Type type = result_type(payload, id);
+    if (id >= 0) {
+        type.record_name = "result[" + types_.to_string(payload) + "]";
+    }
+    return type;
+}
+
+void Analyzer::bind_result_layouts(Type& type) {
+    type = types_.prune(type);
+    if (type.element != nullptr &&
+        (type.kind == TypeKind::List || type.kind == TypeKind::Result || type.kind == TypeKind::Map)) {
+        bind_result_layouts(*type.element);
+        if (type.kind == TypeKind::List) {
+            type = list_type(*type.element);
+        } else if (type.kind == TypeKind::Map) {
+            type = map_type(*type.element);
+        }
+    }
+    if (type.kind == TypeKind::Error) {
+        type = make_error();
+        return;
+    }
+    if (type.kind == TypeKind::Result && type.element != nullptr) {
+        if (!types_.is_resolved(*type.element)) {
+            types_.unify(*type.element, integer_type());
+        }
+        type = make_result(*type.element);
+    }
+}
+
+void Analyzer::intern_all_result_layouts() {
+    for (auto& [name, function] : functions_) {
+        if (function == nullptr) {
+            continue;
+        }
+        bind_result_layouts(function->return_type);
+        for (auto& param : function->parameters) {
+            bind_result_layouts(param);
+        }
+        for (auto& local : function->locals) {
+            bind_result_layouts(local.type);
+        }
+    }
+    for (auto& [expr, type] : expr_types_) {
+        bind_result_layouts(type);
     }
 }
 
@@ -517,6 +678,27 @@ Type Analyzer::resolve_type_name(const TypeName& name, int module_index, bool in
         if (name.name == "string") {
             return string_type();
         }
+        if (name.name == "error") {
+            return make_error();
+        }
+        if (name.name == "result") {
+            if (name.arguments.empty()) {
+                error(name.name_location, "Unexpected token",
+                      "`result` needs a payload type, for example `result[integer]`.",
+                      "Write `result[T]`.");
+                return make_result(types_.fresh_variable());
+            }
+            return make_result(resolve_type_name(name.arguments[0], module_index, in_shared_record));
+        }
+        if (name.name == "map") {
+            return map_type(types_.fresh_variable());
+        }
+        if (name.name == "set") {
+            return set_type();
+        }
+        if (name.name == "json") {
+            return json_type();
+        }
         if (name.name == "list") {
             // One element variable per list field, unified across constructors.
             return list_type(types_.fresh_variable());
@@ -589,10 +771,15 @@ bool Analyzer::field_abi(Type type, std::int64_t& size, std::int64_t& align) {
             return true;
         case TypeKind::String:
         case TypeKind::List:
+        case TypeKind::Map:
+        case TypeKind::Set:
+        case TypeKind::Json:
             size = 8;
             align = 8;
             return true;
-        case TypeKind::Record:
+        case TypeKind::Error:
+        case TypeKind::Result:
+        case TypeKind::Record: {
             if (type.record_id < 0 || static_cast<std::size_t>(type.record_id) >= records_.size()) {
                 return false;
             }
@@ -602,6 +789,7 @@ bool Analyzer::field_abi(Type type, std::int64_t& size, std::int64_t& align) {
             size = records_[static_cast<std::size_t>(type.record_id)].size;
             align = records_[static_cast<std::size_t>(type.record_id)].align;
             return true;
+        }
         default:
             return false;
     }
@@ -715,7 +903,8 @@ void Analyzer::compute_record_layouts() {
 
 bool Analyzer::type_contains_private_record(Type type, int module_index) {
     type = types_.prune(type);
-    if (type.kind == TypeKind::List && type.element != nullptr) {
+    if ((type.kind == TypeKind::List || type.kind == TypeKind::Result || type.kind == TypeKind::Map) &&
+        type.element != nullptr) {
         return type_contains_private_record(*type.element, module_index);
     }
     if (type.kind != TypeKind::Record || type.record_id < 0 ||
@@ -758,7 +947,9 @@ void Analyzer::analyze_functions() {
 
 void Analyzer::walk_functions() {
     const int module_count = graph_ == nullptr ? 1 : static_cast<int>(graph_->modules.size());
-    for (int module_index = 0; module_index < module_count; ++module_index) {
+    // Dependencies are loaded after the entry file. Walk them first so
+    // `map.get` already has type `result[T]` when the caller is checked.
+    for (int module_index = module_count - 1; module_index >= 0; --module_index) {
         current_module_ = module_index;
         const Program* program = module_program(module_index);
         if (program == nullptr) {
@@ -874,7 +1065,9 @@ void Analyzer::check_constraints() {
                           "Construct a record, or pass a record into this function.");
                     break;
                 }
-                if (resolved.kind != TypeKind::Record || resolved.record_id < 0 ||
+                const bool result_like = resolved.kind == TypeKind::Record || resolved.kind == TypeKind::Result ||
+                                         resolved.kind == TypeKind::Error;
+                if (!result_like || resolved.record_id < 0 ||
                     static_cast<std::size_t>(resolved.record_id) >= records_.size()) {
                     error(constraint.location, "Invalid expression",
                           "`.` is field access or a module call, not valid on " + types_.to_string(resolved) + ".",
@@ -988,6 +1181,8 @@ void Analyzer::analyze_function(FunctionSymbol& function) {
     scopes_.clear();
     own_.clear();
     loop_protected_.clear();
+    result_flow_.clear();
+    unhandled_results_.clear();
     push_scope();
 
     if (function.decl != nullptr) {
@@ -1010,13 +1205,14 @@ void Analyzer::analyze_function(FunctionSymbol& function) {
                                                      ? function.decl->parameter_locations[i]
                                                      : function.decl->name_location;
             const bool is_ref = i < function.decl->parameter_is_ref.size() && function.decl->parameter_is_ref[i];
-            if (is_ref && i < function.decl->parameter_ref_types.size()) {
+            if (i < function.decl->parameter_ref_types.size() && !function.decl->parameter_ref_types[i].name.empty()) {
                 const Type annotated =
                     resolve_type_name(function.decl->parameter_ref_types[i], function.module_index, false);
                 if (!types_.unify(function.parameters[i], annotated)) {
                     error(param_location, "Type mismatch",
-                          "Parameter `" + name + "` is annotated `ref " + types_.to_string(annotated) +
-                              "` but used as " + types_.to_string(function.parameters[i]) + ".",
+                          "Parameter `" + name + "` is annotated `" + (is_ref ? "ref " : "") +
+                              types_.to_string(annotated) + "` but used as " + types_.to_string(function.parameters[i]) +
+                              ".",
                           "Use one type for `" + name + "`.");
                 }
             }
@@ -1024,10 +1220,61 @@ void Analyzer::analyze_function(FunctionSymbol& function) {
             if (ownership_pass_ && !is_ref && type_owns_heap(types_, function.parameters[i], &records_)) {
                 own_[name] = OwnName{OwnState::Owned, param_location};
             }
+            if (types_.prune(function.parameters[i]).kind == TypeKind::Result) {
+                note_unhandled_result(name, param_location);
+            }
         }
 
-        for (const auto& stmt : function.decl->body) {
-            analyze_statement(stmt.get());
+        if (function.decl->has_return_type) {
+            const Type annotated =
+                resolve_type_name(function.decl->return_type_name, function.module_index, false);
+            if (!types_.unify(function.return_type, annotated)) {
+                error(function.decl->name_location, "Type mismatch",
+                      "`foreign " + function.decl->name + "` returns " + types_.to_string(annotated) +
+                          " but is also used as " + types_.to_string(function.return_type) + ".",
+                      "Use one return type.");
+            }
+        }
+
+        if (function.decl->foreign) {
+            if (function.decl->shared) {
+                error(function.decl->name_location, "Unexpected token",
+                      "`foreign` cannot be `share`.",
+                      "Wrap it in a `share create` function in this file.");
+            }
+            const Type ret = types_.prune(function.return_type);
+            if (ret.kind != TypeKind::Integer && ret.kind != TypeKind::Float && ret.kind != TypeKind::Boolean &&
+                ret.kind != TypeKind::Variable) {
+                error(function.decl->name_location, "Type mismatch",
+                      "`foreign` may only return integer, float, or boolean, not " + types_.to_string(ret) + ".",
+                      "Write `foreign " + function.decl->name + "(...): integer`.");
+            }
+            for (std::size_t i = 0; i < function.parameters.size(); ++i) {
+                const Type param = types_.prune(function.parameters[i]);
+                const bool is_ref = i < function.param_is_ref.size() && function.param_is_ref[i];
+                if (is_ref) {
+                    if (param.kind == TypeKind::String) {
+                        continue;
+                    }
+                    if (param.kind == TypeKind::Record && !type_owns_heap(types_, param, &records_)) {
+                        continue;
+                    }
+                    error(function.decl->name_location, "Type mismatch",
+                          "`foreign` `ref` parameters may be `ref string` or a plain record, not `ref " +
+                              types_.to_string(param) + "`.",
+                          "Use `ref string` or `ref` of a scalar record.");
+                } else if (param.kind != TypeKind::Integer && param.kind != TypeKind::Float &&
+                           param.kind != TypeKind::Boolean && param.kind != TypeKind::Variable) {
+                    error(function.decl->name_location, "Type mismatch",
+                          "`foreign` value parameters may be integer, float, or boolean, not " +
+                              types_.to_string(param) + ".",
+                          "Copy scalars, or borrow a string with `ref string`.");
+                }
+            }
+        } else {
+            for (const auto& stmt : function.decl->body) {
+                analyze_statement(stmt.get());
+            }
         }
 
         if (!ownership_pass_ && !scopes_.empty()) {
@@ -1044,6 +1291,7 @@ void Analyzer::analyze_function(FunctionSymbol& function) {
                 }
             }
         }
+        check_unhandled_results();
     }
 
     pop_scope();
@@ -1149,6 +1397,9 @@ void Analyzer::analyze_assignment(const AssignStmt& stmt) {
                   {{existing->location, "first assigned here as " + types_.to_string(existing->type)}});
         }
         existing->assigned = true;
+        if (types_.prune(value_type).kind == TypeKind::Result) {
+            note_unhandled_result(stmt.name, stmt.name_location);
+        }
         if (heap) {
             auto state = own_.find(stmt.name);
             if (state != own_.end() && state->second.state == OwnState::Moved) {
@@ -1182,6 +1433,9 @@ void Analyzer::analyze_assignment(const AssignStmt& stmt) {
     }
     if (!moved_from.empty() && moved_from != stmt.name) {
         own_move(moved_from, moved_from_location);
+    }
+    if (types_.prune(value_type).kind == TypeKind::Result) {
+        note_unhandled_result(stmt.name, stmt.name_location);
     }
 }
 
@@ -1268,6 +1522,14 @@ void Analyzer::analyze_say(const SayStmt& stmt) {
     const Type type = analyze_expression(stmt.value.get());
     require_non_void(type, stmt.span.start, "`say` cannot print a void value.",
                      "Call a function that gives a value, or print a literal.");
+    const Type resolved = types_.prune(type);
+    if (resolved.kind == TypeKind::Result || resolved.kind == TypeKind::Error || resolved.kind == TypeKind::Map ||
+        resolved.kind == TypeKind::Set || resolved.kind == TypeKind::Json) {
+        error(stmt.span.start, "Type mismatch",
+              "`say` cannot print " + types_.to_string(resolved) + ".",
+              resolved.kind == TypeKind::Result ? "Handle the result with `if r.ok:` first."
+                                                : "Print a field or convert it to a string first.");
+    }
 }
 
 void Analyzer::analyze_give(const GiveStmt& stmt) {
@@ -1300,14 +1562,25 @@ void Analyzer::analyze_give(const GiveStmt& stmt) {
     if (type_owns_heap(types_, type, &records_)) {
         consume_heap_expr(stmt.value.get());
     }
+    if (const auto* id = stmt.value != nullptr ? dynamic_cast<const IdentifierExpr*>(stmt.value.get()) : nullptr) {
+        if (types_.prune(type).kind == TypeKind::Result) {
+            handle_result(id->name);
+        }
+    }
 }
 
 void Analyzer::analyze_expr_stmt(const ExprStmt& stmt) {
+    Type type;
     if (const auto* call = dynamic_cast<const CallExpr*>(stmt.expr.get())) {
-        analyze_call(*call, false);
-        return;
+        type = analyze_call(*call, false);
+    } else {
+        type = analyze_expression(stmt.expr.get());
     }
-    analyze_expression(stmt.expr.get());
+    if (types_.prune(type).kind == TypeKind::Result) {
+        error(stmt.span.start, "Unused result",
+              "This `result` is discarded.",
+              "Assign it to a name and handle it with `if r.ok:`, or `give` it.");
+    }
 }
 
 void Analyzer::analyze_if(const IfStmt& stmt) {
@@ -1316,17 +1589,34 @@ void Analyzer::analyze_if(const IfStmt& stmt) {
                 "`if` conditions must be boolean, but this condition has type " + types_.to_string(condition) + ".",
                 "Use a comparison such as `age > 18`.");
 
+    const std::string scrutinee = result_scrutinee(stmt.condition.get());
+    if (!scrutinee.empty()) {
+        handle_result(scrutinee);
+    }
+
     // Snapshot ownership, analyze each branch from the same snapshot, then join.
     const std::unordered_map<std::string, OwnName> snapshot = own_;
+    const auto flow_snapshot = result_flow_;
+    const auto unhandled_snapshot = unhandled_results_;
+    if (!scrutinee.empty()) {
+        result_flow_[scrutinee] = ResultFlow::Ok;
+    }
     for (const auto& then_stmt : stmt.then_branch) {
         analyze_statement(then_stmt.get());
     }
     const std::unordered_map<std::string, OwnName> after_then = own_;
+    const auto unhandled_then = unhandled_results_;
     own_ = snapshot;
+    result_flow_ = flow_snapshot;
+    unhandled_results_ = unhandled_snapshot;
+    if (!scrutinee.empty()) {
+        result_flow_[scrutinee] = ResultFlow::Fail;
+    }
     for (const auto& otherwise_stmt : stmt.otherwise_branch) {
         analyze_statement(otherwise_stmt.get());
     }
     const std::unordered_map<std::string, OwnName> after_otherwise = own_;
+    const auto unhandled_else = unhandled_results_;
 
     std::unordered_set<std::string> names;
     for (const auto& [name, own] : after_then) {
@@ -1356,6 +1646,11 @@ void Analyzer::analyze_if(const IfStmt& stmt) {
         joined[name] = OwnName{join_own(branch_state(after_then, name), branch_state(after_otherwise, name)), location};
     }
     own_ = std::move(joined);
+    result_flow_ = flow_snapshot;
+    unhandled_results_ = unhandled_then;
+    for (const auto& [name, location] : unhandled_else) {
+        unhandled_results_[name] = location;
+    }
 }
 
 void Analyzer::analyze_repeat(const RepeatStmt& stmt) {
@@ -1516,6 +1811,36 @@ Type Analyzer::analyze_expression_body(const Expr* expr) {
     return types_.fresh_variable();
 }
 
+Type Analyzer::analyze_ok_fail(const CallExpr& expr, bool is_ok) {
+    const std::string name = is_ok ? "ok" : "fail";
+    if (expr.arguments.size() != 1) {
+        error(expr.callee_location, "Wrong number of arguments",
+              "`" + name + "` takes one argument.",
+              is_ok ? "Write `ok(value)`." : "Write `fail(\"code\")`.");
+        return make_result(types_.fresh_variable());
+    }
+    const Type argument = analyze_expression(expr.arguments[0].get());
+    if (is_ok) {
+        require_non_void(argument, expr.arguments[0]->span.start, "`ok` needs a value.",
+                         "Pass the success payload, for example `ok(1)`.");
+        if (type_owns_heap(types_, argument, &records_)) {
+            consume_heap_expr(expr.arguments[0].get());
+        }
+        return make_result(argument);
+    }
+    expect_type(argument, string_type(), expr.arguments[0]->span.start, "Type mismatch",
+                "`fail` expects an error code string.", "Write `fail(\"not_found\")`.");
+    consume_heap_expr(expr.arguments[0].get());
+    Type payload = types_.fresh_variable();
+    if (current_function_ != nullptr) {
+        const Type ret = types_.prune(current_function_->return_type);
+        if (ret.kind == TypeKind::Result && ret.element != nullptr) {
+            payload = *ret.element;
+        }
+    }
+    return make_result(payload);
+}
+
 Type Analyzer::analyze_field(const FieldExpr& expr) {
     if (const auto* name = dynamic_cast<const IdentifierExpr*>(expr.object.get())) {
         if (lookup_local(name->name) == nullptr &&
@@ -1529,6 +1854,41 @@ Type Analyzer::analyze_field(const FieldExpr& expr) {
     }
     const Type object = analyze_expression(expr.object.get());
     const Type resolved = types_.prune(object);
+    if (resolved.kind == TypeKind::Result) {
+        const std::string owner = borrow_place_name(expr.object.get());
+        if (expr.field == "ok") {
+            return boolean_type();
+        }
+        if (expr.field == "value") {
+            if (flow_of(owner) != ResultFlow::Ok) {
+                error(expr.field_location, "Invalid result access",
+                      "`value` is only valid when this `result` is known `ok`.",
+                      "Read `r.value` inside `if r.ok:`.");
+            }
+            return resolved.element != nullptr ? *resolved.element : types_.fresh_variable();
+        }
+        if (expr.field == "error") {
+            if (flow_of(owner) != ResultFlow::Fail) {
+                error(expr.field_location, "Invalid result access",
+                      "`error` is only valid when this `result` is known to have failed.",
+                      "Read `r.error` inside `otherwise:` after `if r.ok:`.");
+            }
+            return make_error();
+        }
+        error(expr.field_location, "Unknown field",
+              "`result` has fields `ok`, `value`, and `error`.",
+              "Write `r.ok`, `r.value`, or `r.error.code`.");
+        return types_.fresh_variable();
+    }
+    if (resolved.kind == TypeKind::Error) {
+        if (expr.field == "code") {
+            return string_type();
+        }
+        error(expr.field_location, "Unknown field",
+              "`error` has one field `code`.",
+              "Write `r.error.code`.");
+        return types_.fresh_variable();
+    }
     if (resolved.kind != TypeKind::Record) {
         if (resolved.kind == TypeKind::Variable) {
             Type result = types_.fresh_variable();
@@ -1794,6 +2154,13 @@ Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
         return result;
     }
 
+    if (expr.qualifier.empty() && expr.callee == "ok" && lookup_function("ok") == nullptr) {
+        return analyze_ok_fail(expr, true);
+    }
+    if (expr.qualifier.empty() && expr.callee == "fail" && lookup_function("fail") == nullptr) {
+        return analyze_ok_fail(expr, false);
+    }
+
     if (expr.callee == "count" && lookup_function("count") == nullptr) {
         if (expr.arguments.size() != 1) {
             error(expr.callee_location, "Wrong number of arguments", "`count` takes one list.",
@@ -1835,6 +2202,9 @@ Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
             analyze_expression(argument.get());
         }
         return types_.fresh_variable();
+    }
+    if (is_stdlib_runtime_ir(function->ir_name)) {
+        return analyze_stdlib_call(*function, expr, result_used);
     }
     call_ir_names_[&expr] = function->ir_name;
 
@@ -2096,6 +2466,137 @@ Type Analyzer::analyze_stdlib_call(FunctionSymbol& function, const CallExpr& exp
         return finish(float_type());
     }
 
+    if (ir == "std$map$new") {
+        require_arity(0);
+        return finish(map_type(types_.fresh_variable()));
+    }
+    if (ir == "std$map$set") {
+        require_arity(3);
+        Type value = types_.fresh_variable();
+        expect_type(analyze_arg(0), map_type(value), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a map.", "Create one with `map.new()`.");
+        expect_type(analyze_arg(1), string_type(), arg_location(1), "Type mismatch",
+                    "Map keys are strings.", "Pass a string key.");
+        expect_type(analyze_arg(2), value, arg_location(2), "Type mismatch",
+                    "This map stores " + types_.to_string(value) + ".",
+                    "Pass a value of that type.");
+        const Type resolved = types_.prune(value);
+        if (resolved.kind != TypeKind::Variable && resolved.kind != TypeKind::Integer &&
+            resolved.kind != TypeKind::Float && resolved.kind != TypeKind::Boolean &&
+            resolved.kind != TypeKind::String) {
+            error(arg_location(2), "Type mismatch",
+                  "Map values in this slice are integer, float, boolean, or string, not " +
+                      types_.to_string(resolved) + ".",
+                  "Store a scalar or a string.");
+        }
+        return finish(void_type());
+    }
+    if (ir == "std$map$has" || ir == "std$map$remove") {
+        require_arity(2);
+        Type value = types_.fresh_variable();
+        expect_type(analyze_arg(0), map_type(value), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a map.", "Create one with `map.new()`.");
+        expect_type(analyze_arg(1), string_type(), arg_location(1), "Type mismatch",
+                    "Map keys are strings.", "Pass a string key.");
+        return finish(ir == "std$map$has" ? boolean_type() : void_type());
+    }
+    if (ir == "std$map$get_unchecked") {
+        require_arity(2);
+        Type value = types_.fresh_variable();
+        expect_type(analyze_arg(0), map_type(value), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a map.", "Create one with `map.new()`.");
+        expect_type(analyze_arg(1), string_type(), arg_location(1), "Type mismatch",
+                    "Map keys are strings.", "Pass a string key.");
+        return finish(value);
+    }
+    if (ir == "std$map$len") {
+        require_arity(1);
+        Type value = types_.fresh_variable();
+        expect_type(analyze_arg(0), map_type(value), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a map.", "Create one with `map.new()`.");
+        return finish(integer_type());
+    }
+    if (ir == "std$set$new") {
+        require_arity(0);
+        return finish(set_type());
+    }
+    if (ir == "std$set$add" || ir == "std$set$has" || ir == "std$set$remove") {
+        require_arity(2);
+        expect_type(analyze_arg(0), set_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a set.", "Create one with `set.new()`.");
+        expect_type(analyze_arg(1), string_type(), arg_location(1), "Type mismatch",
+                    "Set elements are strings.", "Pass a string.");
+        return finish(ir == "std$set$has" ? boolean_type() : void_type());
+    }
+    if (ir == "std$set$len") {
+        require_arity(1);
+        expect_type(analyze_arg(0), set_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a set.", "Create one with `set.new()`.");
+        return finish(integer_type());
+    }
+    if (ir == "std$file$exists") {
+        require_arity(1);
+        expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a path string.", "Pass a file path.");
+        return finish(boolean_type());
+    }
+    if (ir == "std$file$read_unchecked") {
+        require_arity(1);
+        expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a path string.", "Pass a file path.");
+        return finish(string_type());
+    }
+    if (ir == "std$file$write_unchecked") {
+        require_arity(2);
+        expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a path string.", "Pass a file path.");
+        expect_type(analyze_arg(1), string_type(), arg_location(1), "Type mismatch",
+                    "`" + display + "` expects the file contents as a string.", "Pass a string.");
+        return finish(integer_type());
+    }
+    if (ir == "std$json$parse_unchecked") {
+        require_arity(1);
+        expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a JSON string.", "Pass a string.");
+        return finish(json_type());
+    }
+    if (ir == "std$json$is_valid") {
+        require_arity(1);
+        expect_type(analyze_arg(0), json_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects json.", "Parse JSON first.");
+        return finish(boolean_type());
+    }
+    if (ir == "std$json$has_int" || ir == "std$json$has_string") {
+        require_arity(2);
+        expect_type(analyze_arg(0), json_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects json.", "Parse JSON first.");
+        expect_type(analyze_arg(1), string_type(), arg_location(1), "Type mismatch",
+                    "JSON object keys are strings.", "Pass a string key.");
+        return finish(boolean_type());
+    }
+    if (ir == "std$json$get_int_unchecked") {
+        require_arity(2);
+        expect_type(analyze_arg(0), json_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects json.", "Parse JSON first.");
+        expect_type(analyze_arg(1), string_type(), arg_location(1), "Type mismatch",
+                    "JSON object keys are strings.", "Pass a string key.");
+        return finish(integer_type());
+    }
+    if (ir == "std$json$get_string_unchecked") {
+        require_arity(2);
+        expect_type(analyze_arg(0), json_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects json.", "Parse JSON first.");
+        expect_type(analyze_arg(1), string_type(), arg_location(1), "Type mismatch",
+                    "JSON object keys are strings.", "Pass a string key.");
+        return finish(string_type());
+    }
+    if (ir == "std$json$encode") {
+        require_arity(1);
+        expect_type(analyze_arg(0), json_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects json.", "Parse JSON first.");
+        return finish(string_type());
+    }
+
     for (const auto& argument : expr.arguments) {
         analyze_expression(argument.get());
     }
@@ -2219,6 +2720,56 @@ bool Analyzer::is_ref_parameter(const std::string& name) const {
     return false;
 }
 
+std::string Analyzer::result_scrutinee(const Expr* condition) {
+    const auto* field = dynamic_cast<const FieldExpr*>(condition);
+    if (field == nullptr || field->field != "ok") {
+        return {};
+    }
+    const auto* id = dynamic_cast<const IdentifierExpr*>(field->object.get());
+    if (id == nullptr || lookup_local(id->name) == nullptr) {
+        return {};
+    }
+    const Type type = types_.prune(lookup_local(id->name)->type);
+    if (type.kind != TypeKind::Result) {
+        return {};
+    }
+    return id->name;
+}
+
+ResultFlow Analyzer::flow_of(const std::string& name) const {
+    if (name.empty()) {
+        return ResultFlow::Unknown;
+    }
+    const auto found = result_flow_.find(name);
+    return found != result_flow_.end() ? found->second : ResultFlow::Unknown;
+}
+
+void Analyzer::note_unhandled_result(const std::string& name, SourceLocation location) {
+    if (name.empty()) {
+        return;
+    }
+    if (unhandled_results_.contains(name)) {
+        error(location, "Unused result",
+              "`" + name + "` already holds a `result` that was never inspected.",
+              "Handle it with `if " + name + ".ok:` before overwriting.");
+    }
+    unhandled_results_[name] = location;
+}
+
+void Analyzer::handle_result(const std::string& name) {
+    if (!name.empty()) {
+        unhandled_results_.erase(name);
+    }
+}
+
+void Analyzer::check_unhandled_results() {
+    for (const auto& [name, location] : unhandled_results_) {
+        error(location, "Unused result",
+              "`" + name + "` is a `result` that was never inspected.",
+              "Handle it with `if " + name + ".ok:`, or `give` it.");
+    }
+}
+
 std::string Analyzer::borrow_place_name(const Expr* expr) const {
     if (expr == nullptr) {
         return {};
@@ -2259,7 +2810,22 @@ void Analyzer::own_call_args(const CallExpr& expr, FunctionSymbol* callee) {
     for (std::size_t i = 0; i < count; ++i) {
         const bool is_ref = callee != nullptr && i < callee->param_is_ref.size() && callee->param_is_ref[i];
         if (is_ref) {
-            borrow_argument(expr.arguments[i].get(), borrowed);
+            Type arg_type;
+            const auto found = expr_types_.find(expr.arguments[i].get());
+            if (found != expr_types_.end()) {
+                arg_type = types_.prune(found->second);
+            }
+            const bool foreign_string =
+                callee != nullptr && callee->foreign && arg_type.kind == TypeKind::String;
+            if (foreign_string) {
+                const std::string place = borrow_place_name(expr.arguments[i].get());
+                if (!place.empty()) {
+                    own_check_read(place, expr.arguments[i]->span.start);
+                    borrowed.insert(place);
+                }
+            } else {
+                borrow_argument(expr.arguments[i].get(), borrowed);
+            }
         } else {
             const std::string place = borrow_place_name(expr.arguments[i].get());
             if (!place.empty() && borrowed.contains(place) && name_is_heap(place)) {
@@ -2460,6 +3026,16 @@ void print_types(const SemanticInfo& info, std::ostream& out) {
                 return "void";
             case TypeKind::Variable:
                 return "?";
+            case TypeKind::Error:
+                return "error";
+            case TypeKind::Result:
+                return "result";
+            case TypeKind::Map:
+                return "map";
+            case TypeKind::Set:
+                return "set";
+            case TypeKind::Json:
+                return "json";
         }
         return "?";
     };

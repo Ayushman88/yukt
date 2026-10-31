@@ -6,11 +6,11 @@ YUKT is a real programming language. The compiler is handwritten C++20. Do not i
 
 ## Current milestone
 
-**0.13.3 — References** (in progress on `yukt-0.13-series`; 0.13.2 ownership is on `yukt-0.13.2-ownership`; 0.13.1 records are tagged `v0.13.1` locally; 0.12 remains tagged `v0.12.1`; 0.11 remains tagged `v0.11.0`).
+**0.13.6 — Stdlib** (on `yukt-0.13-series`; 0.13.2 ownership is on `yukt-0.13.2-ownership`; 0.13.1 records are tagged `v0.13.1` locally; 0.12 remains tagged `v0.12.1`; 0.11 remains tagged `v0.11.0`).
 
-Implemented: lexer, parser, AST, diagnostics (notes, GNU line, TTY color, per-file locations), scopes, type inference, YUKT IR, LLVM lowering, host object emission, `yukt build`, `yukt run`, `yukt --explain`, LLVM O3, list indexing, `count` / `zeros`, work-based automatic parallelization, simple +/* parallel reductions, adaptive runtime parallelization, host-CPU SIMD via LLVM vectorize, counted-loop lowering, range-parallel runtime, aligned list payloads, size-class payload reuse, host-native CI (macOS arm64, Linux x86-64), the 0.08–0.10 performance sprints, the 0.12 module system (`use` / `share` / `as` / `.` qualification, whole-program DAG, one native executable), the 0.12.1 now-gated standard library (`std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`), 0.13.1 records (`record` / `share record`, nominal layouts, constructors, field access, fieldwise equality, list-of-record), 0.13.2 ownership (move, drop, overwrite, no field or list-element steal, copy-on-own string literals), and 0.13.3 mutable `ref` parameters (borrow, no `&`/`*`, no store, no escape). Linux x86-64 CI has not been re-run for records, ownership, or refs.
+Implemented: lexer, parser, AST, diagnostics (notes, GNU line, TTY color, per-file locations), scopes, type inference, YUKT IR, LLVM lowering, host object emission, `yukt build`, `yukt run`, `yukt --explain`, LLVM O3, list indexing, `count` / `zeros`, work-based automatic parallelization, simple +/* parallel reductions, adaptive runtime parallelization, host-CPU SIMD via LLVM vectorize, counted-loop lowering, range-parallel runtime, aligned list payloads, size-class payload reuse, host-native CI (macOS arm64, Linux x86-64), the 0.08–0.10 performance sprints, the 0.12 module system (`use` / `share` / `as` / `.` qualification, whole-program DAG, one native executable), the 0.12.1 now-gated standard library (`std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`), 0.13.1 records, 0.13.2 ownership, 0.13.3 mutable `ref` parameters, 0.13.4 `foreign` C, 0.13.5 `result[T]` / `ok` / `fail`, and 0.13.6 `std/map`, `std/set`, `std/file`, `std/json`. Linux x86-64 CI has not been re-run for records through 0.13.6.
 
-Not implemented: 0.13.4–0.13.6 (foreign C, error values) or the stdlib that needs them (maps, sets, arrays, files, JSON). Design: `docs/YUKT_013_DESIGN.md`. Also not implemented: package management or cross-compilation to non-host triples.
+Not implemented: `std/array`, package management, or cross-compilation to non-host triples. Design: `docs/YUKT_013_DESIGN.md`.
 
 Native execution is real when `yukt build` writes a host binary and `file` reports an executable for that architecture. Do not call a program "native" if it was interpreted.
 
@@ -72,6 +72,7 @@ Supported syntax is listed in `docs/LANGUAGE_SPEC.md`:
 - arithmetic and comparison operators
 - `create` functions and `share create` exports
 - `record` / `share record` declarations and positional constructors
+- `ref` parameters, `foreign` C declarations, `ok` / `fail` / `result[T]`
 - `use path [as alias]` and qualified calls `alias.name(...)`
 - `say`, `give`, `if` / `otherwise`, `repeat`
 - lists, indexing, `count`, `zeros`, including lists of records

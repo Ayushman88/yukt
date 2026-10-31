@@ -19,6 +19,11 @@ bool type_owns_heap(const TypeContext& types, Type type, const std::vector<Recor
     switch (type.kind) {
         case TypeKind::String:
         case TypeKind::List:
+        case TypeKind::Error:
+        case TypeKind::Result:
+        case TypeKind::Map:
+        case TypeKind::Set:
+        case TypeKind::Json:
             return true;
         case TypeKind::Record: {
             if (records == nullptr || type.record_id < 0 ||

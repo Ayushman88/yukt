@@ -6,6 +6,7 @@
  * Max retained after yukt_runtime_release: 8,948,352 bytes.
  * Caches are not thread-safe. */
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -34,6 +35,8 @@ void yukt_list_set_rec(YuktList* list, int64_t index, const void* src, int64_t s
 void yukt_list_get_rec(const YuktList* list, int64_t index, void* dest, int64_t stride);
 
 char* yukt_str_concat(const char* left, const char* right);
+/* Content equality. NULL and "" compare equal. */
+int8_t yukt_str_eq(const char* left, const char* right);
 int64_t yukt_str_len(const char* s);
 int64_t yukt_str_at(const char* s, int64_t index);
 char* yukt_str_slice(const char* s, int64_t start, int64_t end);
@@ -111,6 +114,45 @@ char* yukt_str_from_lit(const char* s);
 char* yukt_str_clone(const char* s);
 /* Number of currently tracked allocations (for ownership tests). */
 int64_t yukt_debug_live_allocs(void);
+
+/* 0.13.4 ABI helper: sum of a two-integer record `{ x, y }`. */
+int64_t yukt_point_sum(const int64_t* point);
+/* 0.13.4 ABI helper: C `int8_t` boolean and. */
+int8_t yukt_bool_and(int8_t a, int8_t b);
+
+void yukt_track_obj(void* ptr, size_t bytes);
+void yukt_013_free(void* ptr);
+
+void* yukt_map_new(void);
+void yukt_map_set_i64(void* map, const char* key, int64_t value);
+void yukt_map_set_f64(void* map, const char* key, double value);
+void yukt_map_set_bool(void* map, const char* key, int8_t value);
+void yukt_map_set_cstr(void* map, const char* key, const char* value);
+int8_t yukt_map_has(void* map, const char* key);
+int64_t yukt_map_get_i64(void* map, const char* key);
+double yukt_map_get_f64(void* map, const char* key);
+int8_t yukt_map_get_bool(void* map, const char* key);
+char* yukt_map_get_cstr(void* map, const char* key);
+int64_t yukt_map_len(void* map);
+void yukt_map_remove(void* map, const char* key);
+
+void* yukt_set_new(void);
+void yukt_set_add(void* set, const char* key);
+int8_t yukt_set_has(void* set, const char* key);
+int64_t yukt_set_len(void* set);
+void yukt_set_remove(void* set, const char* key);
+
+int8_t yukt_file_exists(const char* path);
+char* yukt_file_read(const char* path);
+int64_t yukt_file_write(const char* path, const char* data);
+
+void* yukt_json_parse(const char* text);
+int8_t yukt_json_is_valid(void* json);
+int8_t yukt_json_has_int(void* json, const char* key);
+int8_t yukt_json_has_string(void* json, const char* key);
+int64_t yukt_json_get_int(void* json, const char* key);
+char* yukt_json_get_string(void* json, const char* key);
+char* yukt_json_encode(void* json);
 
 #ifdef __cplusplus
 }

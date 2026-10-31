@@ -307,5 +307,35 @@ int main() {
         std::filesystem::remove(out_path, ec);
     }
 
+    require_run("tests/stdlib/map_set.yukt",
+                "1\n"
+                "not_found\n"
+                "2\n"
+                "true\n"
+                "false\n"
+                "1\n"
+                "true\n"
+                "false\n");
+    require_run("tests/stdlib/file_json.yukt",
+                "5\n"
+                "hello\n"
+                "not_found\n"
+                "9\n"
+                "hi\n"
+                "{\"n\":9,\"s\":\"hi\"}\n"
+                "invalid_json\n");
+    require_run("tests/suite013/all.yukt",
+                "2\n"
+                "7\n"
+                "4\n"
+                "7\n"
+                "50005000\n"
+                "1\n"
+                "1\n"
+                "5\n"
+                "42\n"
+                "not_found\n"
+                "bad_int\n");
+
     return yukt::test::summary("stdlib");
 }

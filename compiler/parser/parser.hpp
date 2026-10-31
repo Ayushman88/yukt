@@ -23,6 +23,7 @@ private:
     std::unique_ptr<RecordDecl> parse_record(bool shared);
     TypeName parse_type_name();
     std::unique_ptr<FunctionDecl> parse_function(bool shared);
+    std::unique_ptr<FunctionDecl> parse_foreign();
     std::unique_ptr<Expr> parse_call_from_tokens(Token qualifier, Token name, SourceLocation dot);
     std::vector<std::unique_ptr<Stmt>> parse_block(std::string_view what);
     std::unique_ptr<Stmt> parse_statement();

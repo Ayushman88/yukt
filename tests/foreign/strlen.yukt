@@ -1,0 +1,6 @@
+foreign strlen(s: ref string): integer
+
+create main:
+    say strlen("")
+    say strlen("hello")
+    say strlen("yukt")
