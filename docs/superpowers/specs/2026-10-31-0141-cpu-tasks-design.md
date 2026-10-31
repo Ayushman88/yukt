@@ -6,4 +6,6 @@ This spec is **0.14.1 only**: reserved words `start` and `wait`, type `task[T]`,
 
 Out of scope: mutex, `ref` across threads, async/await, channels, CUDA, `std/array`, cancel/timeout, `start` of `foreign`.
 
-Read `docs/YUKT_014_DESIGN.md` for the full contract, diagnostics table, and regression gate.
+The language surface is now in `docs/LANGUAGE_SPEC.md` § 0.14.1. Implementation notes (claiming, races, allocator mutex, planned-parallel detection) are in `docs/YUKT_014_DESIGN.md`. Implementation is not authorized until the plan is reviewed.
+
+Read `docs/YUKT_014_DESIGN.md` for the full contract, diagnostics table, implementation notes, and regression gate.

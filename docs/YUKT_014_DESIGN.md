@@ -1,6 +1,6 @@
 # YUKT 0.14 design — Concurrency foundations
 
-Status: **0.14.1 CPU fork-join specified, not implemented.** 0.13.1–0.13.6 are on `main`. CUDA / GPU stay a later 0.14 slice. Linux x86-64 CI has not been re-run for 0.13.
+Status: **0.14.1 CPU fork-join specified, not implemented.** Language surface is in `docs/LANGUAGE_SPEC.md`. 0.13.1–0.13.6 are on `main` at `d296d80`. CUDA / GPU stay a later 0.14 slice. Linux x86-64 CI **ran on `d296d80` and failed** (GCC `-Werror=missing-field-initializers` in `compiler/semantic/type.cpp`). macOS arm64 CI passed. There is no `v0.13.6` tag.
 
 0.14 is a **language** milestone. A thread pool already exists for automatic `repeat`. 0.14.1 adds an explicit, typed way to run a function on that pool and wait for its value. It must not pretend implicit parallel loops are a task API.
 
@@ -134,4 +134,158 @@ This is the 0.13.2 state machine, not a new one.
 ## Approval
 
 Language surface, runtime, and gate: **accepted in design review (2026-10-31).**  
-Written spec: **this file.** Implementation waits for the same text in `docs/LANGUAGE_SPEC.md` and an implementation plan.
+Written spec: `docs/LANGUAGE_SPEC.md` § 0.14.1, copied from this file. Implementation waits for an implementation plan review and explicit authorization.
+
+## Implementation notes (not language changes)
+
+These notes freeze **how** 0.14.1 must be built. They do not add cancellation, shared `ref`, mutex types, atomics as a language feature, async/await, channels, or GPU. If a note appears to change user-visible meaning, the LANGUAGE_SPEC / sections above win and this note is wrong.
+
+### 1. Atomic task claiming and lifecycle
+
+Exact states and the only allowed transitions:
+
+```
+Queued → Running → Completed → Consumed
+```
+
+- `start` constructs a tracked task object in **Queued** and enqueues it.
+- Exactly one executor claims **Queued → Running**. The claim is a single atomic compare-exchange (or the pool mutex plus a state word updated only while that mutex is held). A task must not execute twice.
+- The worker or inline waiter stores the result, then **Running → Completed**.
+- `wait` that observes **Completed** copies/moves `T` out and **Completed → Consumed**, then releases the wrapper.
+- There is no transition back. **Consumed** is terminal.
+
+Claim candidates: a pool worker, or the thread executing `wait` on that same task. No third party.
+
+### 2. Race between a worker and inline `wait`
+
+`wait t` and a worker may both see **Queued**.
+
+1. Both attempt `Queued → Running` with the same atomic claim.
+2. The winner executes the function on **its** thread.
+3. The loser:
+   - if it is `wait`: it does **not** execute. It waits for **Completed**, then consumes.
+   - if it is a worker: it must not execute. It returns to the pool.
+
+`wait` runs the body inline **only** if it wins the claim while the state is still **Queued**. If a worker claims first, `wait` blocks. This is the approved “if the job has not started, wait runs it” rule, stated as an atomic race rather than a TOCTOU check.
+
+### 3. Nested tasks and worker starvation
+
+A started function may call `start`. That enqueues another job on the **same** host pool (libdispatch on macOS, the existing pthread pool on Linux). It does not create a thread.
+
+0.14.1 `wait` does **not** steal **other** queued jobs while blocked. The only inline execution is the waited-for task, and only when `wait` wins the **Queued → Running** claim.
+
+A waiting worker that blocked on a **Running** task stays blocked. Work-stealing while waiting is deferred to a later slice.
+
+Nested `start` + `wait` makes progress because:
+
+- if the inner task is still **Queued**, the waiter claims and runs it on the current thread;
+- if the inner task is **Running** on another worker, the waiter blocks until **Completed**.
+
+### 4. Waiting on an already-running task
+
+If `wait t` observes **Running**, it waits on a per-task completion object (condition variable, futex, or `dispatch_group` / semaphore). It does not spin.
+
+Deadlock case: every pool worker is blocked in `wait` on tasks that are **Running** on other workers, and those workers are themselves blocked. 0.14.1 does not add a deadlock detector. The inline-claim rule prevents the common “wait for a still-queued child” pool-starvation. Programs that create a wait cycle among **Running** tasks can hang. That is accepted for this slice. No timeout.
+
+### 5. Result storage alignment and lifetime
+
+The task wrapper is one tracked heap allocation (`YUKT_ALLOC_OBJ` via `yukt_track_obj` / `yukt_013_free`, or an equivalent tracked kind). It contains:
+
+- atomic state
+- callee pointer and moved argument storage
+- completion object
+- a result slot whose size and alignment are supplied by the compiler at `start` (at least `max_align_t` when `T` is not void; 0 when `T` is void)
+
+The result stays in that slot until `wait` consumes it. Alignment of `T` (including records and `result[U]`) must match the host ABI used for ordinary `give`. The waiter memcpy / load of `T` happens **before** the wrapper is released. After **Consumed**, the result bits in the wrapper are dead.
+
+### 6. Task wrapper destruction after `wait`
+
+`wait` is the unique owner of the wrapper at consume time:
+
+1. Claim the result (state must be **Completed**; this thread performs **Completed → Consumed**).
+2. Move `T` into the waiter’s SSA / local (or discard if void).
+3. Call `yukt_release` on the wrapper (which untracks and frees / caches it).
+
+Dropping a task without `wait` is a compile error (`Unused task`), including overwrite. The compiler must not insert a silent `yukt_release` of an unconsumed task as if it were an unused string: that would leak a running job or drop a result. If a later slice allows ignored tasks, it needs a new spec.
+
+### 7. Allocator and allocation-tracker synchronization
+
+Today (`runtime/yukt_runtime.c` on `d296d80`):
+
+- `yukt_allocs` tracker, `yukt_list_bins`, and `yukt_str_bins` are **not** locked. The comment says they are single-threaded because parallel `repeat` refuses allocating bodies.
+- `yukt_reduce_mu` only protects reduction accumulators.
+- Linux `yukt_par_mu` only protects the range-parallel job array.
+
+0.14.1 workers **do** allocate. One runtime mutex (`yukt_heap_mu`) must cover **every** path that touches:
+
+- `yukt_track` / `yukt_untrack` / `yukt_debug_live_allocs`
+- `yukt_cache_take` / `yukt_cache_put` (list and string bins)
+- `yukt_alloc_aligned_zero` / `yukt_str_alloc` / list header allocation
+- `yukt_release` and `yukt_013_free`
+- map / set / JSON alloc/free in `runtime/yukt_013.c` that use the tracker or the size-class caches
+
+A mutex around `malloc` alone is not enough. `yukt_reduce_mu` may be reused **only** if every heap path takes it; otherwise introduce `yukt_heap_mu` and keep `yukt_reduce_mu` for reductions. Caps stay 8,948,352 / six classes / four slots. Caps are checked under the same mutex.
+
+### 8. Runtime shutdown with outstanding tasks
+
+`yukt_runtime_release` is invoked from LLVM lowering only on `main` return (`compiler/backend/llvm_backend.cpp`). Unused tasks are compile errors, so a well-typed program should have no **Queued** / **Running** / **Completed** task at that point.
+
+Before tracker teardown the runtime must still:
+
+1. `yukt_task_shutdown`: refuse new `start`; wait until the queue is empty and no task is **Running** (or abort if any remain — implementation may drain **Queued** jobs on the shutting-down thread).
+2. On Linux, do not set `yukt_par_stop` or join pool threads until task drain completes. The existing pthread pool has `yukt_par_stop` but nothing currently sets it.
+3. Then `yukt_runtime_release`.
+
+Process-exit cleanup while a worker can still `yukt_track` is a use-after-free. Shutdown is sequenced: drain → join or idle the pool → release tracker.
+
+### 9. Worker traps and process abort
+
+`die()` in `runtime/yukt_runtime.c` prints `YUKT runtime error:` and `exit(1)`. Worker traps (bad slice, double release, untracked pointer) use the same `die()`. They do not become `fail`. They do not unwind to `wait`. The process aborts. No new error channel.
+
+### 10. Task transfer through arguments and returns
+
+`task[T]` is a heap owner. `type_owns_heap` must return true for it.
+
+- `u = t` moves; `t` becomes Moved.
+- `give t` moves; callee must not drop.
+- A parameter of type `task[T]` is Owned (moved in), same as `string` / `map`.
+- `wait` is the consume. A moved-from name is `Use after move`.
+- `ref task[T]` is a 0.13.3 borrow of a **place**. Passing that `ref` into `start` is `Cannot start a ref`. A function may take `ref task[T]` on one thread (e.g. to wait after a helper inspects it) only if `wait` still consumes the owner; 0.14.1 should reject `wait` of a `ref` and require the owned name. Locked: `wait` needs an owned `task[T]` rvalue / moved name, not a `ref`.
+
+### 11. Planned-parallel `repeat` detection
+
+The compiler, not the runtime, decides. Existing predicate: `Lowerer::can_parallelize` in `compiler/ir/lower.cpp` (`worth_parallelizing` with threshold `1000000`, `stmts_allocate`, `collect_loop_effects` independence, not already `in_parallel_`). Runtime `yukt_par_should_run_sequential` (`100000 * ncpu`) must **not** be the gate.
+
+Circularity to avoid: `start` allocates a task and is a user call. Today `has_user_call` / `stmts_allocate` would make a loop containing `start` sequential, which would then allow `start`. That is the wrong test.
+
+Locked rule: compute the planned-parallel decision on the loop **as if `start` / `wait` were absent** (ignore those AST nodes for independence, allocation, and work). If that decision is `parallel == true`, any `start` in the body (including nested `if` / `repeat`) is `Cannot start inside parallel repeat`. If the decision is sequential (trip/work too small, body allocates for other reasons, not independent), `start` is allowed.
+
+Do not reject `start` in every `repeat`. A 3-iteration loop may `start`.
+
+`wait` inside a planned-parallel body is also forbidden in 0.14.1 if `start` is (the body cannot create a task there). A `wait` of a task started **outside** the loop is a user call / heap consume and already fails independence or “cannot move inside repeat.” Keep that.
+
+### 12. Module-qualified `start` lookup
+
+`start alias.name(...)` uses the same resolution as `analyze_call` in `compiler/semantic/analyzer.cpp`:
+
+- qualifier must be a `use` alias
+- name must be a **shared** function of that module (`lookup_shared`)
+- private functions: `Unknown function` with the existing shared-name note
+- shared records: constructors are not startable (`Invalid start`)
+- `foreign`: `Invalid start` even if shared (and 0.13.4 already forbids `share foreign`)
+- unqualified `start name(...)` uses `lookup_function` in the current file, then builtins. Builtins, `ok`, `fail`, `count`, `zeros`, and `main` are `Invalid start` or the existing unknown-function path
+- stdlib runtime wrappers (`analyze_stdlib_call` / `is_stdlib_runtime_ir`) are ordinary shared functions and **may** be started if they have no `ref` parameter
+
+### Compatibility impact (reserved words)
+
+Approved: reserved words. Current tree identifiers named `start`:
+
+- `std/str.yukt` `slice(s, start, end)`
+- `std/list.yukt` `slice(src, start, end)`
+- `tests/ownership/list_slice_owned_trap_start.yukt` local `start`
+
+`wait` is unused as an identifier. Implementation must rename those `start` parameters/locals. Contextual keywords are not authorized.
+
+### Out of scope (repeat)
+
+No cancellation, timeout, mutex language type, atomic language type, channels, async/await, CUDA, or GPU.
