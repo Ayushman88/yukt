@@ -1,6 +1,6 @@
 # YUKT Language Specification
 
-Version: 0.14.1 (implemented on `main`; no `v0.14.1` tag yet). `v0.13.1` exists locally and is not pushed; there is no `v0.13.2` / `v0.13.6` tag. 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`.  
+Version: 0.14.1 (released as `v0.14.1`). `v0.13.1` exists locally and is not pushed. `v0.13.6` is `eb42a0a`. 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`. 0.15 is proposed in `docs/YUKT_015_DESIGN.md` and is **not** in this file.  
 Status: 0.12 language plus **records** ([0.13.1 — Records](#0131--records)), **ownership** ([0.13.2 — Ownership](#0132--ownership)), **references** ([0.13.3 — References](#0133--references)), **foreign C** ([0.13.4 — Foreign C](#0134--foreign-c)), **errors** ([0.13.5 — Errors](#0135--errors)), **stdlib expansion** ([0.13.6 — Stdlib](#0136--stdlib)), and **CPU tasks** ([0.14.1 — CPU tasks](#0141--cpu-tasks)). Numerical semantics for signed overflow and float rounding are unchanged.
 
 This document is the source of truth for YUKT syntax. **0.13.1 through 0.14.1 are implemented.** For implemented slices, if the compiler and this file disagree, that is a bug.

@@ -1,6 +1,6 @@
 # YUKT 0.14 design — Concurrency foundations
 
-Status: **0.14.1 CPU fork-join implemented.** Language surface is in `docs/LANGUAGE_SPEC.md`. CUDA / GPU stay a later 0.14 slice. There is no `v0.13.6` tag and no `v0.14.1` tag yet. Type construction uses field assignment so GCC `-Werror=missing-field-initializers` does not fire.
+Status: **0.14.1 released** (`v0.14.1` = `df4fda9`). Language surface is in `docs/LANGUAGE_SPEC.md`. CUDA / GPU stay after 0.15. See `docs/YUKT_015_DESIGN.md`. Type construction uses field assignment so GCC `-Werror=missing-field-initializers` does not fire.
 
 0.14 is a **language** milestone. A thread pool already exists for automatic `repeat`. 0.14.1 adds an explicit, typed way to run a function on that pool and wait for its value. It must not pretend implicit parallel loops are a task API.
 
@@ -25,7 +25,7 @@ Let a YUKT program start a function on another worker, transfer ownership of arg
 | Slice | Ships | Must not require |
 | --- | --- | --- |
 | **0.14.1 CPU tasks** | `start` / `wait`, `task[T]`, move-only args/results, pool + alloc mutex | Mutex type, `ref` across threads, async, CUDA |
-| **0.14.2+** (later) | Per-thread allocator caches; optional mutex; GPU interface with CPU fallback; CUDA on Linux+NVIDIA only | — |
+| **After 0.15** | GPU interface with CPU fallback; CUDA on Linux+NVIDIA only | 0.15 measurement and systems slices |
 
 Apple Silicon has no CUDA. Do not claim GPU execution on a Mac.
 
@@ -124,12 +124,9 @@ This is the 0.13.2 state machine, not a new one.
 - `start` inside a planned-parallel `repeat` is rejected
 - Do not claim Linux until the 0.13 Linux job is green
 
-## Later 0.14 slices (not specified here)
+## Later work (not specified here)
 
-- Per-thread size-class caches (drop the alloc mutex)
-- Mutex / shared `ref` if a later spec can state aliasing rules
-- GPU execution interface with a CPU fallback
-- NVIDIA CUDA prototype on Linux+NVIDIA only
+Moved to `docs/YUKT_015_DESIGN.md`: mutex / shared `ref`, channels, deadlock diagnostics, networking, async, allocator caches. CUDA / GPU stay after 0.15.
 
 ## Approval
 

@@ -142,7 +142,7 @@ Preserve 0.11 benchmarks (`benchmarks/results-0.11.json`). Do not overwrite them
 
 ## 0.13 — Memory and systems programming
 
-**Status: 0.13.1–0.13.6 implemented on `main`.** Tagged `v0.13.1` locally (not pushed). No `v0.13.2` / `v0.13.6` tag. Linux x86-64 CI has not been re-run for records through 0.13.6. See `docs/YUKT_013_DESIGN.md`.
+**Status: 0.13.1–0.13.6 implemented on `main`.** `v0.13.1` is local. `v0.13.6` is `eb42a0a`. See `docs/YUKT_013_DESIGN.md`.
 
 - Records (named structs) and field access — **implemented** (`0.13.1`)
 - Ownership: move of heap values, free when the owning frame returns (no GC) — **implemented** (`0.13.2`)
@@ -155,27 +155,41 @@ Specify syntax before implementing. This is a language milestone, not extra runt
 
 Goal: make YUKT suitable for serious systems programming.
 
-## 0.14 — Concurrency and GPU foundations
+## 0.14 — CPU tasks
 
-**Status: 0.14.1 CPU fork-join implemented.** CUDA stays a later slice. See `docs/YUKT_014_DESIGN.md`. macOS arm64 release checks pass. Ubuntu x86-64 CI has not been re-run for this tree.
+**Status: 0.14.1 released** (`v0.14.1` = `df4fda9`). macOS arm64 and Ubuntu x86-64 CI passed. See `docs/YUKT_014_DESIGN.md` and [the release](https://github.com/Ayushman88/yukt/releases/tag/v0.14.1).
 
 - **0.14.1** — `start` / `wait`, `task[T]`, move-only args/results, host task pool, alloc mutex — **implemented**
-- Later: per-thread allocator caches; optional mutex; GPU interface with a **CPU fallback**; NVIDIA CUDA prototype on **Linux+NVIDIA only**
+- CUDA / GPU stay **after 0.15**, not the next slice
 
 Apple Silicon has no CUDA. Do not claim GPU execution on a Mac.
 
-Goal: make heterogeneous computing possible.
+## 0.15 — Concurrency and systems maturity
+
+**Status: proposed, not implemented.** See `docs/YUKT_015_DESIGN.md`. No 0.15 syntax is in `docs/LANGUAGE_SPEC.md`.
+
+Goal: make YUKT useful for systems programming and backend work. Prove performance, safety, and usability before adding keywords.
+
+- **First gate** — compatibility and benchmark suite vs C, C++, Rust, and Go (both hosts; do not overwrite `benchmarks/results-0.11.json`)
+- **0.15.1** — mutexes and safe shared state
+- **0.15.2** — typed channels between tasks
+- **0.15.3** — deadlock / task-dependency diagnostics
+- **0.15.4** — TCP, UDP, HTTP foundations
+- **0.15.5** — async I/O and runtime design
+- **0.15.6** — allocator improvements, benches, profiling
+
+These slices are planning only. Do not implement 0.15.1+ until the surface is specified.
 
 ## Later — First usable release
 
 - Documented language
 - Native binaries for supported targets
 - Tested standard library
-- Published benchmarks: nested loops, matrix multiplication, Fibonacci, sorting, allocation, parallel workloads, compile time, and binary size
+- Published benchmarks vs C, C++, Rust, and Go: compute, allocation, tasks, compile time, and binary size
 
 ## Measurement
 
-Benchmarks can begin now that native binaries exist. Publish numbers, not slogans.
+Publish numbers, not slogans. Keep the 0.11 baseline. Add a new `benchmarks/results-0.15.json` when the 0.15 suite runs.
 
 ## Non-goals for the near term
 

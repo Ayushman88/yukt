@@ -2,7 +2,7 @@
 
 YUKT is an English-inspired, statically typed, compiled programming language. This repository contains its compiler, language specification, and tests.
 
-The current public tags are **v0.12.1** and **v0.11.0**. `v0.13.1` is the records tag (local until pushed). 0.13.1–0.14.1 are **implemented on `main`**. There is no `v0.13.2` / `v0.13.6` / `v0.14.1` tag. `yukt build` and `yukt run` produce **host-native** binaries optimized at LLVM O3, including multi-file programs linked through `use`. Independent `repeat` loops and simple `+`/`*` reductions may run in parallel when estimated work is large; the runtime can still sequentialize a call that is not worth dispatching. `start` / `wait` run a function on the host pool and move `task[T]`. `yukt --explain` reports those decisions only when they appear in generated LLVM IR. See `docs/YUKT_011_DESIGN.md`, `docs/YUKT_012_DESIGN.md`, `docs/YUKT_013_DESIGN.md`, `docs/YUKT_014_DESIGN.md`, `docs/EXECUTION_ENGINE.md`, `docs/RUNTIME.md`, and `docs/STDLIB.md`. Shipped library modules: `std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`, `std/map`, `std/set`, `std/file`, `std/json`.
+The current public tags include **v0.14.1**, **v0.13.6**, **v0.12.1**, and **v0.11.0**. `v0.13.1` is the records tag (local until pushed). There is no `v0.13.2` tag. 0.15 is **proposed**, not implemented. `yukt build` and `yukt run` produce **host-native** binaries optimized at LLVM O3, including multi-file programs linked through `use`. Independent `repeat` loops and simple `+`/`*` reductions may run in parallel when estimated work is large; the runtime can still sequentialize a call that is not worth dispatching. `start` / `wait` run a function on the host pool and move `task[T]`. `yukt --explain` reports those decisions only when they appear in generated LLVM IR. See `docs/YUKT_011_DESIGN.md`, `docs/YUKT_012_DESIGN.md`, `docs/YUKT_013_DESIGN.md`, `docs/YUKT_014_DESIGN.md`, `docs/EXECUTION_ENGINE.md`, `docs/RUNTIME.md`, and `docs/STDLIB.md`. Shipped library modules: `std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`, `std/map`, `std/set`, `std/file`, `std/json`.
 
 ## Example
 
@@ -59,8 +59,9 @@ YUKT is running!
 | References (`ref` parameters) | Implemented (0.13.3) |
 | Foreign C | Implemented (0.13.4) |
 | Errors (`result[T]` / `ok` / `fail`) | Implemented (0.13.5) |
-| CPU tasks (`start` / `wait` / `task[T]`) | Implemented (0.14.1) |
-| Later 0.14 mutex / async / GPU | Planning |
+| CPU tasks (`start` / `wait` / `task[T]`) | Implemented (0.14.1, tag `v0.14.1`) |
+| 0.15 concurrency / systems maturity | Proposed — measurement vs C/C++/Rust/Go first; see `docs/YUKT_015_DESIGN.md` |
+| CUDA / GPU | After 0.15 |
 
 `yukt file.yukt` type-checks. `yukt build` and `yukt run` generate native code through LLVM.
 
@@ -153,6 +154,7 @@ tools/       Reserved for developer tools
 - [0.12 design](docs/YUKT_012_DESIGN.md)
 - [0.13 design](docs/YUKT_013_DESIGN.md)
 - [0.14 design](docs/YUKT_014_DESIGN.md)
+- [0.15 design](docs/YUKT_015_DESIGN.md)
 - [Execution engine](docs/EXECUTION_ENGINE.md)
 - [Standard library foundations](docs/STDLIB.md)
 - [Standard library API contract](docs/STDLIB_SPEC.md)
