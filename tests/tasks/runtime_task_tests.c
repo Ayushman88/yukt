@@ -54,6 +54,15 @@ static void* worker_thread(void* task) {
     return NULL;
 }
 
+static void make_string(void* args, void* result) {
+    (void)args;
+    atomic_fetch_add(&g_runs, 1);
+    char* s = yukt_str_from_lit("hello");
+    if (result != NULL) {
+        memcpy(result, &s, sizeof(s));
+    }
+}
+
 static void* alloc_stress(void* arg) {
     (void)arg;
     for (int i = 0; i < 1000; ++i) {
@@ -118,6 +127,48 @@ int main(int argc, char** argv) {
             pthread_join(threads[t], NULL);
         }
         REQUIRE(yukt_debug_live_allocs() == 0);
+    }
+
+    {
+        void* tasks[1000];
+        int64_t outs[1000];
+        atomic_store(&g_runs, 0);
+        for (int i = 0; i < 1000; ++i) {
+            tasks[i] = yukt_task_start(write_seven, NULL, sizeof(int64_t), 8);
+        }
+        for (int i = 999; i >= 0; --i) {
+            outs[i] = 0;
+            yukt_task_wait(tasks[i], &outs[i]);
+            REQUIRE(outs[i] == 7);
+        }
+        REQUIRE(atomic_load(&g_runs) == 1000);
+    }
+
+    {
+        atomic_store(&g_runs, 0);
+        void* tasks[64];
+        for (int i = 0; i < 64; ++i) {
+            tasks[i] = yukt_task_start(make_string, NULL, sizeof(char*), 8);
+        }
+        for (int i = 0; i < 64; ++i) {
+            char* s = NULL;
+            yukt_task_wait(tasks[i], &s);
+            REQUIRE(s != NULL);
+            REQUIRE(strcmp(s, "hello") == 0);
+            yukt_release(s);
+        }
+        REQUIRE(atomic_load(&g_runs) == 64);
+        REQUIRE(yukt_debug_live_allocs() == 0);
+    }
+
+    {
+        atomic_store(&g_runs, 0);
+        void* task = yukt_task_start(slow_seven, NULL, sizeof(int64_t), 8);
+        yukt_task_shutdown();
+        int64_t out = 0;
+        yukt_task_wait(task, &out);
+        REQUIRE(out == 7);
+        REQUIRE(atomic_load(&g_runs) == 1);
     }
 
     yukt_task_shutdown();

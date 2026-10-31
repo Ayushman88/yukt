@@ -333,5 +333,25 @@ int main() {
         REQUIRE(has_title(result, "Cannot start inside parallel repeat"));
     }
 
+    {
+        const auto output = run_file("tests/tasks/nested_depth.yukt");
+        REQUIRE_MSG(output.ok, output.program_output);
+        REQUIRE(output.exit_code == 0);
+        REQUIRE(output.program_output == "9\n");
+    }
+
+    {
+        const auto output = run_file("tests/tasks/many_reverse.yukt");
+        REQUIRE_MSG(output.ok, output.program_output);
+        REQUIRE(output.exit_code == 0);
+        REQUIRE(output.program_output == "5\n4\n3\n2\n1\n");
+    }
+
+    {
+        const auto output = run_file("tests/tasks/worker_trap.yukt");
+        REQUIRE(output.exit_code != 0);
+        REQUIRE(output.program_output.find("YUKT runtime error:") != std::string::npos);
+    }
+
     return yukt::test::summary("yukt_task_tests");
 }

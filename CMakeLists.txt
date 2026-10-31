@@ -299,3 +299,6 @@ add_test(NAME yukt_task_runtime_tests COMMAND yukt_task_runtime_tests)
 add_test(NAME yukt_task_double_wait COMMAND yukt_task_runtime_tests double-wait)
 set_tests_properties(yukt_task_double_wait PROPERTIES
     PASS_REGULAR_EXPRESSION "YUKT runtime error: double wait or untracked task")
+add_test(NAME yukt_task_worker_trap COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/tasks/worker_trap.yukt)
+set_tests_properties(yukt_task_worker_trap PROPERTIES
+    PASS_REGULAR_EXPRESSION "YUKT runtime error:")

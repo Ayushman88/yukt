@@ -1,0 +1,8 @@
+create nest(n):
+    if n == 0:
+        give 1
+    otherwise:
+        give wait start nest(n - 1) + 1
+
+create main:
+    say wait start nest(8)

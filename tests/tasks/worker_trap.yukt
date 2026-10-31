@@ -1,0 +1,6 @@
+create boom:
+    items = ["x"]
+    say items[99]
+
+create main:
+    wait start boom()

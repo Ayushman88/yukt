@@ -1471,7 +1471,8 @@ typedef struct YuktTask {
 
 static pthread_mutex_t yukt_task_life_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t yukt_task_life_cv = PTHREAD_COND_INITIALIZER;
-static int yukt_task_inflight = 0;
+static int yukt_task_busy = 0;
+static int yukt_task_ops = 0;
 
 #if !defined(__APPLE__)
 typedef struct YuktTaskNode {
@@ -1499,13 +1500,21 @@ static void yukt_task_destroy_sync(void* ptr) {
 
 static void yukt_task_note_start(void) {
     pthread_mutex_lock(&yukt_task_life_mu);
-    yukt_task_inflight++;
+    yukt_task_busy++;
+    yukt_task_ops++;
     pthread_mutex_unlock(&yukt_task_life_mu);
 }
 
-static void yukt_task_note_done(void) {
+static void yukt_task_note_body_done(void) {
     pthread_mutex_lock(&yukt_task_life_mu);
-    yukt_task_inflight--;
+    yukt_task_busy--;
+    pthread_cond_broadcast(&yukt_task_life_cv);
+    pthread_mutex_unlock(&yukt_task_life_mu);
+}
+
+static void yukt_task_note_op_done(void) {
+    pthread_mutex_lock(&yukt_task_life_mu);
+    yukt_task_ops--;
     pthread_cond_broadcast(&yukt_task_life_cv);
     pthread_mutex_unlock(&yukt_task_life_mu);
 }
@@ -1518,6 +1527,7 @@ static void yukt_task_run_body(YuktTask* task) {
     atomic_store(&task->state, YUKT_TASK_COMPLETED);
     pthread_cond_broadcast(&task->done);
     pthread_mutex_unlock(&task->mu);
+    yukt_task_note_body_done();
 }
 
 static void yukt_task_drop(YuktTask* task) {
@@ -1526,7 +1536,6 @@ static void yukt_task_drop(YuktTask* task) {
     }
     if (atomic_fetch_sub(&task->refs, 1) == 1) {
         yukt_release(task);
-        yukt_task_note_done();
     }
 }
 
@@ -1561,6 +1570,7 @@ static void* yukt_task_pool_worker(void* arg) {
         pthread_mutex_unlock(&yukt_task_qmu);
         yukt_task_worker_try(node->task);
         yukt_task_drop(node->task);
+        yukt_task_note_op_done();
         free(node);
     }
 }
@@ -1592,6 +1602,7 @@ static void yukt_task_enqueue(YuktTask* task) {
         pthread_mutex_unlock(&yukt_task_qmu);
         yukt_task_worker_try(task);
         yukt_task_drop(task);
+        yukt_task_note_op_done();
         return;
     }
     YuktTaskNode* node = (YuktTaskNode*)malloc(sizeof(YuktTaskNode));
@@ -1648,6 +1659,7 @@ void* yukt_task_start(yukt_task_fn fn, void* args, size_t result_bytes, size_t r
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{
         yukt_task_worker_try(task);
         yukt_task_drop(task);
+        yukt_task_note_op_done();
     });
 #else
     yukt_task_enqueue(task);
@@ -1691,7 +1703,7 @@ void yukt_task_wait(void* task_ptr, void* result_out) {
 
 void yukt_task_shutdown(void) {
     pthread_mutex_lock(&yukt_task_life_mu);
-    while (yukt_task_inflight > 0) {
+    while (yukt_task_busy > 0 || yukt_task_ops > 0) {
         pthread_cond_wait(&yukt_task_life_cv, &yukt_task_life_mu);
     }
     pthread_mutex_unlock(&yukt_task_life_mu);
