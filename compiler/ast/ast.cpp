@@ -238,7 +238,17 @@ void FunctionDecl::print(std::ostream& out, int indent) const {
         if (i != 0) {
             out << ", ";
         }
-        out << parameters[i];
+        if (i < parameter_is_ref.size() && parameter_is_ref[i]) {
+            out << parameters[i] << ": ref ";
+            if (i < parameter_ref_types.size() && !parameter_ref_types[i].qualifier.empty()) {
+                out << parameter_ref_types[i].qualifier << '.';
+            }
+            if (i < parameter_ref_types.size()) {
+                out << parameter_ref_types[i].name;
+            }
+        } else {
+            out << parameters[i];
+        }
     }
     out << ")\n";
     for (const auto& stmt : body) {

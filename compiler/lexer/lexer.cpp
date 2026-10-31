@@ -58,6 +58,9 @@ TokenKind keyword_kind(std::string_view text) {
     if (text == "record") {
         return TokenKind::KwRecord;
     }
+    if (text == "ref") {
+        return TokenKind::KwRef;
+    }
     return TokenKind::Identifier;
 }
 

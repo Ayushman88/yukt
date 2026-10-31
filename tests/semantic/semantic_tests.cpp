@@ -431,7 +431,7 @@ int main() {
             "\n"
             "create main:\n"
             "    say 1\n");
-        REQUIRE(has_title(result, "Unknown name"));
+        REQUIRE(has_title(result, "Cannot store a ref"));
     }
 
     {

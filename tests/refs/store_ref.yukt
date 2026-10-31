@@ -1,0 +1,5 @@
+record Box:
+    r: ref integer
+
+create main:
+    say 1

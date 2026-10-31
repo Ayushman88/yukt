@@ -13,6 +13,7 @@
 #include <system_error>
 #include <unistd.h>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -192,8 +193,10 @@ private:
     std::unordered_map<std::string, llvm::Function*> functions_;
     std::unordered_map<std::string, llvm::FunctionCallee> runtime_;
     std::unordered_map<int, llvm::Value*> temps_;
-    std::unordered_map<std::string, llvm::AllocaInst*> locals_;
+    std::unordered_map<std::string, llvm::Value*> locals_;
+    const IrFunction* find_ir_function(const std::string& name) const;
     llvm::Function* current_fn_ = nullptr;
+    const IrFunction* current_ir_fn_ = nullptr;
     int next_thunk_ = 0;
     std::unordered_map<int, llvm::StructType*> record_types_;
     std::unordered_map<int, std::vector<unsigned>> record_llvm_indices_;
@@ -424,8 +427,12 @@ void LlvmEmitter::declare_functions() {
     for (const auto& function : ir_.functions) {
         std::vector<llvm::Type*> params;
         params.reserve(function.params.size());
-        for (const auto& param : function.params) {
-            params.push_back(type_of(param.second));
+        for (std::size_t i = 0; i < function.params.size(); ++i) {
+            if (i < function.param_is_ref.size() && function.param_is_ref[i]) {
+                params.push_back(llvm::PointerType::getUnqual(context_));
+            } else {
+                params.push_back(type_of(function.params[i].second));
+            }
         }
         auto* type = llvm::FunctionType::get(type_of(function.return_type), params, false);
         const auto linkage =
@@ -468,6 +475,7 @@ void LlvmEmitter::emit_functions() {
 
 void LlvmEmitter::emit_function(const IrFunction& function) {
     current_fn_ = functions_.at(function.name);
+    current_ir_fn_ = &function;
     temps_.clear();
     locals_.clear();
 
@@ -477,14 +485,27 @@ void LlvmEmitter::emit_function(const IrFunction& function) {
     }
 
     builder_.SetInsertPoint(blocks.at("entry"));
+    std::unordered_set<std::string> ref_params;
+    for (std::size_t i = 0; i < function.params.size(); ++i) {
+        if (i < function.param_is_ref.size() && function.param_is_ref[i]) {
+            ref_params.insert(function.params[i].first);
+        }
+    }
     for (const auto& local : function.locals) {
+        if (ref_params.contains(local.first)) {
+            continue;
+        }
         locals_[local.first] = builder_.CreateAlloca(type_of(local.second), nullptr, local.first);
     }
 
     unsigned index = 0;
     for (auto& arg : current_fn_->args()) {
         const auto& name = function.params[index].first;
-        builder_.CreateStore(&arg, locals_.at(name));
+        if (ref_params.contains(name)) {
+            locals_[name] = &arg;
+        } else {
+            builder_.CreateStore(&arg, locals_.at(name));
+        }
         ++index;
     }
 
@@ -619,10 +640,18 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
                 return emit_stdlib_call(inst);
             }
             auto* callee = functions_.at(inst.name);
+            const IrFunction* ir_callee = find_ir_function(inst.name);
             std::vector<llvm::Value*> args;
             args.reserve(inst.args.size());
-            for (const auto& arg : inst.args) {
-                args.push_back(arg.type.kind == IrTypeKind::String ? materialize_owned(arg) : materialize(arg));
+            for (std::size_t i = 0; i < inst.args.size(); ++i) {
+                const bool is_ref = ir_callee != nullptr && i < ir_callee->param_is_ref.size() &&
+                                    ir_callee->param_is_ref[i];
+                if (is_ref) {
+                    args.push_back(materialize(inst.args[i]));
+                } else {
+                    args.push_back(inst.args[i].type.kind == IrTypeKind::String ? materialize_owned(inst.args[i])
+                                                                               : materialize(inst.args[i]));
+                }
             }
             llvm::Value* call = builder_.CreateCall(callee->getFunctionType(), callee, args);
             if (inst.dest.type.kind == IrTypeKind::Void) {
@@ -821,6 +850,33 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
             }
             builder_.CreateCall(runtime("yukt_release"), {materialize(inst.args[0])});
             return nullptr;
+        case IrOp::Addr: {
+            llvm::Value* base = locals_.at(inst.name);
+            if (inst.field_index < 0 || current_ir_fn_ == nullptr) {
+                return base;
+            }
+            IrType local_type = ir_i64();
+            for (const auto& local : current_ir_fn_->locals) {
+                if (local.first == inst.name) {
+                    local_type = local.second;
+                    break;
+                }
+            }
+            if (local_type.kind == IrTypeKind::Record) {
+                return builder_.CreateStructGEP(record_type(local_type.record_id), base,
+                                                record_llvm_index(local_type.record_id, inst.field_index));
+            }
+            return base;
+        }
+    }
+    return nullptr;
+}
+
+const IrFunction* LlvmEmitter::find_ir_function(const std::string& name) const {
+    for (const auto& function : ir_.functions) {
+        if (function.name == name) {
+            return &function;
+        }
     }
     return nullptr;
 }

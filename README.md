@@ -56,6 +56,7 @@ YUKT is running!
 | Standard library APIs | `std/str`, `std/list`, `std/sort`, `std/math`, `std/stat` |
 | Records (`record` / `share record`) | Implemented (0.13.1, tag `v0.13.1` local until pushed); see `docs/LANGUAGE_SPEC.md` |
 | Ownership (move, drop, overwrite) | Implemented (0.13.2, on `yukt-0.13.2-ownership`; no `v0.13.2` tag) |
+| References (`ref` parameters) | In progress (0.13.3, on `yukt-0.13-series`) |
 
 `yukt file.yukt` type-checks. `yukt build` and `yukt run` generate native code through LLVM.
 

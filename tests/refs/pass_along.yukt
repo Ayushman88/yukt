@@ -1,0 +1,11 @@
+create increment(value: ref integer):
+    value = value + 1
+
+create add_two(value: ref integer):
+    increment(value)
+    increment(value)
+
+create main:
+    n = 1
+    add_two(n)
+    say n

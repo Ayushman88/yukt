@@ -114,6 +114,7 @@ enum class IrOp {
     FieldGet,
     FieldSet,
     Drop,
+    Addr,
 };
 
 struct IrInst {
@@ -169,6 +170,7 @@ struct IrFunction {
     std::string name;
     IrType return_type;
     std::vector<std::pair<std::string, IrType>> params;
+    std::vector<char> param_is_ref;
     std::vector<std::pair<std::string, IrType>> locals;
     std::vector<IrBlock> blocks;
 };

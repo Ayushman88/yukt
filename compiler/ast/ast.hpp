@@ -182,6 +182,9 @@ struct FunctionDecl {
     std::string name;
     SourceLocation name_location;
     std::vector<std::string> parameters;
+    std::vector<SourceLocation> parameter_locations;
+    std::vector<char> parameter_is_ref;
+    std::vector<TypeName> parameter_ref_types;
     std::vector<std::unique_ptr<Stmt>> body;
     void print(std::ostream& out, int indent) const;
 };

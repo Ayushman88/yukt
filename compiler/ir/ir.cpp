@@ -188,7 +188,11 @@ void print_ir(const IrModule& module, std::ostream& out) {
             if (i != 0) {
                 out << ", ";
             }
-            out << function.params[i].first << ": " << ir_type_name(function.params[i].second);
+            if (i < function.param_is_ref.size() && function.param_is_ref[i]) {
+                out << function.params[i].first << ": ref " << ir_type_name(function.params[i].second);
+            } else {
+                out << function.params[i].first << ": " << ir_type_name(function.params[i].second);
+            }
         }
         out << ") -> " << ir_type_name(function.return_type) << '\n';
         if (!function.locals.empty()) {
@@ -273,6 +277,13 @@ void print_ir(const IrModule& module, std::ostream& out) {
                         break;
                     case IrOp::Drop:
                         out << "drop " << (inst.args.empty() ? "undef" : value_text(inst.args[0])) << '\n';
+                        break;
+                    case IrOp::Addr:
+                        out << value_text(inst.dest) << " = addr " << inst.name;
+                        if (inst.field_index >= 0) {
+                            out << '.' << inst.field_index;
+                        }
+                        out << '\n';
                         break;
                 }
             }

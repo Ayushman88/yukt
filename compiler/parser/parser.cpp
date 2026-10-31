@@ -225,7 +225,17 @@ std::unique_ptr<RecordDecl> Parser::parse_record(bool shared) {
             synchronize();
             break;
         }
-        field.type = parse_type_name();
+        if (check(TokenKind::KwRef)) {
+            error_at(peek(), "Cannot store a ref",
+                     "A `ref` cannot be a record field.",
+                     "Keep `ref` as a parameter, or store the owned value.");
+            advance();
+            if (check(TokenKind::Identifier)) {
+                parse_type_name();
+            }
+        } else {
+            field.type = parse_type_name();
+        }
         field.span.end = previous().location;
         expect_newline("after this field");
         record->fields.push_back(std::move(field));
@@ -313,7 +323,24 @@ std::unique_ptr<FunctionDecl> Parser::parse_function(bool shared) {
                     synchronize();
                     return nullptr;
                 }
-                function->parameters.push_back(advance().lexeme);
+                const Token param = advance();
+                function->parameters.push_back(param.lexeme);
+                function->parameter_locations.push_back(param.location);
+                if (match(TokenKind::Colon)) {
+                    if (!consume(TokenKind::KwRef, "Unexpected token",
+                                 "Parameter type annotations must be `name: ref T`.",
+                                 "Write `" + param.lexeme + ": ref integer` or drop the annotation.")) {
+                        function->parameter_is_ref.push_back(0);
+                        function->parameter_ref_types.emplace_back();
+                        synchronize();
+                        return nullptr;
+                    }
+                    function->parameter_is_ref.push_back(1);
+                    function->parameter_ref_types.push_back(parse_type_name());
+                } else {
+                    function->parameter_is_ref.push_back(0);
+                    function->parameter_ref_types.emplace_back();
+                }
             } while (match(TokenKind::Comma));
         }
         if (!consume(TokenKind::RParen, "Unexpected token",

@@ -29,7 +29,7 @@ ctest --test-dir build --output-on-failure
 [[ -x build/yukt ]] || fail "build/yukt is missing or not executable"
 
 version="$(build/yukt --version)"
-echo "$version" | grep -q "0.13.2" || fail "yukt --version is '$version', expected 0.13.2"
+echo "$version" | grep -q "0.13.3" || fail "yukt --version is '$version', expected 0.13.3"
 ok "yukt --version is $version"
 
 file_out="$(file build/yukt)"

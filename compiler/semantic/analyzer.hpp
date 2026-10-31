@@ -55,6 +55,7 @@ struct SemanticInfo {
     std::unordered_map<const Expr*, Type> expression_types;
     std::unordered_map<std::string, Type> return_types;
     std::unordered_map<std::string, std::vector<Type>> parameter_types;
+    std::unordered_map<std::string, std::vector<char>> parameter_refs;
     std::unordered_map<std::string, std::unordered_map<std::string, Type>> local_types;
     std::unordered_map<const FunctionDecl*, std::string> function_ir_names;
     std::unordered_map<const CallExpr*, std::string> call_ir_names;

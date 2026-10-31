@@ -53,6 +53,20 @@ int main() {
 
     {
         const auto result = parse(
+            "create increment(value: ref integer):\n"
+            "    value = value + 1\n");
+        REQUIRE(!result.diagnostics->has_errors());
+        const auto* increment = function_named(*result.program, "increment");
+        REQUIRE(increment != nullptr);
+        REQUIRE(increment != nullptr && increment->parameters.size() == 1);
+        REQUIRE(increment != nullptr && increment->parameters[0] == "value");
+        REQUIRE(increment != nullptr && increment->parameter_is_ref.size() == 1 && increment->parameter_is_ref[0]);
+        REQUIRE(increment != nullptr && increment->parameter_ref_types.size() == 1 &&
+                increment->parameter_ref_types[0].name == "integer");
+    }
+
+    {
+        const auto result = parse(
             "create main:\n"
             "    greet(name)\n");
         REQUIRE(!result.diagnostics->has_errors());

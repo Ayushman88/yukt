@@ -1,0 +1,6 @@
+create bad(value: ref integer):
+    give value
+
+create main:
+    n = 1
+    say bad(n)

@@ -1,9 +1,9 @@
 # YUKT Language Specification
 
-Version: 0.13.2 (ownership implemented on this tree; `v0.13.1` exists locally and is not pushed; 0.13.3 not started). 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`.  
-Status: 0.12 language plus **records** ([0.13.1 — Records](#0131--records)) and **ownership** ([0.13.2 — Ownership](#0132--ownership)). `ref`, `foreign`, error values, and 0.13 stdlib expansion are **not** part of this slice. Numerical semantics for signed overflow and float rounding are unchanged.
+Version: 0.13.3 (refs specified on this tree; `v0.13.1` exists locally and is not pushed; there is no `v0.13.2` tag; 0.13.4 not started). 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`.  
+Status: 0.12 language plus **records** ([0.13.1 — Records](#0131--records)), **ownership** ([0.13.2 — Ownership](#0132--ownership)), and **references** ([0.13.3 — References](#0133--references)). `foreign`, error values, and 0.13 stdlib expansion are **not** part of this slice. Numerical semantics for signed overflow and float rounding are unchanged.
 
-This document is the source of truth for YUKT syntax. **0.13.1 and 0.13.2 are implemented.** If the compiler and this file disagree, that is a bug.
+This document is the source of truth for YUKT syntax. **0.13.1, 0.13.2, and 0.13.3 are implemented.** If the compiler and this file disagree, that is a bug.
 
 ## Design
 
@@ -37,9 +37,10 @@ A program is `use` lines, then a sequence of `record` declarations and `create` 
 create  say  if  otherwise  repeat  in  give  true  false
 use  share  as
 record
+ref
 ```
 
-These cannot be used as variable names, parameter names, aliases, `repeat` iterators, record names, field names, or function names, with one exception: **`repeat`** may be a function name after `create` / `share create` and after `.` in a qualified call, so `std/str` can export `str.repeat(...)`. `create if`, `record if`, and `math.give(...)` remain errors. Statement position is unchanged: `repeat i in 1..5:` is still a loop. `use`, `share`, and `as` are reserved from 0.12. `record` is reserved from 0.13.1. `ref`, `foreign`, `ok`, and `fail` are **not** reserved in this slice.
+These cannot be used as variable names, parameter names, aliases, `repeat` iterators, record names, field names, or function names, with one exception: **`repeat`** may be a function name after `create` / `share create` and after `.` in a qualified call, so `std/str` can export `str.repeat(...)`. `create if`, `record if`, and `math.give(...)` remain errors. Statement position is unchanged: `repeat i in 1..5:` is still a loop. `use`, `share`, and `as` are reserved from 0.12. `record` is reserved from 0.13.1. `ref` is reserved from 0.13.3. `foreign`, `ok`, and `fail` are **not** reserved in this slice.
 
 ## Lexical tokens
 
@@ -362,7 +363,7 @@ The following are **not** part of YUKT 0.13.1 and must not be parsed as if they 
 - `and` / `or` / `not`
 - bitwise operators
 - `for`, `while`, `break`, `continue`
-- type annotations on functions, parameters, or locals (field types on `record` are the only annotations)
+- type annotations on functions, parameters, or locals except `name: ref T` on parameters (0.13.3)
 - an interpreter or bytecode VM
 - package versions, remotes, or a package manager
 - maps, JSON, and file I/O (stdlib APIs after 0.13.1–0.13.5)
@@ -894,3 +895,68 @@ Every ownership error has file, line, and column.
 - Overwrite drops the previous allocation (observable by live-allocation count).
 - Moving a `Profile`-style record does not double-free; overwriting one field drops only that field.
 - Allocator caps and parallel thresholds unchanged; `benchmarks/results-0.11.json` unchanged.
+
+## 0.13.3 — References
+
+Independently releasable. 0.13.1 / 0.13.2 programs that do not mention `ref` stay valid.
+
+`ref T` is a **borrow** of an existing place. It is not nullable, not a C pointer, and not a YUKT value you can store.
+
+```yukt
+create increment(value: ref integer):
+    value = value + 1
+
+create main:
+    n = 1
+    increment(n)
+    say n
+```
+
+Prints `2`. The caller writes `increment(n)`, not `increment(&n)`. There is no `*` and no `&` in YUKT source.
+
+### Parameter annotations
+
+0.13.3 adds one annotation form: `name: ref T` on a `create` parameter. `T` is a type name (`integer`, `float`, `boolean`, `string`, `list`, or a record in scope). Other parameter, function, and local type annotations stay out.
+
+A `ref` parameter is not owned. Assignment through it mutates the caller's place. Reading it reads that place.
+
+### Places
+
+A place is a local, a parameter, or a whole record value. Passing a field as `ref` is allowed, but **any field borrow counts as a borrow of the whole record**. You cannot pass `ref person.age` and `ref person.height` to the same call. Disjoint-field borrowing waits. List elements are not places: `increment(xs[0])` is `Cannot borrow a temporary`. A constructor, operator result, or literal is not a place.
+
+### Alias and lifetime rules
+
+This is not Rust. One place, one story. All of the following are compile-time. There is no runtime borrow flag.
+
+1. **One mutable borrow at a time.** While a place is borrowed, there is no second `ref` to that place. 0.13.3 ships **mutable `ref` only**. Immutable borrows wait.
+2. **Cannot store.** A `ref` cannot be a record field, a list element, or a local you assign into. It exists only as a parameter.
+3. **Cannot escape.** `give` of a `ref` is an error. Returning a borrow as an owned value is an error. Moving a heap value out of a `ref` (`ys = xs` or `give xs` on `xs: ref list`) is `Cannot move out of a ref`.
+4. **May pass along.** A function may pass its `ref` parameter to a callee that also takes `ref T`. The original place stays borrowed until the outermost call that created the borrow returns.
+5. **Call site.** Passing `x` to a `ref T` parameter borrows `x` for that call. After the call returns, `x` is usable again. Heap `ref list` / `ref string` borrow the owner: the owner cannot move until the call returns. A `ref` is never an owning pointer.
+
+### Diagnostics
+
+| Situation | Title |
+| --- | --- |
+| Two `ref` arguments to the same place in one call | `Overlapping borrow` |
+| Two field refs of one record in one call | `Overlapping borrow` |
+| Argument is not a place | `Cannot borrow a temporary` |
+| `give` of a `ref` parameter | `Cannot give a ref` |
+| Move a heap value out of a `ref` | `Cannot move out of a ref` |
+| `ref` as a record field | `Cannot store a ref` |
+| Move the owner while it is borrowed | `Cannot move while borrowed` |
+
+### What 0.13.3 does not do
+
+- No `&` / `*` in source. No nullable refs. No storing refs. No immutable `ref`. No disjoint field borrows.
+- No `foreign` (0.13.4). No error values (0.13.5). No maps, files, or JSON (0.13.6).
+
+### Regression gate (0.13.3)
+
+- Previous slices green.
+- Two overlapping `ref` to the same local rejected.
+- Two field refs of one record in one call rejected.
+- `give` of a `ref` rejected.
+- Nested pass-along of a `ref` parameter accepted (`add_two` calling `increment` twice).
+- Storing `ref` in a record rejected.
+- `increment(n)` mutates the caller's integer.

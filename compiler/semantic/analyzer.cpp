@@ -34,6 +34,7 @@ struct FunctionSymbol {
     int module_index = 0;
     std::string ir_name;
     std::vector<Type> parameters;
+    std::vector<char> param_is_ref;
     Type return_type = void_type();
     bool saw_give = false;
     std::vector<LocalBinding> locals;
@@ -126,6 +127,10 @@ private:
     void own_check_read(const std::string& name, SourceLocation location);
     void own_move(const std::string& name, SourceLocation location);
     void own_move_call_args(const CallExpr& expr);
+    void own_call_args(const CallExpr& expr, FunctionSymbol* callee);
+    bool is_ref_parameter(const std::string& name) const;
+    std::string borrow_place_name(const Expr* expr) const;
+    void borrow_argument(const Expr* expr, std::unordered_set<std::string>& borrowed);
     void consume_heap_expr(const Expr* expr);
     void reject_field_move(const Expr* expr, SourceLocation location);
     void reject_list_element_move(const Expr* expr, SourceLocation location);
@@ -243,9 +248,13 @@ SemanticInfo Analyzer::run() {
             inferred.ir_name = ir_name;
             inferred.return_type = types_.to_string(symbol.return_type);
             for (std::size_t i = 0; i < function->parameters.size(); ++i) {
+                std::string type_name = types_.to_string(symbol.parameters[i]);
+                if (i < symbol.param_is_ref.size() && symbol.param_is_ref[i]) {
+                    type_name = "ref " + type_name;
+                }
                 inferred.parameters.push_back(InferredBinding{
                     function->parameters[i],
-                    types_.to_string(symbol.parameters[i]),
+                    std::move(type_name),
                 });
             }
             for (const auto& local : symbol.locals) {
@@ -256,6 +265,7 @@ SemanticInfo Analyzer::run() {
             info.functions.push_back(std::move(inferred));
             info.return_types[ir_name] = types_.prune(symbol.return_type);
             info.parameter_types[ir_name] = symbol.parameters;
+            info.parameter_refs[ir_name] = symbol.param_is_ref;
             for (auto& parameter : info.parameter_types[ir_name]) {
                 parameter = types_.prune(parameter);
             }
@@ -334,9 +344,11 @@ void Analyzer::collect_functions() {
             symbol->module_index = module_index;
             symbol->ir_name = ir_name;
             symbol->return_type = types_.fresh_variable();
-            for (const auto& parameter : function->parameters) {
+            for (std::size_t i = 0; i < function->parameters.size(); ++i) {
                 symbol->parameters.push_back(types_.fresh_variable());
-                (void)parameter;
+                const char is_ref =
+                    i < function->parameter_is_ref.size() ? function->parameter_is_ref[i] : 0;
+                symbol->param_is_ref.push_back(is_ref);
             }
             FunctionSymbol* stored = symbol.get();
             functions_.emplace(ir_name, std::move(symbol));
@@ -994,9 +1006,23 @@ void Analyzer::analyze_function(FunctionSymbol& function) {
                 continue;
             }
             seen.emplace(name, function.decl->name_location);
-            declare_local(name, function.parameters[i], function.decl->name_location, false);
-            if (ownership_pass_ && type_owns_heap(types_, function.parameters[i], &records_)) {
-                own_[name] = OwnName{OwnState::Owned, function.decl->name_location};
+            const SourceLocation param_location = i < function.decl->parameter_locations.size()
+                                                     ? function.decl->parameter_locations[i]
+                                                     : function.decl->name_location;
+            const bool is_ref = i < function.decl->parameter_is_ref.size() && function.decl->parameter_is_ref[i];
+            if (is_ref && i < function.decl->parameter_ref_types.size()) {
+                const Type annotated =
+                    resolve_type_name(function.decl->parameter_ref_types[i], function.module_index, false);
+                if (!types_.unify(function.parameters[i], annotated)) {
+                    error(param_location, "Type mismatch",
+                          "Parameter `" + name + "` is annotated `ref " + types_.to_string(annotated) +
+                              "` but used as " + types_.to_string(function.parameters[i]) + ".",
+                          "Use one type for `" + name + "`.");
+                }
+            }
+            declare_local(name, function.parameters[i], param_location, false);
+            if (ownership_pass_ && !is_ref && type_owns_heap(types_, function.parameters[i], &records_)) {
+                own_[name] = OwnName{OwnState::Owned, param_location};
             }
         }
 
@@ -1097,7 +1123,11 @@ void Analyzer::analyze_assignment(const AssignStmt& stmt) {
             reject_list_element_move(stmt.value.get(),
                                      stmt.value != nullptr ? stmt.value->span.start : stmt.name_location);
         } else if (const auto* id = dynamic_cast<const IdentifierExpr*>(stmt.value.get())) {
-            if (lookup_local(id->name) != nullptr && name_is_heap(id->name)) {
+            if (is_ref_parameter(id->name)) {
+                error(id->span.start, "Cannot move out of a ref",
+                      "`" + id->name + "` is a `ref`, so it cannot be moved out of.",
+                      "Mutate the place through the `ref`, or pass the `ref` along.");
+            } else if (lookup_local(id->name) != nullptr && name_is_heap(id->name)) {
                 moved_from = id->name;
                 moved_from_location = id->span.start;
             }
@@ -1241,6 +1271,14 @@ void Analyzer::analyze_say(const SayStmt& stmt) {
 }
 
 void Analyzer::analyze_give(const GiveStmt& stmt) {
+    if (const auto* id = stmt.value != nullptr ? dynamic_cast<const IdentifierExpr*>(stmt.value.get()) : nullptr) {
+        if (is_ref_parameter(id->name)) {
+            error(stmt.span.start, "Cannot give a ref",
+                  "`" + id->name + "` is a `ref` parameter, so it cannot be given.",
+                  "Give an owned value, or mutate the place through the `ref`.");
+            return;
+        }
+    }
     const Type type = analyze_expression(stmt.value.get());
     if (current_function_ == nullptr) {
         return;
@@ -1746,7 +1784,7 @@ Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
         for (std::size_t i = count; i < expr.arguments.size(); ++i) {
             analyze_expression(expr.arguments[i].get());
         }
-        own_move_call_args(expr);
+        own_call_args(expr, function);
         const Type result = function->return_type;
         if (result_used) {
             require_non_void(result, expr.callee_location,
@@ -1825,7 +1863,7 @@ Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
     for (std::size_t i = count; i < expr.arguments.size(); ++i) {
         analyze_expression(expr.arguments[i].get());
     }
-    own_move_call_args(expr);
+    own_call_args(expr, function);
 
     const Type result = function->return_type;
         if (result_used) {
@@ -2168,11 +2206,84 @@ void Analyzer::own_move_call_args(const CallExpr& expr) {
     }
 }
 
+bool Analyzer::is_ref_parameter(const std::string& name) const {
+    if (current_function_ == nullptr || current_function_->decl == nullptr) {
+        return false;
+    }
+    const FunctionDecl* decl = current_function_->decl;
+    for (std::size_t i = 0; i < decl->parameters.size(); ++i) {
+        if (decl->parameters[i] == name && i < decl->parameter_is_ref.size() && decl->parameter_is_ref[i]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string Analyzer::borrow_place_name(const Expr* expr) const {
+    if (expr == nullptr) {
+        return {};
+    }
+    if (const auto* id = dynamic_cast<const IdentifierExpr*>(expr)) {
+        return id->name;
+    }
+    if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
+        return borrow_place_name(field->object.get());
+    }
+    return {};
+}
+
+void Analyzer::borrow_argument(const Expr* expr, std::unordered_set<std::string>& borrowed) {
+    if (expr == nullptr) {
+        return;
+    }
+    const std::string place = borrow_place_name(expr);
+    if (place.empty() || lookup_local(place) == nullptr) {
+        error(expr->span.start, "Cannot borrow a temporary",
+              "A `ref` argument must be a local, a parameter, or a record field.",
+              "Pass a name, for example `increment(n)`.");
+        return;
+    }
+    if (borrowed.contains(place)) {
+        error(expr->span.start, "Overlapping borrow",
+              "`" + place + "` is already borrowed by this call.",
+              "Pass each place as a `ref` at most once, or copy first.");
+        return;
+    }
+    own_check_read(place, expr->span.start);
+    borrowed.insert(place);
+}
+
+void Analyzer::own_call_args(const CallExpr& expr, FunctionSymbol* callee) {
+    std::unordered_set<std::string> borrowed;
+    const std::size_t count = expr.arguments.size();
+    for (std::size_t i = 0; i < count; ++i) {
+        const bool is_ref = callee != nullptr && i < callee->param_is_ref.size() && callee->param_is_ref[i];
+        if (is_ref) {
+            borrow_argument(expr.arguments[i].get(), borrowed);
+        } else {
+            const std::string place = borrow_place_name(expr.arguments[i].get());
+            if (!place.empty() && borrowed.contains(place) && name_is_heap(place)) {
+                error(expr.arguments[i]->span.start, "Cannot move while borrowed",
+                      "`" + place + "` is borrowed, so it cannot be moved.",
+                      "Finish the `ref` call before moving this value.");
+            } else {
+                consume_heap_expr(expr.arguments[i].get());
+            }
+        }
+    }
+}
+
 void Analyzer::consume_heap_expr(const Expr* expr) {
     if (expr == nullptr) {
         return;
     }
     if (const auto* id = dynamic_cast<const IdentifierExpr*>(expr)) {
+        if (is_ref_parameter(id->name)) {
+            error(id->span.start, "Cannot move out of a ref",
+                  "`" + id->name + "` is a `ref`, so it cannot be moved out of.",
+                  "Mutate the place through the `ref`, or pass the `ref` along.");
+            return;
+        }
         if (lookup_local(id->name) != nullptr && name_is_heap(id->name)) {
             own_move(id->name, id->span.start);
         }
@@ -2233,7 +2344,10 @@ bool Analyzer::expect_type(Type actual, Type expected, SourceLocation location, 
 
 void Analyzer::error(SourceLocation location, std::string title, std::string detail, std::string suggestion) {
     const bool ownership_title = title == "Use after move" || title == "Cannot move inside repeat" ||
-                                 title == "Cannot move out of record field" || title == "Cannot move out of list element";
+                                 title == "Cannot move out of record field" || title == "Cannot move out of list element" ||
+                                 title == "Overlapping borrow" || title == "Cannot borrow a temporary" ||
+                                 title == "Cannot give a ref" || title == "Cannot move out of a ref" ||
+                                 title == "Cannot move while borrowed";
     if (ownership_pass_ != ownership_title) {
         return;
     }
@@ -2243,7 +2357,10 @@ void Analyzer::error(SourceLocation location, std::string title, std::string det
 void Analyzer::error(SourceLocation location, std::string title, std::string detail, std::string suggestion,
                      std::vector<DiagnosticNote> notes) {
     const bool ownership_title = title == "Use after move" || title == "Cannot move inside repeat" ||
-                                 title == "Cannot move out of record field" || title == "Cannot move out of list element";
+                                 title == "Cannot move out of record field" || title == "Cannot move out of list element" ||
+                                 title == "Overlapping borrow" || title == "Cannot borrow a temporary" ||
+                                 title == "Cannot give a ref" || title == "Cannot move out of a ref" ||
+                                 title == "Cannot move while borrowed";
     if (ownership_pass_ != ownership_title) {
         return;
     }

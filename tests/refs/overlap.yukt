@@ -1,0 +1,9 @@
+create swap(a: ref integer, b: ref integer):
+    t = a
+    a = b
+    b = t
+
+create main:
+    n = 1
+    swap(n, n)
+    say n

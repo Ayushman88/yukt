@@ -142,11 +142,11 @@ Preserve 0.11 benchmarks (`benchmarks/results-0.11.json`). Do not overwrite them
 
 ## 0.13 — Memory and systems programming
 
-**Status: 0.13.1 Records implemented; tagged `v0.13.1` locally (not pushed). 0.13.2 Ownership is implemented on branch `yukt-0.13.2-ownership` (no `v0.13.2` tag). 0.13.3 has not started.** See `docs/YUKT_013_DESIGN.md`. Do not copy 0.13.3–0.13.6 into the language spec yet.
+**Status: 0.13.1 Records implemented; tagged `v0.13.1` locally (not pushed). 0.13.2 Ownership is implemented on branch `yukt-0.13.2-ownership` (no `v0.13.2` tag). 0.13.3 References is in progress on `yukt-0.13-series`.** See `docs/YUKT_013_DESIGN.md`. Do not copy 0.13.4–0.13.6 into the language spec yet.
 
 - Records (named structs) and field access — **implemented** (`0.13.1`)
 - Ownership: move of heap values, free when the owning frame returns (no GC) — **implemented** (`0.13.2`)
-- `ref` borrows; no raw pointers in YUKT source
+- `ref` borrows; no raw pointers in YUKT source — **in progress** (`0.13.3`)
 - `foreign` C functions with explicit types
 - Error values (`ok` / `fail`); traps stay for programmer bugs
 - Then `std/map`, `std/set`, `std/file`, `std/json` on those foundations

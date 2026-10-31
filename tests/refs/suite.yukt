@@ -1,0 +1,34 @@
+# Large 0.13.3 suite: mutate many places through refs, including pass-along.
+
+create increment(value: ref integer):
+    value = value + 1
+
+create add_n(value: ref integer, n):
+    repeat i in 1..n:
+        increment(value)
+
+create bump_point(x: ref integer, unused):
+    increment(x)
+
+record Point:
+    x: integer
+    y: integer
+
+create main:
+    total = 0
+    xs = zeros(10000)
+    repeat i in 0..9999:
+        xs[i] = i
+        n = xs[i]
+        add_n(n, 3)
+        xs[i] = n
+        total = total + xs[i]
+
+    p = Point(0, 0)
+    bump_point(p.x, 0)
+    increment(p.y)
+    increment(p.y)
+
+    say total
+    say p.x
+    say p.y

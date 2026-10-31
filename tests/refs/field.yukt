@@ -1,0 +1,12 @@
+record Point:
+    x: integer
+    y: integer
+
+create increment(value: ref integer):
+    value = value + 1
+
+create main:
+    p = Point(1, 2)
+    increment(p.x)
+    say p.x
+    say p.y

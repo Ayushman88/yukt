@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(yukt VERSION 0.13.2 LANGUAGES C CXX)
+project(yukt VERSION 0.13.3 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -215,3 +215,21 @@ add_test(NAME stdlib_str_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/stdlib/s
 add_test(NAME stdlib_all_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/stdlib/all_modules.yukt)
 add_test(NAME records_basic_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/records/basic.yukt)
 add_test(NAME records_import_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/records/import/app.yukt)
+
+add_executable(yukt_ref_tests tests/refs/ref_tests.cpp)
+target_link_libraries(yukt_ref_tests PRIVATE yukt_backend yukt_runtime)
+target_include_directories(yukt_ref_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_compile_definitions(yukt_ref_tests PRIVATE
+    YUKT_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    YUKT_EXECUTABLE="$<TARGET_FILE:yukt>"
+    YUKT_RUNTIME_LIB="$<TARGET_FILE:yukt_runtime>"
+)
+if(NOT LLVM_ENABLE_RTTI)
+    target_compile_options(yukt_ref_tests PRIVATE -fno-rtti)
+endif()
+if(APPLE AND DEFINED LLVM_LIBRARY_DIR)
+    target_link_options(yukt_ref_tests PRIVATE "-Wl,-rpath,${LLVM_LIBRARY_DIR}")
+endif()
+add_test(NAME yukt_ref_tests COMMAND yukt_ref_tests)
+add_dependencies(yukt_ref_tests yukt)
+add_test(NAME refs_suite_run COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/refs/suite.yukt)

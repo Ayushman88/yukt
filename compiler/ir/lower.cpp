@@ -774,6 +774,7 @@ private:
     IrValue lower_unary(const UnaryExpr& expr);
     IrValue lower_binary(const BinaryExpr& expr);
     IrValue lower_call(const CallExpr& expr);
+    IrValue lower_addr(const Expr* expr);
     IrValue lower_list(const ListExpr& expr);
     IrValue lower_index(const IndexExpr& expr);
 
@@ -877,6 +878,7 @@ void Lowerer::lower_function(const FunctionDecl& function) {
     ir_fn.return_type = return_found != semantic_.return_types.end() ? ir_type_from(return_found->second) : ir_void();
 
     const auto params_found = semantic_.parameter_types.find(ir_name);
+    const auto refs_found = semantic_.parameter_refs.find(ir_name);
     for (std::size_t i = 0; i < function.parameters.size(); ++i) {
         IrType type = ir_i64();
         if (params_found != semantic_.parameter_types.end() && i < params_found->second.size()) {
@@ -884,6 +886,9 @@ void Lowerer::lower_function(const FunctionDecl& function) {
         }
         ir_fn.params.emplace_back(function.parameters[i], type);
         ir_fn.locals.emplace_back(function.parameters[i], type);
+        const char is_ref =
+            refs_found != semantic_.parameter_refs.end() && i < refs_found->second.size() ? refs_found->second[i] : 0;
+        ir_fn.param_is_ref.push_back(is_ref);
     }
 
     const auto locals_found = semantic_.local_types.find(ir_name);
@@ -906,9 +911,10 @@ void Lowerer::lower_function(const FunctionDecl& function) {
 
     owned_.clear();
     seq_footer_ = {};
-    for (const auto& param : function_->params) {
-        if (owns_heap(param.second)) {
-            owned_.insert(param.first);
+    for (std::size_t i = 0; i < function_->params.size(); ++i) {
+        const bool is_ref = i < function_->param_is_ref.size() && function_->param_is_ref[i];
+        if (!is_ref && owns_heap(function_->params[i].second)) {
+            owned_.insert(function_->params[i].first);
         }
     }
 
@@ -2055,8 +2061,15 @@ IrValue Lowerer::lower_call(const CallExpr& expr) {
     IrInst inst;
     inst.op = IrOp::Call;
     inst.name = std::move(ir_name);
-    for (const auto& argument : expr.arguments) {
-        inst.args.push_back(lower_expression(argument.get()));
+    const auto refs_found = semantic_.parameter_refs.find(inst.name);
+    for (std::size_t i = 0; i < expr.arguments.size(); ++i) {
+        const bool is_ref =
+            refs_found != semantic_.parameter_refs.end() && i < refs_found->second.size() && refs_found->second[i];
+        if (is_ref) {
+            inst.args.push_back(lower_addr(expr.arguments[i].get()));
+        } else {
+            inst.args.push_back(lower_expression(expr.arguments[i].get()));
+        }
     }
     inst.dest = make_temp(type_of(&expr));
     emit(inst);
@@ -2315,13 +2328,40 @@ void Lowerer::emit_path_exit() {
     finish_return(default_return_value());
 }
 
+IrValue Lowerer::lower_addr(const Expr* expr) {
+    IrInst inst;
+    inst.op = IrOp::Addr;
+    if (const auto* id = dynamic_cast<const IdentifierExpr*>(expr)) {
+        inst.name = rewrite_name(id->name);
+        inst.dest = make_temp(type_of_name(inst.name));
+        emit(inst);
+        return inst.dest;
+    }
+    if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
+        if (const auto* object = dynamic_cast<const IdentifierExpr*>(field->object.get())) {
+            inst.name = rewrite_name(object->name);
+            inst.field_index = field_index_of(type_of_name(inst.name).record_id, field->field);
+            inst.dest = make_temp(type_of(expr));
+            emit(inst);
+            return inst.dest;
+        }
+    }
+    return lower_expression(expr);
+}
+
 void Lowerer::note_user_call_moves(const CallExpr& expr) {
     const auto found = semantic_.call_ir_names.find(&expr);
     if (found == semantic_.call_ir_names.end() || is_stdlib_runtime_ir(found->second)) {
         return;
     }
-    for (const auto& argument : expr.arguments) {
-        if (const auto* id = dynamic_cast<const IdentifierExpr*>(argument.get())) {
+    const auto refs_found = semantic_.parameter_refs.find(found->second);
+    for (std::size_t i = 0; i < expr.arguments.size(); ++i) {
+        const bool is_ref =
+            refs_found != semantic_.parameter_refs.end() && i < refs_found->second.size() && refs_found->second[i];
+        if (is_ref) {
+            continue;
+        }
+        if (const auto* id = dynamic_cast<const IdentifierExpr*>(expr.arguments[i].get())) {
             owned_.erase(id->name);
         }
     }

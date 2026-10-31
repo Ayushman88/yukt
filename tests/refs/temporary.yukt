@@ -1,0 +1,6 @@
+create increment(value: ref integer):
+    value = value + 1
+
+create main:
+    increment(1 + 2)
+    say 1

@@ -50,7 +50,7 @@ const yukt::Token* first_kind(const std::vector<yukt::Token>& tokens, yukt::Toke
 
 int main() {
     {
-        const auto result = lex("create say if otherwise repeat in give true false use share as record name\n");
+        const auto result = lex("create say if otherwise repeat in give true false use share as record ref name\n");
         REQUIRE(!result.diagnostics.has_errors());
         REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwCreate));
         REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwSay));
@@ -65,6 +65,7 @@ int main() {
         REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwShare));
         REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwAs));
         REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwRecord));
+        REQUIRE(contains_kind(result.tokens, yukt::TokenKind::KwRef));
         const auto* ident = first_kind(result.tokens, yukt::TokenKind::Identifier);
         REQUIRE(ident != nullptr);
         REQUIRE(ident != nullptr && ident->lexeme == "name");
