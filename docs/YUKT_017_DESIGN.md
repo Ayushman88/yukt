@@ -1,6 +1,6 @@
 # YUKT 0.17 design — Coordination and networking
 
-Status: **accepted (human freeze 2026-11-01).** Specified, not implemented at section level. Process I/O versus start and channels are implemented (0.17.1). TCP, HTTP, and mutex remain specified, not implemented. Language law is `docs/LANGUAGE_SPEC.md` § 0.17 and `docs/STDLIB_SPEC.md` (`std/sync`, `std/net`, `std/http`). This file remains the rationale.
+Status: **accepted (human freeze 2026-11-01).** Specified, not implemented at section level. Process I/O versus start, channels, and POSIX TCP are implemented (0.17.1). HTTP and mutex remain specified, not implemented. Language law is `docs/LANGUAGE_SPEC.md` § 0.17 and `docs/STDLIB_SPEC.md` (`std/sync`, `std/net`, `std/http`). This file remains the rationale.
 
 0.17 adds **no new reserved words**. Surface lives in `std/sync`, `std/net`, and `std/http`. `start` / `wait` / `task[T]` stay exactly as 0.14.1.
 
