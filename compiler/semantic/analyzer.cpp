@@ -2694,6 +2694,41 @@ Type Analyzer::analyze_stdlib_call(FunctionSymbol& function, const CallExpr& exp
                     "`" + display + "` expects a string separator.", "Pass a non-empty string.");
         return finish(list_type(string_type()));
     }
+    if (ir == "std$str$trim" || ir == "std$str$trim_left" || ir == "std$str$trim_right" || ir == "std$str$lower" ||
+        ir == "std$str$upper") {
+        require_arity(1);
+        expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a string.", "Pass a string.");
+        return finish(string_type());
+    }
+    if (ir == "std$str$replace") {
+        require_arity(3);
+        expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a string.", "Pass a string.");
+        expect_type(analyze_arg(1), string_type(), arg_location(1), "Type mismatch",
+                    "`" + display + "` expects a string pattern.", "Pass a string.");
+        expect_type(analyze_arg(2), string_type(), arg_location(2), "Type mismatch",
+                    "`" + display + "` expects a string replacement.", "Pass a string.");
+        return finish(string_type());
+    }
+    if (ir == "std$str$to_int_status" || ir == "std$str$to_float_status") {
+        require_arity(1);
+        expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a string.", "Pass a string.");
+        return finish(integer_type());
+    }
+    if (ir == "std$str$to_int_unchecked") {
+        require_arity(1);
+        expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a string.", "Pass a string.");
+        return finish(integer_type());
+    }
+    if (ir == "std$str$to_float_unchecked") {
+        require_arity(1);
+        expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a string.", "Pass a string.");
+        return finish(float_type());
+    }
     if (ir == "std$list$len") {
         require_arity(1);
         Type elem = types_.fresh_variable();

@@ -133,8 +133,10 @@ bool call_name_allocates(const std::string& qualifier, const std::string& callee
         return true;
     }
     if (callee == "ok" || callee == "fail" || callee == "std$list$copy" || callee == "std$list$slice" ||
-        callee == "std$list$append" || callee == "std$str$concat" || callee == "std$str$slice" ||
+        callee == "std$list$append" ||         callee == "std$str$concat" || callee == "std$str$slice" ||
         callee == "std$str$repeat" || callee == "std$str$join" || callee == "std$str$split" ||
+        callee == "std$str$trim" || callee == "std$str$trim_left" || callee == "std$str$trim_right" ||
+        callee == "std$str$replace" || callee == "std$str$lower" || callee == "std$str$upper" ||
         callee == "std$map$new" || callee == "std$set$new" || callee == "std$json$parse_unchecked" ||
         callee == "std$file$read_unchecked" || callee == "std$io$program" || callee == "std$io$args" ||
         callee == "std$io$read_line_unchecked" || callee == "std$io$read_all_unchecked" ||
@@ -145,7 +147,9 @@ bool call_name_allocates(const std::string& qualifier, const std::string& callee
     return qualified == "list.copy" || qualified == "list.slice" || qualified == "list.append" ||
            qualified == "str.concat" ||
            qualified == "str.slice" || qualified == "str.repeat" || qualified == "str.join" ||
-           qualified == "str.split" || qualified == "map.new" || qualified == "set.new" ||
+           qualified == "str.split" || qualified == "str.trim" || qualified == "str.trim_left" ||
+           qualified == "str.trim_right" || qualified == "str.replace" || qualified == "str.lower" ||
+           qualified == "str.upper" || qualified == "map.new" || qualified == "set.new" ||
            qualified == "json.parse" || qualified == "file.read" || qualified == "io.program" ||
            qualified == "io.args" || qualified == "io.read_line" || qualified == "io.read_all" ||
            qualified == "env.get" || qualified == "env.get_or";

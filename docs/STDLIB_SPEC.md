@@ -1,6 +1,6 @@
 # YUKT standard library API contract
 
-Status: **now-gated modules implemented** (`std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`). 0.13 modules remain specified only. **0.16.1** `list.append` / `remove` / `pop` are implemented. **0.16.2** `std/io` and `std/env` are implemented. See `docs/STDLIB_IMPLEMENTATION_REPORT.md` and `docs/LANGUAGE_SPEC.md` § 0.16.1 and § 0.16.2.
+Status: **now-gated modules implemented** (`std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`). 0.13 modules remain specified only. **0.16.1** `list.append` / `remove` / `pop` are implemented. **0.16.2** `std/io` and `std/env` are implemented. **0.16.3** richer strings (`trim` / `replace` / `lower` / `upper` / `to_int` / `to_float`) are **specified, not implemented**. See `docs/STDLIB_IMPLEMENTATION_REPORT.md` and `docs/LANGUAGE_SPEC.md` § 0.16.1, § 0.16.2, and § 0.16.3.
 
 This file is the source of truth for **stdlib APIs**. `docs/LANGUAGE_SPEC.md` remains the source of truth for syntax. If this document needs a new type, keyword, or operator, that change belongs in the language spec first.
 
@@ -53,7 +53,7 @@ Until 0.13 specifies an error type in the language spec:
 
 | Path | Alias | Gate | Role |
 | --- | --- | --- | --- |
-| `std/str` | `str` | now | Byte-string helpers |
+| `std/str` | `str` | now | Byte-string helpers; 0.16.3 richer strings specified, not implemented |
 | `std/list` | `list` | now | List helpers, including 0.16.1 `append` / `remove` / `pop` |
 | `std/sort` | `sort` | now | In-place sort and binary search |
 | `std/math` | `math` | now | Scalar math |
@@ -99,10 +99,18 @@ Empty string `""` is a valid argument. A null C pointer is not a YUKT value; the
 | `str.repeat(s, n)` | string | yes | **trap** if `n < 0` | `n` copies of `s` concatenated. `n == 0` gives `""`. |
 | `str.join(parts, sep)` | string | yes | **trap** if `parts` is not `list[string]` | Concatenate elements with `sep` between them. Empty list gives `""`. One element gives that element with no `sep`. |
 | `str.split(s, sep)` | list[string] | yes | **trap** if `sep` is `""` | Split on non-overlapping occurrences of `sep`. Allocates a list whose length is `1 +` number of separators. `"a,b,"` split on `","` gives three strings, last empty. |
+| `str.trim(s)` | string | yes | — | **0.16.3 specified.** New string; drop leading and trailing ASCII whitespace (`0x20`, `0x09`, `0x0A`, `0x0B`, `0x0C`, `0x0D`). See `LANGUAGE_SPEC` § 0.16.3. |
+| `str.trim_left(s)` | string | yes | — | **0.16.3 specified.** Leading only. Same whitespace set. |
+| `str.trim_right(s)` | string | yes | — | **0.16.3 specified.** Trailing only. Same whitespace set. |
+| `str.replace(s, old, new)` | string | yes | **trap** `empty replace pattern` if `old` is `""` | **0.16.3 specified.** Every non-overlapping `old`, left to right. Empty `new` deletes matches. `str.replace("aaa", "aa", "b")` is `"ba"`. |
+| `str.lower(s)` | string | yes | — | **0.16.3 specified.** ASCII `A-Z` → `a-z`. Other bytes unchanged. |
+| `str.upper(s)` | string | yes | — | **0.16.3 specified.** ASCII `a-z` → `A-Z`. Other bytes unchanged. |
+| `str.to_int(s)` | result[integer] | no | `fail("bad_int")` | **0.16.3 specified.** Trim, optional ASCII sign, then digits. Whole remainder must be that literal. Overflow and junk fail. |
+| `str.to_float(s)` | result[float] | no | `fail("bad_float")` | **0.16.3 specified.** Trim, then C `strtod` in the C locale on the whole remainder. NaN/Inf text and overflow fail. |
 
 `==` / `!=` on strings stay language operators. `+` stays language concat. Do not add `str.concat`; use `+`.
 
-No `to_upper` / Unicode case folding in this contract (byte strings, not characters).
+0.16.3 adds the eight rows above. They are **specified, not implemented**. No Unicode case folding, no UTF-8 decode, no regex, no interpolation, and no `s[i]`. `join` / `split` / `find` / `at` / `slice` are unchanged.
 
 ## `std/list` — now
 
@@ -208,6 +216,14 @@ No variance/stddev in this contract (easy to add later; omit rather than undersp
 | `env.get_or(name, fallback)` | string | maybe | trap if empty name | fallback if unset |
 | `env.set(name, value)` | void | no | trap if empty name | `setenv` |
 | `env.has(name)` | boolean | no | trap if empty name | `getenv != NULL` |
+
+## 0.16.3 — richer strings
+
+**Status: specified, not implemented.** Language surface: [`docs/LANGUAGE_SPEC.md`](LANGUAGE_SPEC.md) § 0.16.3. No new reserved words. No string index syntax. Programs keep `use std/str`.
+
+The eight new rows are in the `std/str` table above. Existing `len` / `at` / `slice` / `find` / `contains` / `starts` / `ends` / `repeat` / `join` / `split` rows are unchanged.
+
+Arguments are borrowed. String results are new Owned allocations and stay sequential in `repeat`. Empty `replace` pattern traps; `to_int` / `to_float` use `fail("bad_int")` / `fail("bad_float")`. Strings stay NUL-terminated bytes. No regex, UTF-8 decoding, or interpolation.
 
 ## `std/map` — 0.13
 

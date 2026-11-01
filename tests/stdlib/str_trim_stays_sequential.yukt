@@ -1,0 +1,8 @@
+use std/str
+
+create main:
+    s = " x "
+    n = 0
+    repeat i in 1..8:
+        n = n + str.len(str.trim(s))
+    say n

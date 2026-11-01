@@ -49,6 +49,18 @@ int8_t yukt_str_ends(const char* s, const char* sub);
 char* yukt_str_repeat(const char* s, int64_t n);
 char* yukt_str_join(const YuktList* parts, const char* sep);
 YuktList* yukt_str_split(const char* s, const char* sep);
+char* yukt_str_trim(const char* s);
+char* yukt_str_trim_left(const char* s);
+char* yukt_str_trim_right(const char* s);
+char* yukt_str_replace(const char* s, const char* old, const char* new_text);
+char* yukt_str_lower(const char* s);
+char* yukt_str_upper(const char* s);
+int64_t yukt_str_to_int(const char* s, int64_t* ok);
+double yukt_str_to_float(const char* s, int64_t* ok);
+int64_t yukt_str_to_int_status(const char* s);
+int64_t yukt_str_to_int_unchecked(const char* s);
+int64_t yukt_str_to_float_status(const char* s);
+double yukt_str_to_float_unchecked(const char* s);
 
 YuktList* yukt_list_copy(const YuktList* src);
 void yukt_list_fill_i64(YuktList* dest, int64_t value);

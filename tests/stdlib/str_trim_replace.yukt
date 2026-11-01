@@ -1,0 +1,21 @@
+use std/str
+
+create main:
+    say str.trim("  hi\n")
+    say str.replace("aa", "a", "b")
+    say str.trim_left("  hi  ")
+    say str.trim_right("  hi  ")
+    say str.trim("  hello  world  ")
+    say str.trim("")
+    say str.trim("   \t\n")
+    say str.lower("ABC")
+    say str.upper("abc")
+    say str.lower("Straße")
+    say str.replace("abab", "a", "")
+    say str.replace("aaa", "aa", "b")
+    say str.replace("x", "y", "z")
+    say str.replace("", "x", "y")
+    s = "  stay  "
+    t = str.trim(s)
+    say t
+    say s

@@ -398,6 +398,16 @@ void LlvmEmitter::declare_runtime() {
     runtime_["yukt_str_repeat"] = module_.getOrInsertFunction("yukt_str_repeat", ptr, ptr, i64);
     runtime_["yukt_str_join"] = module_.getOrInsertFunction("yukt_str_join", ptr, ptr, ptr);
     runtime_["yukt_str_split"] = module_.getOrInsertFunction("yukt_str_split", ptr, ptr, ptr);
+    runtime_["yukt_str_trim"] = module_.getOrInsertFunction("yukt_str_trim", ptr, ptr);
+    runtime_["yukt_str_trim_left"] = module_.getOrInsertFunction("yukt_str_trim_left", ptr, ptr);
+    runtime_["yukt_str_trim_right"] = module_.getOrInsertFunction("yukt_str_trim_right", ptr, ptr);
+    runtime_["yukt_str_replace"] = module_.getOrInsertFunction("yukt_str_replace", ptr, ptr, ptr, ptr);
+    runtime_["yukt_str_lower"] = module_.getOrInsertFunction("yukt_str_lower", ptr, ptr);
+    runtime_["yukt_str_upper"] = module_.getOrInsertFunction("yukt_str_upper", ptr, ptr);
+    runtime_["yukt_str_to_int_status"] = module_.getOrInsertFunction("yukt_str_to_int_status", i64, ptr);
+    runtime_["yukt_str_to_int_unchecked"] = module_.getOrInsertFunction("yukt_str_to_int_unchecked", i64, ptr);
+    runtime_["yukt_str_to_float_status"] = module_.getOrInsertFunction("yukt_str_to_float_status", i64, ptr);
+    runtime_["yukt_str_to_float_unchecked"] = module_.getOrInsertFunction("yukt_str_to_float_unchecked", f64, ptr);
     runtime_["yukt_list_copy"] = module_.getOrInsertFunction("yukt_list_copy", ptr, ptr);
     runtime_["yukt_list_fill_i64"] = module_.getOrInsertFunction("yukt_list_fill_i64", void_ty, ptr, i64);
     runtime_["yukt_list_fill_f64"] = module_.getOrInsertFunction("yukt_list_fill_f64", void_ty, ptr, f64);
@@ -1165,6 +1175,36 @@ llvm::Value* LlvmEmitter::emit_stdlib_call(const IrInst& inst) {
     }
     if (name == "std$str$split") {
         return call_runtime("yukt_str_split", {args.at(0), args.at(1)});
+    }
+    if (name == "std$str$trim") {
+        return call_runtime("yukt_str_trim", {args.at(0)});
+    }
+    if (name == "std$str$trim_left") {
+        return call_runtime("yukt_str_trim_left", {args.at(0)});
+    }
+    if (name == "std$str$trim_right") {
+        return call_runtime("yukt_str_trim_right", {args.at(0)});
+    }
+    if (name == "std$str$replace") {
+        return call_runtime("yukt_str_replace", {args.at(0), args.at(1), args.at(2)});
+    }
+    if (name == "std$str$lower") {
+        return call_runtime("yukt_str_lower", {args.at(0)});
+    }
+    if (name == "std$str$upper") {
+        return call_runtime("yukt_str_upper", {args.at(0)});
+    }
+    if (name == "std$str$to_int_status") {
+        return call_runtime("yukt_str_to_int_status", {args.at(0)});
+    }
+    if (name == "std$str$to_int_unchecked") {
+        return call_runtime("yukt_str_to_int_unchecked", {args.at(0)});
+    }
+    if (name == "std$str$to_float_status") {
+        return call_runtime("yukt_str_to_float_status", {args.at(0)});
+    }
+    if (name == "std$str$to_float_unchecked") {
+        return call_runtime("yukt_str_to_float_unchecked", {args.at(0)});
     }
     if (name == "std$list$len") {
         return call_runtime("yukt_list_len", {args.at(0)});

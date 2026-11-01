@@ -1,9 +1,9 @@
 # YUKT Language Specification
 
-Version: 0.14.1 (released as `v0.14.1`) plus **0.16.1 growing lists (implemented; not released)** plus **0.16.2 stdin / argv / environment (implemented; not released)**. `v0.13.1` exists locally and is not pushed. `v0.13.6` is `eb42a0a`. 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`. 0.15 is stabilization in `docs/YUKT_015_DESIGN.md` and adds no syntax.  
-Status: 0.12 language plus **records** ([0.13.1 — Records](#0131--records)), **ownership** ([0.13.2 — Ownership](#0132--ownership)), **references** ([0.13.3 — References](#0133--references)), **foreign C** ([0.13.4 — Foreign C](#0134--foreign-c)), **errors** ([0.13.5 — Errors](#0135--errors)), **stdlib expansion** ([0.13.6 — Stdlib](#0136--stdlib)), **CPU tasks** ([0.14.1 — CPU tasks](#0141--cpu-tasks)), **growing lists** ([0.16.1 — Growing lists](#0161--growing-lists)), and **standard input and environment** ([0.16.2 — Standard input and environment](#0162--standard-input-and-environment)). Numerical semantics for signed overflow and float rounding are unchanged.
+Version: 0.14.1 (released as `v0.14.1`) plus **0.16.1 growing lists (implemented; not released)** plus **0.16.2 stdin / argv / environment (implemented; not released)** plus **0.16.3 richer strings (specified; not implemented)**. `v0.13.1` exists locally and is not pushed. `v0.13.6` is `eb42a0a`. 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`. 0.15 is stabilization in `docs/YUKT_015_DESIGN.md` and adds no syntax.  
+Status: 0.12 language plus **records** ([0.13.1 — Records](#0131--records)), **ownership** ([0.13.2 — Ownership](#0132--ownership)), **references** ([0.13.3 — References](#0133--references)), **foreign C** ([0.13.4 — Foreign C](#0134--foreign-c)), **errors** ([0.13.5 — Errors](#0135--errors)), **stdlib expansion** ([0.13.6 — Stdlib](#0136--stdlib)), **CPU tasks** ([0.14.1 — CPU tasks](#0141--cpu-tasks)), **growing lists** ([0.16.1 — Growing lists](#0161--growing-lists)), **standard input and environment** ([0.16.2 — Standard input and environment](#0162--standard-input-and-environment)), and **richer strings** ([0.16.3 — Richer strings](#0163--richer-strings)). Numerical semantics for signed overflow and float rounding are unchanged.
 
-This document is the source of truth for YUKT syntax. **0.13.1 through 0.14.1 are implemented.** **0.16.1 growing lists are implemented** in the compiler, runtime, and `std/list`. **0.16.2 stdin / argv / environment are implemented** in the runtime, `std/io`, `std/env`, and `yukt run` argv forwarding. For implemented slices, if the compiler and this file disagree, that is a bug. Design notes: `docs/YUKT_016_DESIGN.md`.
+This document is the source of truth for YUKT syntax. **0.13.1 through 0.14.1 are implemented.** **0.16.1 growing lists are implemented** in the compiler, runtime, and `std/list`. **0.16.2 stdin / argv / environment are implemented** in the runtime, `std/io`, `std/env`, and `yukt run` argv forwarding. **0.16.3 richer strings are specified only** in this file and `docs/STDLIB_SPEC.md`; they are not implemented. For implemented slices, if the compiler and this file disagree, that is a bug. Design notes: `docs/YUKT_016_DESIGN.md`.
 
 ## Design
 
@@ -1432,4 +1432,133 @@ Stdin is process-global. Two `start` tasks that both `read_line` have no defined
 ### What this is not
 
 No `read` keyword. No `input()`. No prompt builtin. No `env.unset`. No `cwd` / `chdir` (those need their own spec). No Windows environment block.
+
+## 0.16.3 — Richer strings
+
+**Status: specified, not implemented.** No new reserved words. No string indexing syntax. Programs write `use std/str`.
+
+This slice adds eight `std/str` calls. It does not change `str.len` / `str.at` / `str.slice` / `str.find` / `str.contains` / `str.starts` / `str.ends` / `str.repeat` / `str.join` / `str.split`, their trap rules, or their byte-offset meaning. API rows live in `docs/STDLIB_SPEC.md`. This section freezes user-visible rules a later implementer must not invent.
+
+```yukt
+use std/str
+
+create main:
+    t = str.trim("  Hi\n")
+    n = str.to_int("  42  ")
+    if n.ok:
+        say n.value
+```
+
+### Exact API
+
+| Call | Gives | Behavior |
+| --- | --- | --- |
+| `str.trim(s)` | string | New string without leading and trailing ASCII whitespace. |
+| `str.trim_left(s)` | string | Leading ASCII whitespace only. |
+| `str.trim_right(s)` | string | Trailing ASCII whitespace only. |
+| `str.replace(s, old, new)` | string | Replace every non-overlapping `old`, left to right. Empty `old` **traps** `empty replace pattern`. |
+| `str.lower(s)` | string | ASCII `A-Z` → `a-z`. Other bytes unchanged. |
+| `str.upper(s)` | string | ASCII `a-z` → `A-Z`. Other bytes unchanged. |
+| `str.to_int(s)` | `result[integer]` | Trim, then optional ASCII `+` / `-`, then one or more ASCII digits. Overflow, leftover junk, or empty-after-trim is `fail("bad_int")`. |
+| `str.to_float(s)` | `result[float]` | Trim, then C `strtod` in the C locale on the whole remainder. Leftover junk, empty-after-trim, NaN, or ±Inf is `fail("bad_float")`. |
+
+There is no `str.concat` (use `+`). There is no replace-first, replace-count, regex, interpolation, UTF-8 decode, code-point API, or grapheme API.
+
+### Bytes, not Unicode
+
+Strings remain the compiler’s NUL-terminated byte strings. Indices stay **byte offsets**, 0-based. 0.16.3 does not decode, validate, or walk UTF-8. Multibyte sequences are opaque bytes.
+
+ASCII whitespace for `trim` / `trim_left` / `trim_right`, and for the trim step of `to_int` / `to_float`, is exactly these six bytes:
+
+| Byte | Escape |
+| --- | --- |
+| `0x20` | space |
+| `0x09` | `\t` |
+| `0x0A` | `\n` |
+| `0x0B` | `\v` |
+| `0x0C` | `\f` |
+| `0x0D` | `\r` |
+
+No other byte is whitespace here, including `0xA0` and UTF-8 `C2 A0` (NBSP). Interior whitespace is kept. `trim("  hello  world  ")` is `"hello  world"`. An all-whitespace argument becomes `""`.
+
+`str.lower` maps only `A-Z` (`0x41`–`0x5A`) to `a-z`. `str.upper` maps only `a-z` (`0x61`–`0x7A`) to `A-Z`. Every other byte is copied unchanged, including UTF-8 continuation and lead bytes. `"ABC"` → `"abc"`. `"Straße"` keeps `ß`. There is no locale case map and no Unicode case folding.
+
+### Ownership and allocation
+
+Every argument is a **borrow**. After `t = str.trim(s)`, `s` stays Owned. Results that are strings are **new Owned** buffers. They do not alias the argument payload.
+
+String-returning `str.*` allocate (size-class string cache), including identity cases: `str.trim("x")`, `str.lower("x")`, and `str.replace("x", "y", "z")` (no match) each copy. They must not run inside a compiler-parallelized `repeat` (same rule as `str.slice` / `+`). Allocation failure **traps** (`out of memory`); that is not `fail`.
+
+`to_int` and `to_float` borrow `s` and return `result[T]`. They do not allocate a string from `s`. The `ok` payload is a scalar. The `fail` payload is the 0.13.5 error whose `code` is `"bad_int"` or `"bad_float"`. An unused `result` is still a compile error.
+
+### Indexing and slicing
+
+There is no `s[i]` and no string slice syntax. `str.at` / `str.slice` / `str.find` stay byte offsets with the trap and miss rules already in `docs/STDLIB_SPEC.md`:
+
+- `str.at(s, i)` **traps** if `i < 0` or `i >= str.len(s)`
+- `str.slice(s, start, end)` **traps** if `start < 0`, `end < start`, or `end > str.len(s)`
+- `str.find(s, sub)` still returns `-1` on a miss; `str.find(s, "")` is still `0`
+
+0.16.3 does not change those messages or meanings.
+
+### `str.replace`
+
+Scan `s` left to right. At each index, if the remaining suffix begins with `old`, emit `new` and skip `str.len(old)` bytes (non-overlapping). Otherwise emit that one byte and advance by one. Do not search inside `new`.
+
+- Empty `old` **traps** `empty replace pattern`. This is not `fail`.
+- Empty `new` deletes matches: `str.replace("abab", "a", "")` is `"bb"`.
+- `str.replace("aaa", "aa", "b")` is `"ba"` (not `"bb"`).
+- No match returns a newly allocated copy of `s`.
+- `str.replace("", "x", "y")` is `""`.
+
+### `str.to_int`
+
+1. Let `input` be `str.trim(s)` (ASCII whitespace above).
+2. If `input` is `""`, `fail("bad_int")`.
+3. Optionally consume one leading ASCII `+` or `-`. `+` is sign +1. `-` is sign −1. A second sign is junk.
+4. The remainder must be one or more ASCII digits `0-9` and nothing else. `"42abc"`, `"42.0"`, `"0x10"`, `"+ 42"`, and `"++1"` are `fail("bad_int")`.
+5. The signed value must fit in signed 64-bit integer: `-9223372036854775808` through `9223372036854775807`. Outside that range is `fail("bad_int")`, not integer overflow UB.
+6. Otherwise `ok(value)`. Leading zeros are allowed: `"007"` is `ok(7)`. `"+42"` is `ok(42)`. `"-0"` is `ok(0)`. `"+"` / `"-"` alone fail.
+
+The whole remaining string after trim must be that literal. A parser must not invoke signed overflow while reading the digits.
+
+### `str.to_float`
+
+1. Let `input` be `str.trim(s)` (same ASCII whitespace).
+2. If `input` is `""`, `fail("bad_float")`.
+3. Convert `input` with C `strtod` as in C99/C11, in the **C locale** (decimal point is `.`; do not use the process locale).
+4. If `strtod` reports no conversion, `fail("bad_float")`.
+5. If it does not consume every remaining byte (end pointer not at the NUL), leftover junk is `fail("bad_float")`. `"1.5xyz"` fails.
+6. If the converted value is NaN or ±Inf — including the texts `nan`, `NaN`, `inf`, `infinity` and signed forms, and overflow to `HUGE_VAL` — `fail("bad_float")`. NaN/Inf need a later spec; this slice rejects them.
+7. Otherwise `ok(value)`. Finite forms `strtod` accepts in the C locale are in, including `1.`, `.5`, `1e-3`, and C99 hex-floats such as `0x1p-2` when the whole string is consumed. Underflow to `0.0` is `ok(0.0)`.
+
+`"  1.5  "` trims to `"1.5"` and is `ok(1.5)`.
+
+### Errors
+
+| Situation | Outcome |
+| --- | --- |
+| Empty `replace` pattern | **trap** `empty replace pattern` |
+| `to_int` empty-after-trim, missing digits, leftover junk, or out of `i64` range | `fail("bad_int")` |
+| `to_float` empty-after-trim, no conversion, leftover junk, NaN, or ±Inf | `fail("bad_float")` |
+| New-string allocation failure | **trap** (`out of memory`) |
+
+Traps abort. They do not become `fail`. Parse failures are 0.13.5 values.
+
+### What this is not
+
+No new reserved words. No `s[i]`. No regex. No UTF-8 decoding. No interpolation or format strings. No Unicode whitespace trim. No Unicode case folding. No `str.concat`.
+
+### Regression gate (0.16.3, after implementation)
+
+These are the cases an implementation must pass. They are not test files in this task.
+
+- **Trim whitespace set.** Leading and trailing space / tab / `\n` / `\r` / `\f` / `\v` drop; interior spaces stay; all-whitespace and `""` become `""`; a non-ASCII byte such as UTF-8 NBSP is not trimmed.
+- **Replace.** Non-overlapping left-to-right: `str.replace("aaa", "aa", "b")` is `"ba"`. Empty `new` deletes matches. Empty `old` traps `empty replace pattern`. No match copies `s`.
+- **ASCII case vs other bytes.** `str.lower` / `str.upper` change only `A-Z` / `a-z`. Bytes `0x80`–`0xFF` and UTF-8 multibyte sequences are unchanged.
+- **`to_int`.** Trim then optional sign then digits. `"  +42  "` is `ok(42)`. `"42abc"`, `""`, `"+"`, and overflow (`9223372036854775808`, `-9223372036854775809`) are `fail("bad_int")`. `INT64_MIN` (`-9223372036854775808`) is `ok`.
+- **`to_float`.** Trim then whole-string C `strtod` in the C locale. `"  1.5  "` is `ok(1.5)`. `"1.5xyz"`, `""`, `nan`, `NaN`, `inf`, `+inf`, `-infinity`, and overflow-to-Inf are `fail("bad_float")`.
+- Existing `str.at` / `str.slice` / `str.find` / `str.split` trap and miss rules unchanged.
+- String-returning calls allocate; a `repeat` body that calls them stays sequential.
+- Do not overwrite `benchmarks/results-0.11.json`.
 

@@ -1,0 +1,4 @@
+use std/str
+
+create main:
+    str.to_int("1")

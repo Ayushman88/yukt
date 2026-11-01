@@ -215,6 +215,9 @@ std::string default_stdlib_root() {
 }
 
 bool is_stdlib_runtime_ir(const std::string& ir_name) {
+    if (ir_name == "std$str$to_int" || ir_name == "std$str$to_float") {
+        return false;
+    }
     if (ir_name.rfind("std$str$", 0) == 0 || ir_name.rfind("std$list$", 0) == 0 ||
         ir_name.rfind("std$sort$", 0) == 0 || ir_name.rfind("std$math$", 0) == 0) {
         return true;

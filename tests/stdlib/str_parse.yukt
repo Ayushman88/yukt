@@ -1,0 +1,52 @@
+use std/str
+
+create show_int(s):
+    r = str.to_int(s)
+    if r.ok:
+        say r.value
+    otherwise:
+        say r.error.code
+
+create show_float(s):
+    r = str.to_float(s)
+    if r.ok:
+        say r.value
+    otherwise:
+        say r.error.code
+
+create main:
+    r = str.to_int(" 42")
+    if r.ok:
+        say r.value
+    n = str.to_int("x")
+    if n.ok:
+        say n.value
+    otherwise:
+        say n.error.code
+    show_int("  +42  ")
+    show_int("007")
+    show_int("+42")
+    show_int("-0")
+    show_int("42abc")
+    show_int("")
+    show_int("+")
+    show_int("42.0")
+    show_int("0x10")
+    show_int("++1")
+    show_int("9223372036854775807")
+    show_int("9223372036854775808")
+    show_int("-9223372036854775808")
+    show_int("-9223372036854775809")
+    show_float("  1.5  ")
+    show_float("1e-3")
+    show_float("0x1p-2")
+    show_float("1.")
+    show_float(".5")
+    show_float("1.5xyz")
+    show_float("")
+    show_float("nan")
+    show_float("NaN")
+    show_float("inf")
+    show_float("+inf")
+    show_float("-infinity")
+    show_float("1e1000")

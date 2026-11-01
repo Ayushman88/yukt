@@ -1,12 +1,20 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include "yukt_runtime.h"
 
 #include <inttypes.h>
+#include <locale.h>
 #include <math.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__APPLE__)
+#include <xlocale.h>
+#endif
 
 #include <pthread.h>
 #include <unistd.h>
@@ -1274,6 +1282,236 @@ YuktList* yukt_str_split(const char* s, const char* sep) {
     }
     data[slot] = yukt_str_from_bytes(s + start, n - start);
     return list;
+}
+
+static int yukt_ascii_ws(unsigned char c) {
+    return c == 0x20 || c == 0x09 || c == 0x0A || c == 0x0B || c == 0x0C || c == 0x0D;
+}
+
+static const char* yukt_ascii_trim_view(const char* s, size_t* out_len) {
+    s = yukt_cstr(s);
+    size_t n = strlen(s);
+    size_t begin = 0;
+    while (begin < n && yukt_ascii_ws((unsigned char)s[begin])) {
+        begin += 1;
+    }
+    size_t end = n;
+    while (end > begin && yukt_ascii_ws((unsigned char)s[end - 1])) {
+        end -= 1;
+    }
+    *out_len = end - begin;
+    return s + begin;
+}
+
+char* yukt_str_trim(const char* s) {
+    size_t len = 0;
+    const char* view = yukt_ascii_trim_view(s, &len);
+    return yukt_str_from_bytes(view, len);
+}
+
+char* yukt_str_trim_left(const char* s) {
+    s = yukt_cstr(s);
+    const size_t n = strlen(s);
+    size_t begin = 0;
+    while (begin < n && yukt_ascii_ws((unsigned char)s[begin])) {
+        begin += 1;
+    }
+    return yukt_str_from_bytes(s + begin, n - begin);
+}
+
+char* yukt_str_trim_right(const char* s) {
+    s = yukt_cstr(s);
+    const size_t n = strlen(s);
+    size_t end = n;
+    while (end > 0 && yukt_ascii_ws((unsigned char)s[end - 1])) {
+        end -= 1;
+    }
+    return yukt_str_from_bytes(s, end);
+}
+
+char* yukt_str_replace(const char* s, const char* old, const char* new_text) {
+    s = yukt_cstr(s);
+    old = yukt_cstr(old);
+    new_text = yukt_cstr(new_text);
+    const size_t old_len = strlen(old);
+    if (old_len == 0) {
+        die("empty replace pattern");
+    }
+    const size_t n = strlen(s);
+    const size_t new_len = strlen(new_text);
+    size_t out_len = 0;
+    size_t i = 0;
+    while (i < n) {
+        if (i + old_len <= n && memcmp(s + i, old, old_len) == 0) {
+            if (out_len > SIZE_MAX - new_len) {
+                die("out of memory");
+            }
+            out_len += new_len;
+            i += old_len;
+        } else {
+            if (out_len == SIZE_MAX) {
+                die("out of memory");
+            }
+            out_len += 1;
+            i += 1;
+        }
+    }
+    if (out_len > SIZE_MAX - 1) {
+        die("out of memory");
+    }
+    char* out = yukt_str_alloc(out_len + 1);
+    size_t off = 0;
+    i = 0;
+    while (i < n) {
+        if (i + old_len <= n && memcmp(s + i, old, old_len) == 0) {
+            if (new_len > 0) {
+                memcpy(out + off, new_text, new_len);
+            }
+            off += new_len;
+            i += old_len;
+        } else {
+            out[off] = s[i];
+            off += 1;
+            i += 1;
+        }
+    }
+    out[out_len] = '\0';
+    return out;
+}
+
+char* yukt_str_lower(const char* s) {
+    s = yukt_cstr(s);
+    const size_t n = strlen(s);
+    char* out = yukt_str_from_bytes(s, n);
+    for (size_t i = 0; i < n; ++i) {
+        const unsigned char c = (unsigned char)out[i];
+        if (c >= 'A' && c <= 'Z') {
+            out[i] = (char)(c + ('a' - 'A'));
+        }
+    }
+    return out;
+}
+
+char* yukt_str_upper(const char* s) {
+    s = yukt_cstr(s);
+    const size_t n = strlen(s);
+    char* out = yukt_str_from_bytes(s, n);
+    for (size_t i = 0; i < n; ++i) {
+        const unsigned char c = (unsigned char)out[i];
+        if (c >= 'a' && c <= 'z') {
+            out[i] = (char)(c - ('a' - 'A'));
+        }
+    }
+    return out;
+}
+
+int64_t yukt_str_to_int(const char* s, int64_t* ok) {
+    size_t n = 0;
+    const char* p = yukt_ascii_trim_view(s, &n);
+    if (ok != NULL) {
+        *ok = 0;
+    }
+    if (n == 0) {
+        return 0;
+    }
+    size_t i = 0;
+    int neg = 0;
+    if (p[0] == '+' || p[0] == '-') {
+        neg = p[0] == '-';
+        i += 1;
+    }
+    if (i >= n) {
+        return 0;
+    }
+    const uint64_t limit = neg ? 9223372036854775808ULL : 9223372036854775807ULL;
+    uint64_t acc = 0;
+    for (; i < n; ++i) {
+        const unsigned char c = (unsigned char)p[i];
+        if (c < '0' || c > '9') {
+            return 0;
+        }
+        const uint64_t digit = (uint64_t)(c - '0');
+        if (acc > (limit - digit) / 10) {
+            return 0;
+        }
+        acc = acc * 10 + digit;
+    }
+    if (ok != NULL) {
+        *ok = 1;
+    }
+    if (neg) {
+        if (acc == 9223372036854775808ULL) {
+            return INT64_MIN;
+        }
+        return -(int64_t)acc;
+    }
+    return (int64_t)acc;
+}
+
+static double yukt_strtod_c(const char* s, char** end) {
+    static locale_t c_locale;
+    static int ready;
+    if (!ready) {
+        c_locale = newlocale(LC_NUMERIC_MASK, "C", (locale_t)0);
+        ready = 1;
+    }
+    if (c_locale != (locale_t)0) {
+        return strtod_l(s, end, c_locale);
+    }
+    const char* old = setlocale(LC_NUMERIC, NULL);
+    char saved[64];
+    saved[0] = '\0';
+    if (old != NULL) {
+        strncpy(saved, old, sizeof(saved) - 1);
+    }
+    setlocale(LC_NUMERIC, "C");
+    const double value = strtod(s, end);
+    if (saved[0] != '\0') {
+        setlocale(LC_NUMERIC, saved);
+    }
+    return value;
+}
+
+double yukt_str_to_float(const char* s, int64_t* ok) {
+    size_t n = 0;
+    const char* p = yukt_ascii_trim_view(s, &n);
+    if (ok != NULL) {
+        *ok = 0;
+    }
+    if (n == 0) {
+        return 0.0;
+    }
+    char* end = NULL;
+    const double value = yukt_strtod_c(p, &end);
+    if (end != p + n || !isfinite(value)) {
+        return 0.0;
+    }
+    if (ok != NULL) {
+        *ok = 1;
+    }
+    return value;
+}
+
+int64_t yukt_str_to_int_status(const char* s) {
+    int64_t ok = 0;
+    (void)yukt_str_to_int(s, &ok);
+    return ok ? 0 : 1;
+}
+
+int64_t yukt_str_to_int_unchecked(const char* s) {
+    int64_t ok = 0;
+    return yukt_str_to_int(s, &ok);
+}
+
+int64_t yukt_str_to_float_status(const char* s) {
+    int64_t ok = 0;
+    (void)yukt_str_to_float(s, &ok);
+    return ok ? 0 : 1;
+}
+
+double yukt_str_to_float_unchecked(const char* s) {
+    int64_t ok = 0;
+    return yukt_str_to_float(s, &ok);
 }
 
 static YuktList* yukt_list_clone_range(const YuktList* src, int64_t start, int64_t length) {

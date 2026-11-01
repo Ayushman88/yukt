@@ -40,3 +40,53 @@ share create join(parts, sep):
 share create split(s, sep):
     t = s + sep
     give [t]
+
+share create trim(s):
+    give s
+
+share create trim_left(s):
+    give s
+
+share create trim_right(s):
+    give s
+
+share create replace(s, old, new):
+    t = s + old + new
+    give t
+
+share create lower(s):
+    give s
+
+share create upper(s):
+    give s
+
+share create to_int_unchecked(s):
+    t = s + ""
+    give 0
+
+share create to_int_status(s):
+    t = s + ""
+    give 0
+
+share create to_float_unchecked(s):
+    t = s + ""
+    give 0.0
+
+share create to_float_status(s):
+    t = s + ""
+    give 0
+
+share create to_int(s):
+    st = to_int_status(s)
+    if st == 0:
+        give ok(to_int_unchecked(s))
+    otherwise:
+        give fail("bad_int")
+
+share create to_float(s):
+    st = to_float_status(s)
+    if st == 0:
+        give ok(to_float_unchecked(s))
+    otherwise:
+        give fail("bad_float")
+

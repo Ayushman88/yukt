@@ -4,8 +4,10 @@
 #include "yukt_runtime.h"
 
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <locale.h>
 #include <string>
 
 #ifndef YUKT_SOURCE_DIR
@@ -114,6 +116,54 @@ int main() {
 
     require_run("tests/stdlib/str_alias.yukt", "2\n1\n");
 
+    require_run("tests/stdlib/str_trim_replace.yukt",
+                "hi\n"
+                "bb\n"
+                "hi  \n"
+                "  hi\n"
+                "hello  world\n"
+                "\n"
+                "\n"
+                "abc\n"
+                "ABC\n"
+                "straße\n"
+                "bb\n"
+                "ba\n"
+                "x\n"
+                "\n"
+                "stay\n"
+                "  stay  \n");
+    require_run("tests/stdlib/str_parse.yukt",
+                "42\n"
+                "bad_int\n"
+                "42\n"
+                "7\n"
+                "42\n"
+                "0\n"
+                "bad_int\n"
+                "bad_int\n"
+                "bad_int\n"
+                "bad_int\n"
+                "bad_int\n"
+                "bad_int\n"
+                "9223372036854775807\n"
+                "bad_int\n"
+                "-9223372036854775808\n"
+                "bad_int\n"
+                "1.5\n"
+                "0.001\n"
+                "0.25\n"
+                "1\n"
+                "0.5\n"
+                "bad_float\n"
+                "bad_float\n"
+                "bad_float\n"
+                "bad_float\n"
+                "bad_float\n"
+                "bad_float\n"
+                "bad_float\n"
+                "bad_float\n");
+
     require_run("tests/stdlib/list_basic.yukt",
                 "0\n"
                 "0\n"
@@ -214,6 +264,7 @@ int main() {
     require_trap("tests/stdlib/str_trap_slice.yukt");
     require_trap("tests/stdlib/str_trap_repeat.yukt");
     require_trap("tests/stdlib/str_trap_split.yukt");
+    require_trap_message("tests/stdlib/str_trap_replace.yukt", "empty replace pattern");
     require_trap("tests/stdlib/list_trap_slice.yukt");
     require_trap("tests/stdlib/stat_trap_empty.yukt");
     require_trap("tests/stdlib/stat_trap_mean.yukt");
@@ -233,10 +284,84 @@ int main() {
         REQUIRE(result.diagnostics->has_errors());
         REQUIRE(has_title(result, "Type mismatch"));
     }
+    {
+        auto result = load_file("tests/stdlib/type_unused_to_int.yukt");
+        REQUIRE(result.diagnostics->has_errors());
+        REQUIRE(has_title(result, "Unused result"));
+    }
 
     {
         REQUIRE(yukt_str_len("") == 0);
         REQUIRE(yukt_str_len(nullptr) == 0);
+        char* trimmed = yukt_str_trim(" \t\n\v\f\rhi \t\n\v\f\r");
+        REQUIRE(std::strcmp(trimmed, "hi") == 0);
+        char* interior = yukt_str_trim("  hello  world  ");
+        REQUIRE(std::strcmp(interior, "hello  world") == 0);
+        char* empty_ws = yukt_str_trim(" \t\n\v\f\r");
+        REQUIRE(std::strcmp(empty_ws, "") == 0);
+        const char a0[] = {'\xA0', 'h', 'i', '\xA0', 0};
+        char* not_nbsp = yukt_str_trim(a0);
+        REQUIRE(std::strcmp(not_nbsp, a0) == 0);
+        const char utf8_nbsp[] = "\xC2\xA0hi\xC2\xA0";
+        char* keep_nbsp = yukt_str_trim(utf8_nbsp);
+        REQUIRE(std::strcmp(keep_nbsp, utf8_nbsp) == 0);
+        const char* identity_in = "x";
+        char* identity = yukt_str_trim(identity_in);
+        REQUIRE(std::strcmp(identity, "x") == 0);
+        REQUIRE(identity != identity_in);
+        const char raw[] = {'A', '\x80', 'a', '\xFF', 0};
+        char* lowered = yukt_str_lower(raw);
+        REQUIRE((unsigned char)lowered[0] == 'a');
+        REQUIRE((unsigned char)lowered[1] == 0x80);
+        REQUIRE((unsigned char)lowered[2] == 'a');
+        REQUIRE((unsigned char)lowered[3] == 0xFF);
+        char* raised = yukt_str_upper(raw);
+        REQUIRE((unsigned char)raised[0] == 'A');
+        REQUIRE((unsigned char)raised[1] == 0x80);
+        REQUIRE((unsigned char)raised[2] == 'A');
+        REQUIRE((unsigned char)raised[3] == 0xFF);
+        char* street = yukt_str_lower("Straße");
+        REQUIRE(std::strcmp(street, "straße") == 0);
+        char* replaced = yukt_str_replace("aaa", "aa", "b");
+        REQUIRE(std::strcmp(replaced, "ba") == 0);
+        char* deleted = yukt_str_replace("abab", "a", "");
+        REQUIRE(std::strcmp(deleted, "bb") == 0);
+        char* copied = yukt_str_replace("x", "y", "z");
+        REQUIRE(std::strcmp(copied, "x") == 0);
+        int64_t parse_ok = 0;
+        REQUIRE(yukt_str_to_int("  +42  ", &parse_ok) == 42);
+        REQUIRE(parse_ok == 1);
+        REQUIRE(yukt_str_to_int("-9223372036854775808", &parse_ok) == INT64_MIN);
+        REQUIRE(parse_ok == 1);
+        REQUIRE(yukt_str_to_int("9223372036854775808", &parse_ok) == 0);
+        REQUIRE(parse_ok == 0);
+        REQUIRE(yukt_str_to_int("-9223372036854775809", &parse_ok) == 0);
+        REQUIRE(parse_ok == 0);
+        REQUIRE(yukt_str_to_float("  1.5  ", &parse_ok) == 1.5);
+        REQUIRE(parse_ok == 1);
+        REQUIRE(yukt_str_to_float("1e-3", &parse_ok) == 0.001);
+        REQUIRE(parse_ok == 1);
+        REQUIRE(yukt_str_to_float("0x1p-2", &parse_ok) == 0.25);
+        REQUIRE(parse_ok == 1);
+        REQUIRE(yukt_str_to_float("1.5xyz", &parse_ok) == 0.0);
+        REQUIRE(parse_ok == 0);
+        REQUIRE(yukt_str_to_float("nan", &parse_ok) == 0.0);
+        REQUIRE(parse_ok == 0);
+        REQUIRE(yukt_str_to_float("inf", &parse_ok) == 0.0);
+        REQUIRE(parse_ok == 0);
+        REQUIRE(yukt_str_to_float("+inf", &parse_ok) == 0.0);
+        REQUIRE(parse_ok == 0);
+        REQUIRE(yukt_str_to_float("-infinity", &parse_ok) == 0.0);
+        REQUIRE(parse_ok == 0);
+        REQUIRE(yukt_str_to_float("1e1000", &parse_ok) == 0.0);
+        REQUIRE(parse_ok == 0);
+        if (setlocale(LC_NUMERIC, "de_DE.UTF-8") != nullptr || setlocale(LC_NUMERIC, "de_DE") != nullptr) {
+            REQUIRE(yukt_str_to_float("1.5", &parse_ok) == 1.5);
+            REQUIRE(parse_ok == 1);
+            REQUIRE(yukt_str_to_float("1,5", &parse_ok) == 0.0);
+            REQUIRE(parse_ok == 0);
+            setlocale(LC_NUMERIC, "C");
+        }
         REQUIRE(yukt_str_find("abc", "") == 0);
         REQUIRE(yukt_str_contains("abc", "") == 1);
         REQUIRE(yukt_str_starts("", "") == 1);
@@ -405,6 +530,19 @@ int main() {
         REQUIRE(result.explanation.find("planned: sequential") != std::string::npos);
         REQUIRE(result.llvm_ir.find("yukt_parallel_for") == std::string::npos);
     }
+
+    {
+        auto frontend = yukt::analyze_file(source_path("tests/stdlib/str_trim_stays_sequential.yukt"));
+        yukt::analyze_types(frontend);
+        yukt::CompileRequest request;
+        request.action = yukt::CompileAction::Explain;
+        request.input_path = source_path("tests/stdlib/str_trim_stays_sequential.yukt");
+        const auto result = yukt::compile_program(frontend, request, *frontend.diagnostics);
+        REQUIRE_MSG(result.ok, result.explanation);
+        REQUIRE(result.explanation.find("planned: sequential") != std::string::npos);
+        REQUIRE(result.llvm_ir.find("yukt_parallel_for") == std::string::npos);
+    }
+    require_run("tests/stdlib/str_trim_stays_sequential.yukt", "8\n");
 
     require_run("tests/suite013/all.yukt",
                 "2\n"
