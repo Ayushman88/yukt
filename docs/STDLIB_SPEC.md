@@ -1,6 +1,6 @@
 # YUKT standard library API contract
 
-Status: **now-gated modules implemented** (`std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`). 0.13 modules remain specified only. **0.16.1** `list.append` / `remove` / `pop` are implemented. **0.16.2** `std/io` and `std/env` are implemented. **0.16.3** richer strings (`trim` / `replace` / `lower` / `upper` / `to_int` / `to_float`) are **implemented**. **0.17.1** `std/sync` channels and `std/net` POSIX TCP are **implemented** (mutex deferred). **0.17** `std/http` remains **specified, not implemented** (gate is not `now`). See `docs/STDLIB_IMPLEMENTATION_REPORT.md` and `docs/LANGUAGE_SPEC.md` § 0.16.1, § 0.16.2, § 0.16.3, and § 0.17.
+Status: **now-gated modules implemented** (`std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`). 0.13 modules remain specified only. **0.16.1** `list.append` / `remove` / `pop` are implemented. **0.16.2** `std/io` and `std/env` are implemented. **0.16.3** richer strings (`trim` / `replace` / `lower` / `upper` / `to_int` / `to_float`) are **implemented**. **0.17.1** `std/sync` channels, `std/net` POSIX TCP, and `std/http` HTTP/1.1 are **implemented** (mutex deferred). See `docs/STDLIB_IMPLEMENTATION_REPORT.md` and `docs/LANGUAGE_SPEC.md` § 0.16.1, § 0.16.2, § 0.16.3, and § 0.17.
 
 This file is the source of truth for **stdlib APIs**. `docs/LANGUAGE_SPEC.md` remains the source of truth for syntax. If this document needs a new type, keyword, or operator, that change belongs in the language spec first.
 
@@ -64,7 +64,7 @@ Until 0.13 specifies an error type in the language spec:
 | `std/env` | `env` | now | 0.16.2 environment |
 | `std/sync` | `sync` | 0.17 | Channels implemented (0.17.1); mutex specified, deferred / not 0.17.1 |
 | `std/net` | `net` | 0.17 | POSIX TCP implemented (0.17.1) |
-| `std/http` | `http` | 0.17 | HTTP/1.1 client and server |
+| `std/http` | `http` | 0.17 | HTTP/1.1 client and server implemented (0.17.1) |
 | `std/array` | `array` | 0.13 | Distinct array type (stack or sized); 0.12 lists are not arrays |
 | `std/map` | `map` | 0.13 | Associative map |
 | `std/set` | `set` | 0.13 | Unique keys |
@@ -234,7 +234,7 @@ Arguments are borrowed. String results are new Owned allocations and stay sequen
 
 ## 0.17 — `std/sync`, `std/net`, `std/http`
 
-**Status: specified, not implemented** at section level. `std/sync` channels and `std/net` POSIX TCP are implemented (0.17.1). Mutex and `std/http` remain specified, not implemented. Language surface: [`docs/LANGUAGE_SPEC.md`](LANGUAGE_SPEC.md) § 0.17. Gate is **0.17**, not **now**. No new reserved words. `http.serve` / `http.serve_on` are special callee-name forms.
+**Status: 0.17.1 implemented** (`std/sync` channels, `std/net` POSIX TCP, `std/http` HTTP/1.1). Mutex remains specified, deferred. Language surface: [`docs/LANGUAGE_SPEC.md`](LANGUAGE_SPEC.md) § 0.17. Gate is **0.17**, not **now**. No new reserved words. `http.serve` / `http.serve_on` are special callee-name forms.
 
 ### `std/sync` — 0.17 (channels implemented 0.17.1; mutex deferred)
 
@@ -274,9 +274,9 @@ Address is one string: `127.0.0.1:8080`, `[::1]:8080`, or `localhost:8080`. Host
 
 `start` may take a `conn` or `listener` by move. A `repeat` body that calls `net.*` is not planned-parallel. Listen backlog is implementation, not language.
 
-### `std/http` — 0.17
+### `std/http` — 0.17 (implemented 0.17.1)
 
-Programs write `use std/http`. HTTP/1.1 over `std/net`. No TLS (`https` is `fail("io")`). No HTTP/2. No chunked transfer. No keepalive.
+HTTP/1.1 is **implemented (0.17.1)**. Programs write `use std/http`. HTTP/1.1 over `std/net`. No TLS (`https` is `fail("io")`). No HTTP/2. No chunked transfer. No keepalive.
 
 Shared records in `std/http` (positional constructors, declaration order):
 
@@ -418,4 +418,4 @@ After this spec is accepted, implement **only** gate **now**, in this order:
 4. `std/math`
 5. `std/stat`
 
-Stop. Do not start map, set, array, file, json, or error until 0.13 (or a language-spec change) unblocks them. `std/sync` channels and `std/net` POSIX TCP are implemented (0.17.1). Do not start `std/http` until its 0.17.1 tasks; it is specified, not tagged **now**. Mutex remains deferred.
+Stop. Do not start map, set, array, file, json, or error until 0.13 (or a language-spec change) unblocks them. `std/sync` channels, `std/net` POSIX TCP, and `std/http` HTTP/1.1 are implemented (0.17.1). Mutex remains deferred.

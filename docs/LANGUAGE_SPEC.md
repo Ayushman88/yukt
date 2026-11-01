@@ -1,9 +1,9 @@
 # YUKT Language Specification
 
-Version: 0.14.1 (released as `v0.14.1`) plus **0.16.1 growing lists (implemented; not released)** plus **0.16.2 stdin / argv / environment (implemented; not released)** plus **0.16.3 richer strings (implemented; not released)** plus **0.17 coordination and networking (specified, not implemented)**. `v0.13.1` exists locally and is not pushed. `v0.13.6` is `eb42a0a`. 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`. 0.15 is stabilization in `docs/YUKT_015_DESIGN.md` and adds no syntax.  
+Version: 0.14.1 (released as `v0.14.1`) plus **0.16.1 growing lists (implemented; not released)** plus **0.16.2 stdin / argv / environment (implemented; not released)** plus **0.16.3 richer strings (implemented; not released)** plus **0.17.1 coordination and networking (implemented; mutex deferred; not released)**. `v0.13.1` exists locally and is not pushed. `v0.13.6` is `eb42a0a`. 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`. 0.15 is stabilization in `docs/YUKT_015_DESIGN.md` and adds no syntax.  
 Status: 0.12 language plus **records** ([0.13.1 — Records](#0131--records)), **ownership** ([0.13.2 — Ownership](#0132--ownership)), **references** ([0.13.3 — References](#0133--references)), **foreign C** ([0.13.4 — Foreign C](#0134--foreign-c)), **errors** ([0.13.5 — Errors](#0135--errors)), **stdlib expansion** ([0.13.6 — Stdlib](#0136--stdlib)), **CPU tasks** ([0.14.1 — CPU tasks](#0141--cpu-tasks)), **growing lists** ([0.16.1 — Growing lists](#0161--growing-lists)), **standard input and environment** ([0.16.2 — Standard input and environment](#0162--standard-input-and-environment)), **richer strings** ([0.16.3 — Richer strings](#0163--richer-strings)), and **coordination and networking** ([0.17 — Coordination and networking](#017--coordination-and-networking)). Numerical semantics for signed overflow and float rounding are unchanged.
 
-This document is the source of truth for YUKT syntax. **0.13.1 through 0.14.1 are implemented.** **0.16.1 growing lists are implemented** in the compiler, runtime, and `std/list`. **0.16.2 stdin / argv / environment are implemented** in the runtime, `std/io`, `std/env`, and `yukt run` argv forwarding. **0.16.3 richer strings are implemented** in the runtime, `std/str`, analyzer, and LLVM lowering. **0.17 is specified, not implemented** at section level. Process I/O versus start, channels, and POSIX TCP are implemented (0.17.1). HTTP and mutex remain specified, not implemented. For implemented slices, if the compiler and this file disagree, that is a bug. Design notes: `docs/YUKT_016_DESIGN.md` (0.16). `docs/YUKT_017_DESIGN.md` is the accepted 0.17 rationale; language law is this file and `docs/STDLIB_SPEC.md`.
+This document is the source of truth for YUKT syntax. **0.13.1 through 0.14.1 are implemented.** **0.16.1 growing lists are implemented** in the compiler, runtime, and `std/list`. **0.16.2 stdin / argv / environment are implemented** in the runtime, `std/io`, `std/env`, and `yukt run` argv forwarding. **0.16.3 richer strings are implemented** in the runtime, `std/str`, analyzer, and LLVM lowering. **0.17.1 is implemented** (process I/O rules, channels, POSIX TCP, HTTP/1.1). Mutex remains specified, deferred. For implemented slices, if the compiler and this file disagree, that is a bug. Design notes: `docs/YUKT_016_DESIGN.md` (0.16). `docs/YUKT_017_DESIGN.md` is the accepted 0.17 rationale; language law is this file and `docs/STDLIB_SPEC.md`.
 
 ## Design
 
@@ -19,7 +19,7 @@ YUKT is an English-inspired, statically typed, compiled language. The first synt
 - `if` / `otherwise` choose a branch
 - `ok` / `fail` construct `result[T]` (0.13.5)
 - `start` / `wait` and `task[T]` run a function on the host pool (0.14.1)
-- 0.17 adds no reserved words; channels and POSIX TCP (implemented, 0.17.1) and HTTP live in `std/sync`, `std/net`, and `std/http` (HTTP specified, not implemented)
+- 0.17 adds no reserved words; channels, POSIX TCP, and HTTP/1.1 (implemented, 0.17.1) live in `std/sync`, `std/net`, and `std/http` (mutex specified, deferred)
 
 The compiler does not invent additional syntax beyond this document.
 
@@ -1565,7 +1565,7 @@ These are the cases an implementation must pass. They are not test files in this
 
 ## 0.17 — Coordination and networking
 
-**Status: specified, not implemented** at section level. Process I/O versus start, channels, and POSIX TCP are implemented (0.17.1). HTTP and mutex remain specified, not implemented. This section is language law for 0.17. API rows live in `docs/STDLIB_SPEC.md` (`std/sync`, `std/net`, `std/http`). Rationale: `docs/YUKT_017_DESIGN.md` (accepted 2026-11-01).
+**Status: 0.17.1 implemented** (process I/O rules, channels, POSIX TCP, HTTP/1.1). Mutex remains specified, deferred. Rationale: `docs/YUKT_017_DESIGN.md`. This section is language law for 0.17. API rows live in `docs/STDLIB_SPEC.md` (`std/sync`, `std/net`, `std/http`). Rationale: `docs/YUKT_017_DESIGN.md` (accepted 2026-11-01).
 
 0.17 adds **no new reserved words**. Surface lives in `std/sync`, `std/net`, and `std/http`. `start` / `wait` / `task[T]` stay exactly as [0.14.1](#0141--cpu-tasks). A `ref` still cannot cross `start`.
 
@@ -1864,7 +1864,9 @@ A `repeat` body that calls `net.*` allocates or blocks and is not planned-parall
 | `say` of `conn` / `listener` | `Type mismatch` |
 | `net.read` with non-integer `max` | `Type mismatch` |
 
-### HTTP (0.17.1)
+### HTTP (0.17.1) — implemented.
+
+HTTP/1.1 is implemented (0.17.1).
 
 `use std/http`. HTTP/1.1 over the TCP above. No TLS (`https` is `fail("io")`). No HTTP/2. No chunked transfer. No keepalive: the server closes after one response; `http.get` sends `Connection: close` and reads one response.
 
