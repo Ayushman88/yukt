@@ -1,0 +1,127 @@
+name: 0.15 Ubuntu 15-run
+
+# Native ubuntu-24.04 x86-64. Checksums and metadata only.
+# GitHub-hosted runners are not a publication host (docs/BENCHMARK_METHOD_015.md §2, §10).
+on:
+  workflow_dispatch:
+
+jobs:
+  linux-x86-64:
+    name: Ubuntu x86-64 15-run (publication false)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Record host and toolchain
+        run: |
+          echo "=== host ==="
+          uname -srm
+          nproc
+          lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -1
+          echo "=== compilers ==="
+          clang --version | head -1
+          clang++ --version | head -1
+          rustc --version
+          go version || true
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build clang llvm-dev zlib1g-dev golang-go rustc
+
+      - name: Configure
+        run: |
+          LLVM_CMAKE="$(llvm-config --cmakedir 2>/dev/null || true)"
+          if [ -z "$LLVM_CMAKE" ]; then
+            LLVM_CMAKE="$(ls -d /usr/lib/llvm-*/lib/cmake/llvm 2>/dev/null | tail -1)"
+          fi
+          cmake -G Ninja -S . -B build -DLLVM_DIR="$LLVM_CMAKE"
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: 0.15 15-run (publication false)
+        env:
+          BENCH_RUNS: "15"
+          YUKT_BENCH_PUBLICATION: "false"
+          YUKT_BENCH_SUITE: "0.15"
+        run: |
+          CLANG="$(command -v clang)"
+          export YUKT_CLANG="$CLANG"
+          if [ -x "$(dirname "$CLANG")/clang++" ]; then
+            export CXX="$(dirname "$CLANG")/clang++"
+          else
+            export CXX="$(command -v clang++)"
+          fi
+          echo "YUKT_CLANG=$YUKT_CLANG"
+          echo "CXX=$CXX"
+          "$YUKT_CLANG" --version | head -1
+          "$CXX" --version | head -1
+          python3 benches/run.py --suite=0.15 --publication=false
+
+      - name: Validate CI result file
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("benchmarks/results-0.15.ci-linux-x86-64.json")
+          if not path.exists():
+              raise SystemExit(f"missing {path}")
+          data = json.loads(path.read_text(encoding="utf-8"))
+          errors = []
+          if data.get("publication") is not False:
+              errors.append("publication must be false on GitHub Actions")
+          if data.get("runs") != 15:
+              errors.append(f"runs={data.get('runs')} want 15")
+          if data.get("host_id") != "linux-x86-64":
+              errors.append(f"host_id={data.get('host_id')}")
+          if not data.get("cpu"):
+              errors.append("cpu metadata missing")
+          if not data.get("kernel"):
+              errors.append("kernel metadata missing")
+          clang = data.get("clang_path") or ""
+          cxx = (data.get("compiler_flags") or {}).get("cpp") or ""
+          if "clang++" not in cxx:
+              errors.append("C++ compiler is not clang++")
+          for kernel in data.get("kernels") or []:
+              if kernel.get("class") == "compute":
+                  if kernel.get("checksum_match") is not True:
+                      errors.append(f"{kernel.get('name')} checksum mismatch")
+                  for key, rec in kernel.items():
+                      if isinstance(rec, dict) and "runs" in rec and len(rec["runs"]) != 15:
+                          errors.append(f"{kernel.get('name')} {key} n={len(rec['runs'])}")
+                  if kernel.get("name") == "parallel":
+                      groups = set((kernel.get("comparisons") or {}).keys())
+                      if groups != {"seq", "auto_par", "explicit_thread"}:
+                          errors.append(f"parallel groups {groups}")
+              else:
+                  for cls, entry in (kernel.get("classes") or {}).items():
+                      if entry.get("checksum_match") is not True:
+                          errors.append(f"{kernel.get('name')} class {cls} checksum mismatch")
+                      runs = None
+                      for key, rec in entry.items():
+                          if isinstance(rec, dict) and "runs" in rec:
+                              runs = rec["runs"]
+                              if len(runs) != 15:
+                                  errors.append(f"{kernel.get('name')} {cls} {key} n={len(runs)}")
+          if data.get("usability", {}).get("ok") is not True:
+              errors.append("usability failed")
+          if errors:
+              raise SystemExit("validation failed:\n- " + "\n- ".join(errors))
+          print(f"validated {path} publication=false runs=15 checksums ok")
+          PY
+          git diff --quiet HEAD -- benchmarks/results-0.11.json
+          echo "results-0.11.json unchanged"
+
+      - name: Upload CI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-0.15.ci-linux-x86-64
+          path: |
+            benchmarks/results-0.15.ci-linux-x86-64.json
+            benchmarks/results-0.15.json
+          if-no-files-found: error
