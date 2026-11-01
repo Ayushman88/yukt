@@ -186,7 +186,7 @@ Do not implement a whole version in one task. Spec → plan → code → tests, 
 
 Finish line: a developer comfortably builds a CLI, JSON API client, HTTP server, and concurrent file processor — not a longer keyword list.
 
-**Next objective:** write the 0.17.1 implementation plan (channels, process I/O rules, TCP, HTTP/1.1). Do not start compiler or runtime. Mutex is specified and deferred (not 0.17.1). Do not start 0.18.
+**Next objective:** POSIX TCP (`std/net`). Do not start HTTP until the TCP both-host gate. Mutex is specified and deferred (not 0.17.1). Do not start 0.18.
 
 ## 0.16 — Practical language (phase 1)
 
@@ -203,10 +203,10 @@ HTTP syntax in design sketches is illustrative only and belongs to 0.17.
 
 ## 0.17 — Concurrency and networking (phase 2)
 
-**Status: specified, not implemented.** Language law: `docs/LANGUAGE_SPEC.md` § 0.17 and `docs/STDLIB_SPEC.md` (`std/sync`, `std/net`, `std/http`). Rationale: `docs/YUKT_017_DESIGN.md` (accepted 2026-11-01). Process I/O versus `start` is implemented (0.17.1 D-IO). Next authorized coding objective is channels. Mutex is specified and deferred (not 0.17.1). GPU stays off this path.
+**Status: specified, not implemented** at section level. Process I/O versus `start` and channels are implemented (0.17.1). Language law: `docs/LANGUAGE_SPEC.md` § 0.17 and `docs/STDLIB_SPEC.md` (`std/sync`, `std/net`, `std/http`). Rationale: `docs/YUKT_017_DESIGN.md` (accepted 2026-11-01). Next authorized coding objective is POSIX TCP. Mutex is specified and deferred (not 0.17.1). GPU stays off this path.
 
 - Process I/O versus `start` (origin-thread stdin, env lock, say lock) (**implemented**, 0.17.1 D-IO)
-- Channels (`sync.channel` / `receiver` / `send` / `recv` / `close`)
+- Channels (`sync.channel` / `receiver` / `send` / `recv` / `close`) (**implemented**, 0.17.1)
 - POSIX TCP (`std/net`)
 - HTTP/1.1 client and server (`std/http`)
 - Mutex API specified, deferred — not a 0.17.1 ship-gate

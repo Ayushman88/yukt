@@ -1,6 +1,6 @@
 # YUKT 0.17 design — Coordination and networking
 
-Status: **accepted (human freeze 2026-11-01).** Specified, not implemented. Language law is `docs/LANGUAGE_SPEC.md` § 0.17 and `docs/STDLIB_SPEC.md` (`std/sync`, `std/net`, `std/http`). This file remains the rationale. Do not implement compiler or runtime from this file.
+Status: **accepted (human freeze 2026-11-01).** Specified, not implemented at section level. Process I/O versus start and channels are implemented (0.17.1). TCP, HTTP, and mutex remain specified, not implemented. Language law is `docs/LANGUAGE_SPEC.md` § 0.17 and `docs/STDLIB_SPEC.md` (`std/sync`, `std/net`, `std/http`). This file remains the rationale.
 
 0.17 adds **no new reserved words**. Surface lives in `std/sync`, `std/net`, and `std/http`. `start` / `wait` / `task[T]` stay exactly as 0.14.1.
 
@@ -99,7 +99,9 @@ This lock is not a user mutex. It does not authorize sharing other state.
 
 ---
 
-## 2. Channels first (0.17.1 ship-gate)
+## 2. Channels first (0.17.1 ship-gate) — implemented.
+
+Channels are implemented (0.17.1).
 
 **[D-CH] frozen.** Coordination across `start` is by **moving** values through two owned ends. There is no shared list, no shared mutex, and no `sync.shared`.
 
