@@ -40,6 +40,7 @@ struct FunctionSymbol {
     Type return_type = void_type();
     bool saw_give = false;
     std::vector<LocalBinding> locals;
+    std::vector<std::string> callees;
 };
 
 enum class ConstraintKind {
@@ -107,6 +108,7 @@ private:
     void analyze_if(const IfStmt& stmt);
     void analyze_repeat(const RepeatStmt& stmt);
     void reject_start_in_parallel_repeat(const RepeatStmt& stmt);
+    void reject_stdin_from_start();
     Type analyze_expression(const Expr* expr);
     Type analyze_expression_body(const Expr* expr);
     Type analyze_unary(const UnaryExpr& expr);
@@ -248,6 +250,7 @@ SemanticInfo Analyzer::run() {
     resolve_record_fields();
     compute_record_layouts();
     analyze_functions();
+    reject_stdin_from_start();
     intern_all_result_layouts();
     check_shared_signatures();
     check_constraints();
@@ -1218,6 +1221,7 @@ void Analyzer::require_main() {
 
 void Analyzer::analyze_function(FunctionSymbol& function) {
     current_function_ = &function;
+    function.callees.clear();
     scopes_.clear();
     own_.clear();
     loop_protected_.clear();
@@ -1914,6 +1918,71 @@ void Analyzer::reject_start_in_parallel_repeat(const RepeatStmt& stmt) {
     }
 }
 
+bool is_stdin_reader_ir(const std::string& ir_name) {
+    return ir_name == "std$io$read_line" || ir_name == "std$io$read_all" ||
+           ir_name == "std$io$read_line_unchecked" || ir_name == "std$io$read_line_status" ||
+           ir_name == "std$io$read_all_unchecked" || ir_name == "std$io$read_all_status";
+}
+
+void Analyzer::reject_stdin_from_start() {
+    auto reads_stdin = [&](const FunctionSymbol& started) {
+        std::unordered_set<std::string> seen;
+        std::vector<const FunctionSymbol*> stack;
+        stack.push_back(&started);
+        while (!stack.empty()) {
+            const FunctionSymbol* function = stack.back();
+            stack.pop_back();
+            if (function == nullptr || !seen.insert(function->ir_name).second) {
+                continue;
+            }
+            if (is_stdin_reader_ir(function->ir_name)) {
+                return true;
+            }
+            for (const auto& callee : function->callees) {
+                if (is_stdin_reader_ir(callee)) {
+                    return true;
+                }
+                const auto found = functions_.find(callee);
+                if (found != functions_.end()) {
+                    stack.push_back(found->second.get());
+                }
+            }
+        }
+        return false;
+    };
+
+    const int module_count = graph_ == nullptr ? 1 : static_cast<int>(graph_->modules.size());
+    for (int module_index = 0; module_index < module_count; ++module_index) {
+        const Program* program = module_program(module_index);
+        if (program == nullptr) {
+            continue;
+        }
+        for (const auto& function : program->functions) {
+            if (function == nullptr) {
+                continue;
+            }
+            for (const auto& stmt : function->body) {
+                each_start_stmt(stmt.get(), [&](const StartExpr& start) {
+                    const auto ir_found = start_ir_names_.find(&start);
+                    if (ir_found == start_ir_names_.end()) {
+                        return;
+                    }
+                    const auto fn_found = functions_.find(ir_found->second);
+                    if (fn_found == functions_.end() || fn_found->second == nullptr) {
+                        return;
+                    }
+                    if (!reads_stdin(*fn_found->second)) {
+                        return;
+                    }
+                    error(start.callee_location, "Cannot read stdin from a started function",
+                          "`start " + start.callee + "` cannot run a function that reads stdin.",
+                          "Read stdin on the origin thread, or pass the line in as an argument.");
+                });
+            }
+        }
+    }
+}
+
 Type Analyzer::analyze_expression(const Expr* expr) {
     const Type result = analyze_expression_body(expr);
     if (expr != nullptr) {
@@ -2321,6 +2390,9 @@ Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
             return analyze_stdlib_call(*function, expr, result_used);
         }
         call_ir_names_[&expr] = function->ir_name;
+        if (current_function_ != nullptr && !function->ir_name.empty()) {
+            current_function_->callees.push_back(function->ir_name);
+        }
         if (expr.arguments.size() != function->parameters.size()) {
             error(expr.callee_location, "Wrong number of arguments",
                   "`" + expr.callee + "` takes " + std::to_string(function->parameters.size()) + " argument" +
@@ -2410,6 +2482,9 @@ Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
         return analyze_stdlib_call(*function, expr, result_used);
     }
     call_ir_names_[&expr] = function->ir_name;
+    if (current_function_ != nullptr && !function->ir_name.empty()) {
+        current_function_->callees.push_back(function->ir_name);
+    }
 
     if (expr.arguments.size() != function->parameters.size()) {
         error(expr.callee_location, "Wrong number of arguments",
@@ -2604,6 +2679,9 @@ Type Analyzer::analyze_wait(const WaitExpr& expr, bool result_used) {
 
 Type Analyzer::analyze_stdlib_call(FunctionSymbol& function, const CallExpr& expr, bool result_used) {
     call_ir_names_[&expr] = function.ir_name;
+    if (current_function_ != nullptr && !function.ir_name.empty()) {
+        current_function_->callees.push_back(function.ir_name);
+    }
     const std::string& ir = function.ir_name;
     const std::string display = expr.qualifier.empty() ? expr.callee : expr.qualifier + "." + expr.callee;
 

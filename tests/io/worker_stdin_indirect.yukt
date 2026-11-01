@@ -1,0 +1,13 @@
+use std/io
+
+create inner:
+    r = io.read_all()
+    if r.ok:
+        say r.value
+
+create work:
+    inner()
+
+create main:
+    t = start work()
+    wait t

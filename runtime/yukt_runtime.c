@@ -69,6 +69,8 @@ typedef struct {
 static YuktCacheBin yukt_list_bins[YUKT_BIN_COUNT];
 static YuktCacheBin yukt_str_bins[YUKT_BIN_COUNT];
 static pthread_mutex_t yukt_reduce_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t yukt_env_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t yukt_print_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t yukt_heap_mu;
 static pthread_once_t yukt_heap_once = PTHREAD_ONCE_INIT;
 /* Tracker, bins, and 0.13 object alloc/free take yukt_heap_mu. Do not hold it
@@ -337,45 +339,103 @@ static void print_list(const YuktList* list) {
     printf("]");
 }
 
-void yukt_print_i64(int64_t value) {
+static void print_i64(int64_t value) {
     printf("%" PRId64, value);
 }
 
-void yukt_print_f64(double value) {
+static void print_f64(double value) {
     printf("%g", value);
 }
 
-void yukt_print_bool(int8_t value) {
+static void print_bool(int8_t value) {
     printf("%s", value ? "true" : "false");
 }
 
-void yukt_print_cstr(const char* value) {
+static void print_cstr(const char* value) {
     printf("%s", value != NULL ? value : "");
 }
 
+void yukt_print_lock(void) {
+    pthread_mutex_lock(&yukt_print_mu);
+}
+
+void yukt_print_unlock(void) {
+    pthread_mutex_unlock(&yukt_print_mu);
+}
+
+void yukt_print_i64_unlocked(int64_t value) {
+    print_i64(value);
+}
+
+void yukt_print_f64_unlocked(double value) {
+    print_f64(value);
+}
+
+void yukt_print_bool_unlocked(int8_t value) {
+    print_bool(value);
+}
+
+void yukt_print_cstr_unlocked(const char* value) {
+    print_cstr(value);
+}
+
+void yukt_print_i64(int64_t value) {
+    pthread_mutex_lock(&yukt_print_mu);
+    print_i64(value);
+    pthread_mutex_unlock(&yukt_print_mu);
+}
+
+void yukt_print_f64(double value) {
+    pthread_mutex_lock(&yukt_print_mu);
+    print_f64(value);
+    pthread_mutex_unlock(&yukt_print_mu);
+}
+
+void yukt_print_bool(int8_t value) {
+    pthread_mutex_lock(&yukt_print_mu);
+    print_bool(value);
+    pthread_mutex_unlock(&yukt_print_mu);
+}
+
+void yukt_print_cstr(const char* value) {
+    pthread_mutex_lock(&yukt_print_mu);
+    print_cstr(value);
+    pthread_mutex_unlock(&yukt_print_mu);
+}
+
 void yukt_say_i64(int64_t value) {
-    yukt_print_i64(value);
+    pthread_mutex_lock(&yukt_print_mu);
+    print_i64(value);
     printf("\n");
+    pthread_mutex_unlock(&yukt_print_mu);
 }
 
 void yukt_say_f64(double value) {
-    yukt_print_f64(value);
+    pthread_mutex_lock(&yukt_print_mu);
+    print_f64(value);
     printf("\n");
+    pthread_mutex_unlock(&yukt_print_mu);
 }
 
 void yukt_say_bool(int8_t value) {
-    yukt_print_bool(value);
+    pthread_mutex_lock(&yukt_print_mu);
+    print_bool(value);
     printf("\n");
+    pthread_mutex_unlock(&yukt_print_mu);
 }
 
 void yukt_say_cstr(const char* value) {
-    yukt_print_cstr(value);
+    pthread_mutex_lock(&yukt_print_mu);
+    print_cstr(value);
     printf("\n");
+    pthread_mutex_unlock(&yukt_print_mu);
 }
 
 void yukt_say_list(const YuktList* list) {
+    pthread_mutex_lock(&yukt_print_mu);
     print_list(list);
     printf("\n");
+    pthread_mutex_unlock(&yukt_print_mu);
 }
 
 char* yukt_str_concat(const char* left, const char* right) {
@@ -2339,6 +2399,9 @@ enum { YUKT_IO_LINE_CAP = 16 * 1024 * 1024 };
 static int yukt_io_argc = 0;
 static char** yukt_io_argv = NULL;
 
+static pthread_t yukt_origin_thread;
+static int yukt_origin_ready = 0;
+
 static char* yukt_io_line_text = NULL;
 static int64_t yukt_io_line_status = 0;
 static int yukt_io_line_ready = 0;
@@ -2346,6 +2409,21 @@ static int yukt_io_line_ready = 0;
 static char* yukt_io_all_text = NULL;
 static int64_t yukt_io_all_status = 0;
 static int yukt_io_all_ready = 0;
+
+void yukt_origin_init(void) {
+    yukt_origin_thread = pthread_self();
+    yukt_origin_ready = 1;
+}
+
+int yukt_is_origin_thread(void) {
+    return yukt_origin_ready && pthread_equal(pthread_self(), yukt_origin_thread);
+}
+
+static void yukt_io_require_origin(void) {
+    if (!yukt_is_origin_thread()) {
+        die("stdin from worker");
+    }
+}
 
 void yukt_io_set_args(int argc, char** argv) {
     yukt_io_argc = argc;
@@ -2370,6 +2448,7 @@ YuktList* yukt_io_args(void) {
 }
 
 char* yukt_io_read_line(int64_t* status) {
+    yukt_io_require_origin();
     size_t cap = 128;
     size_t len = 0;
     char* buf = (char*)malloc(cap);
@@ -2434,6 +2513,7 @@ char* yukt_io_read_line(int64_t* status) {
 }
 
 char* yukt_io_read_all(int64_t* status) {
+    yukt_io_require_origin();
     size_t cap = 256;
     size_t len = 0;
     char* buf = (char*)malloc(cap);
@@ -2528,11 +2608,15 @@ static void yukt_env_require_name(const char* name) {
 
 char* yukt_env_get(const char* name) {
     yukt_env_require_name(name);
+    pthread_mutex_lock(&yukt_env_mu);
     const char* value = getenv(name);
     if (value == NULL) {
+        pthread_mutex_unlock(&yukt_env_mu);
         return NULL;
     }
-    return yukt_str_from_lit(value);
+    char* owned = yukt_str_from_lit(value);
+    pthread_mutex_unlock(&yukt_env_mu);
+    return owned;
 }
 
 char* yukt_env_get_unchecked(const char* name) {
@@ -2545,12 +2629,18 @@ char* yukt_env_get_unchecked(const char* name) {
 
 int8_t yukt_env_has(const char* name) {
     yukt_env_require_name(name);
-    return getenv(name) != NULL ? 1 : 0;
+    pthread_mutex_lock(&yukt_env_mu);
+    const int8_t found = getenv(name) != NULL ? 1 : 0;
+    pthread_mutex_unlock(&yukt_env_mu);
+    return found;
 }
 
 void yukt_env_set(const char* name, const char* value) {
     yukt_env_require_name(name);
+    pthread_mutex_lock(&yukt_env_mu);
     if (setenv(name, value != NULL ? value : "", 1) != 0) {
+        pthread_mutex_unlock(&yukt_env_mu);
         die("out of memory");
     }
+    pthread_mutex_unlock(&yukt_env_mu);
 }

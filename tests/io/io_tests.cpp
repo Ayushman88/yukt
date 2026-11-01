@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -58,6 +59,24 @@ void require_trap_message(const std::string& relative, const std::string& messag
     REQUIRE_MSG(result.program_output.find(message) != std::string::npos, result.program_output);
 }
 
+bool has_title(const yukt::FrontendResult& result, const std::string& title) {
+    if (result.diagnostics == nullptr) {
+        return false;
+    }
+    for (const auto& diagnostic : result.diagnostics->diagnostics()) {
+        if (diagnostic.title == title) {
+            return true;
+        }
+    }
+    return false;
+}
+
+yukt::FrontendResult check_file(const std::string& relative) {
+    auto result = yukt::analyze_file(source_path(relative));
+    yukt::analyze_types(result);
+    return result;
+}
+
 }  // namespace
 
 int main() {
@@ -86,6 +105,80 @@ int main() {
     require_trap_message("tests/env/empty_has.yukt", "empty environment name");
     require_trap_message("tests/env/empty_set.yukt", "empty environment name");
     require_trap_message("tests/env/empty_get_or.yukt", "empty environment name");
+
+    {
+        const auto result = check_file("tests/io/worker_stdin.yukt");
+        REQUIRE(has_title(result, "Cannot read stdin from a started function"));
+    }
+    {
+        const auto result = check_file("tests/io/worker_stdin_indirect.yukt");
+        REQUIRE(has_title(result, "Cannot read stdin from a started function"));
+    }
+    require_run_with_args("tests/io/origin_still_reads.yukt", {}, "hello\n", "hello\n");
+
+    {
+        const auto result = run_file("tests/io/worker_args.yukt", {"x", "y"});
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.exit_code == 0);
+        const auto nl = result.program_output.find('\n');
+        REQUIRE(nl != std::string::npos);
+        REQUIRE(nl > 0);
+        REQUIRE(result.program_output.substr(nl + 1) == "2\n");
+    }
+    require_run_with_args("tests/io/worker_env.yukt", {}, "", "from-worker\n");
+    {
+        const auto result = run_file("tests/io/concurrent_say.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.exit_code == 0);
+        std::istringstream in(result.program_output);
+        std::string line;
+        int n = 0;
+        while (std::getline(in, line)) {
+            if (line.empty()) {
+                continue;
+            }
+            REQUIRE(line.size() == 100);
+            const char c = line[0];
+            REQUIRE(c == 'A' || c == 'B');
+            for (char ch : line) {
+                REQUIRE(ch == c);
+            }
+            ++n;
+        }
+        REQUIRE(n == 100);
+    }
+    {
+        const auto result = run_file("tests/io/concurrent_record_say.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.exit_code == 0);
+        std::istringstream in(result.program_output);
+        std::string line;
+        int n = 0;
+        while (std::getline(in, line)) {
+            if (line.empty()) {
+                continue;
+            }
+            REQUIRE_MSG(line == "Point(1, 2)" || line == "Point(3, 4)", line);
+            ++n;
+        }
+        REQUIRE(n == 100);
+    }
+    {
+        const auto result = run_file("tests/io/concurrent_record_list_say.yukt");
+        REQUIRE_MSG(result.ok, result.program_output);
+        REQUIRE(result.exit_code == 0);
+        std::istringstream in(result.program_output);
+        std::string line;
+        int n = 0;
+        while (std::getline(in, line)) {
+            if (line.empty()) {
+                continue;
+            }
+            REQUIRE_MSG(line == "[Point(1, 2), Point(1, 2)]" || line == "[Point(3, 4), Point(3, 4)]", line);
+            ++n;
+        }
+        REQUIRE(n == 100);
+    }
 
     return yukt::test::summary("io");
 }

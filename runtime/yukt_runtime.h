@@ -31,6 +31,12 @@ void yukt_print_i64(int64_t value);
 void yukt_print_f64(double value);
 void yukt_print_bool(int8_t value);
 void yukt_print_cstr(const char* value);
+void yukt_print_lock(void);
+void yukt_print_unlock(void);
+void yukt_print_i64_unlocked(int64_t value);
+void yukt_print_f64_unlocked(double value);
+void yukt_print_bool_unlocked(int8_t value);
+void yukt_print_cstr_unlocked(const char* value);
 
 YuktList* yukt_list_new_rec(int64_t length, int64_t stride) __attribute__((malloc));
 void yukt_list_set_rec(YuktList* list, int64_t index, const void* src, int64_t stride);
@@ -202,6 +208,8 @@ char* yukt_json_get_string(void* json, const char* key);
 char* yukt_json_encode(void* json);
 
 void yukt_io_set_args(int argc, char** argv);
+void yukt_origin_init(void);
+int yukt_is_origin_thread(void);
 char* yukt_io_program(void);
 YuktList* yukt_io_args(void);
 char* yukt_io_read_line(int64_t* status);

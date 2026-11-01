@@ -332,3 +332,10 @@ set_tests_properties(yukt_task_double_wait PROPERTIES
 add_test(NAME yukt_task_worker_trap COMMAND yukt run ${CMAKE_SOURCE_DIR}/tests/tasks/worker_trap.yukt)
 set_tests_properties(yukt_task_worker_trap PROPERTIES
     PASS_REGULAR_EXPRESSION "YUKT runtime error:")
+
+add_executable(yukt_dio_runtime_tests tests/runtime/dio_runtime_tests.c)
+target_link_libraries(yukt_dio_runtime_tests PRIVATE yukt_runtime)
+add_test(NAME yukt_dio_runtime_tests COMMAND yukt_dio_runtime_tests)
+add_test(NAME yukt_dio_worker_stdin COMMAND yukt_dio_runtime_tests worker-stdin)
+set_tests_properties(yukt_dio_worker_stdin PROPERTIES
+    PASS_REGULAR_EXPRESSION "YUKT runtime error: stdin from worker")

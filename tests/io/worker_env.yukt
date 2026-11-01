@@ -1,0 +1,13 @@
+use std/env
+
+create work:
+    env.set("YUKT_017_WORKER", "from-worker")
+
+create main:
+    t = start work()
+    wait t
+    r = env.get("YUKT_017_WORKER")
+    if r.ok:
+        say r.value
+    otherwise:
+        say r.error.code

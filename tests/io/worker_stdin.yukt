@@ -1,0 +1,10 @@
+use std/io
+
+create work:
+    r = io.read_line()
+    if r.ok:
+        say r.value
+
+create main:
+    t = start work()
+    wait t

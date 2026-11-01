@@ -363,6 +363,12 @@ void LlvmEmitter::declare_runtime() {
     runtime_["yukt_print_f64"] = module_.getOrInsertFunction("yukt_print_f64", void_ty, f64);
     runtime_["yukt_print_bool"] = module_.getOrInsertFunction("yukt_print_bool", void_ty, i8);
     runtime_["yukt_print_cstr"] = module_.getOrInsertFunction("yukt_print_cstr", void_ty, ptr);
+    runtime_["yukt_print_lock"] = module_.getOrInsertFunction("yukt_print_lock", void_ty);
+    runtime_["yukt_print_unlock"] = module_.getOrInsertFunction("yukt_print_unlock", void_ty);
+    runtime_["yukt_print_i64_unlocked"] = module_.getOrInsertFunction("yukt_print_i64_unlocked", void_ty, i64);
+    runtime_["yukt_print_f64_unlocked"] = module_.getOrInsertFunction("yukt_print_f64_unlocked", void_ty, f64);
+    runtime_["yukt_print_bool_unlocked"] = module_.getOrInsertFunction("yukt_print_bool_unlocked", void_ty, i8);
+    runtime_["yukt_print_cstr_unlocked"] = module_.getOrInsertFunction("yukt_print_cstr_unlocked", void_ty, ptr);
     runtime_["yukt_list_set_i64"] = module_.getOrInsertFunction("yukt_list_set_i64", void_ty, ptr, i64, i64);
     runtime_["yukt_list_set_f64"] = module_.getOrInsertFunction("yukt_list_set_f64", void_ty, ptr, i64, f64);
     runtime_["yukt_list_set_bool"] = module_.getOrInsertFunction("yukt_list_set_bool", void_ty, ptr, i64, i8);
@@ -489,6 +495,7 @@ void LlvmEmitter::declare_runtime() {
     runtime_["yukt_json_get_string"] = module_.getOrInsertFunction("yukt_json_get_string", ptr, ptr, ptr);
     runtime_["yukt_json_encode"] = module_.getOrInsertFunction("yukt_json_encode", ptr, ptr);
     runtime_["yukt_io_set_args"] = module_.getOrInsertFunction("yukt_io_set_args", void_ty, i32, ptr);
+    runtime_["yukt_origin_init"] = module_.getOrInsertFunction("yukt_origin_init", void_ty);
     runtime_["yukt_io_program"] = module_.getOrInsertFunction("yukt_io_program", ptr);
     runtime_["yukt_io_args"] = module_.getOrInsertFunction("yukt_io_args", ptr);
     runtime_["yukt_io_read_line_unchecked"] = module_.getOrInsertFunction("yukt_io_read_line_unchecked", ptr);
@@ -571,6 +578,7 @@ void LlvmEmitter::emit_functions() {
     argc->setName("argc");
     argv->setName("argv");
     builder_.CreateCall(runtime("yukt_io_set_args"), {argc, argv});
+    builder_.CreateCall(runtime("yukt_origin_init"), {});
     auto found = functions_.find("main");
     if (found != functions_.end()) {
         llvm::Value* result = builder_.CreateCall(found->second->getFunctionType(), found->second);
@@ -918,8 +926,10 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
             const IrValue& value = inst.args[0];
             llvm::Value* materialized = materialize(value);
             if (value.type.kind == IrTypeKind::Record || type_has_record(value.type)) {
+                builder_.CreateCall(runtime("yukt_print_lock"), {});
                 emit_print_value(materialized, value.type);
                 print_cstr("\n");
+                builder_.CreateCall(runtime("yukt_print_unlock"), {});
             } else if (value.type.kind == IrTypeKind::I64) {
                 builder_.CreateCall(runtime("yukt_say_i64"), {materialized});
             } else if (value.type.kind == IrTypeKind::F64) {
@@ -1631,7 +1641,7 @@ llvm::Value* LlvmEmitter::cstr_ptr(const std::string& text) {
 }
 
 void LlvmEmitter::print_cstr(const std::string& text) {
-    builder_.CreateCall(runtime("yukt_print_cstr"), {cstr_ptr(text)});
+    builder_.CreateCall(runtime("yukt_print_cstr_unlocked"), {cstr_ptr(text)});
 }
 
 llvm::Value* LlvmEmitter::list_get_value(llvm::Value* list, llvm::Value* index, const IrType& elem) {
@@ -1662,17 +1672,17 @@ llvm::Value* LlvmEmitter::list_get_value(llvm::Value* list, llvm::Value* index, 
 void LlvmEmitter::emit_print_value(llvm::Value* value, const IrType& type) {
     switch (type.kind) {
         case IrTypeKind::I64:
-            builder_.CreateCall(runtime("yukt_print_i64"), {value});
+            builder_.CreateCall(runtime("yukt_print_i64_unlocked"), {value});
             return;
         case IrTypeKind::F64:
-            builder_.CreateCall(runtime("yukt_print_f64"), {value});
+            builder_.CreateCall(runtime("yukt_print_f64_unlocked"), {value});
             return;
         case IrTypeKind::Bool:
-            builder_.CreateCall(runtime("yukt_print_bool"),
+            builder_.CreateCall(runtime("yukt_print_bool_unlocked"),
                                 {builder_.CreateZExt(value, llvm::Type::getInt8Ty(context_))});
             return;
         case IrTypeKind::String:
-            builder_.CreateCall(runtime("yukt_print_cstr"), {value});
+            builder_.CreateCall(runtime("yukt_print_cstr_unlocked"), {value});
             return;
         case IrTypeKind::Record:
             emit_print_record(value, type.record_id);

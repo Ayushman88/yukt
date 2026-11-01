@@ -1,0 +1,11 @@
+use std/io
+
+create work:
+    p = io.program()
+    a = io.args()
+    say p
+    say count(a)
+
+create main:
+    t = start work()
+    wait t

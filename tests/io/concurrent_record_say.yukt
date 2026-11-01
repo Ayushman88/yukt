@@ -1,0 +1,17 @@
+record Point:
+    x: integer
+    y: integer
+
+create aaa:
+    repeat i in 1..50:
+        say Point(1, 2)
+
+create bbb:
+    repeat i in 1..50:
+        say Point(3, 4)
+
+create main:
+    a = start aaa()
+    b = start bbb()
+    wait a
+    wait b
