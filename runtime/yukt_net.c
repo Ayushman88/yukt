@@ -227,6 +227,17 @@ void yukt_net_close(void* end) {
     }
 }
 
+int yukt_net_is_closed(void* end) {
+    YuktNet* net = (YuktNet*)end;
+    if (net == NULL) {
+        return 1;
+    }
+    if (yukt_net_load_closed(net) || yukt_net_load_fd(net) < 0) {
+        return 1;
+    }
+    return 0;
+}
+
 int64_t yukt_net_listen_status(const char* addr) {
     yukt_net_ptr = NULL;
     YuktNet* net = NULL;

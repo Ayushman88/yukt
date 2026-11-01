@@ -188,6 +188,7 @@ int8_t yukt_map_get_bool(void* map, const char* key);
 char* yukt_map_get_cstr(void* map, const char* key);
 int64_t yukt_map_len(void* map);
 void yukt_map_remove(void* map, const char* key);
+void yukt_map_each_cstr(void* map, void (*fn)(const char* key, const char* value, void* ctx), void* ctx);
 
 void* yukt_set_new(void);
 void yukt_set_add(void* set, const char* key);
@@ -245,6 +246,17 @@ char* yukt_net_read_unchecked(void);
 int64_t yukt_net_write_status(void* conn, const char* data);
 int64_t yukt_net_write_unchecked(void);
 void yukt_net_close(void* end);
+int yukt_net_is_closed(void* end);
+
+typedef void (*yukt_http_handler_fn)(const char* method, const char* path, const char* query, void* headers,
+                                     const char* body, int64_t* out_status, void** out_headers, char** out_body);
+
+int64_t yukt_http_get_status(const char* url);
+int64_t yukt_http_get_code(void);
+void* yukt_http_get_headers(void);
+char* yukt_http_get_body(void);
+void yukt_http_serve(const char* addr, yukt_http_handler_fn handler);
+void yukt_http_serve_on(void* listener, yukt_http_handler_fn handler);
 
 enum {
     YUKT_ALLOC_LIST = 1,

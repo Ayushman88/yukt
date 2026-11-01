@@ -181,6 +181,7 @@ private:
     llvm::Value* emit_wait(const IrInst& inst);
     llvm::Function* make_task_thunk(const std::string& callee_name, llvm::StructType* pack_ty,
                                    const IrType& payload);
+    llvm::Function* make_http_handler_thunk(const std::string& handler_name);
     llvm::Value* emit_stdlib_call(const IrInst& inst);
     llvm::FunctionCallee runtime(const std::string& name) const;
     llvm::StructType* list_struct_type();
@@ -217,6 +218,7 @@ private:
     llvm::Function* current_fn_ = nullptr;
     const IrFunction* current_ir_fn_ = nullptr;
     int next_thunk_ = 0;
+    std::unordered_map<std::string, llvm::Function*> http_thunks_;
     std::unordered_map<int, llvm::StructType*> record_types_;
     std::unordered_map<int, std::vector<unsigned>> record_llvm_indices_;
     std::unordered_map<int, llvm::Function*> record_chan_drops_;
@@ -533,6 +535,12 @@ void LlvmEmitter::declare_runtime() {
     runtime_["yukt_net_write_status"] = module_.getOrInsertFunction("yukt_net_write_status", i64, ptr, ptr);
     runtime_["yukt_net_write_unchecked"] = module_.getOrInsertFunction("yukt_net_write_unchecked", i64);
     runtime_["yukt_net_close"] = module_.getOrInsertFunction("yukt_net_close", void_ty, ptr);
+    runtime_["yukt_http_get_status"] = module_.getOrInsertFunction("yukt_http_get_status", i64, ptr);
+    runtime_["yukt_http_get_code"] = module_.getOrInsertFunction("yukt_http_get_code", i64);
+    runtime_["yukt_http_get_headers"] = module_.getOrInsertFunction("yukt_http_get_headers", ptr);
+    runtime_["yukt_http_get_body"] = module_.getOrInsertFunction("yukt_http_get_body", ptr);
+    runtime_["yukt_http_serve"] = module_.getOrInsertFunction("yukt_http_serve", void_ty, ptr, ptr);
+    runtime_["yukt_http_serve_on"] = module_.getOrInsertFunction("yukt_http_serve_on", void_ty, ptr, ptr);
     if (auto* zeros = module_.getFunction("yukt_list_zeros")) {
         zeros->addRetAttr(llvm::Attribute::NoAlias);
     }
@@ -1107,6 +1115,105 @@ llvm::Function* LlvmEmitter::make_task_thunk(const std::string& callee_name, llv
     return fn;
 }
 
+llvm::Function* LlvmEmitter::make_http_handler_thunk(const std::string& handler_name) {
+    if (const auto found = http_thunks_.find(handler_name); found != http_thunks_.end()) {
+        return found->second;
+    }
+
+    auto* ptr = llvm::PointerType::getUnqual(context_);
+    auto* i64 = llvm::Type::getInt64Ty(context_);
+    auto* void_ty = llvm::Type::getVoidTy(context_);
+    auto* fn_ty = llvm::FunctionType::get(void_ty, {ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr}, false);
+    const std::string name = "yukt$http$thunk$" + handler_name;
+    auto* fn = llvm::Function::Create(fn_ty, llvm::Function::InternalLinkage, name, module_);
+    fn->setCallingConv(llvm::CallingConv::C);
+    fn->addFnAttr(llvm::Attribute::MustProgress);
+    fn->setDoesNotThrow();
+
+    auto arg = fn->arg_begin();
+    llvm::Value* method = &*arg++;
+    llvm::Value* path = &*arg++;
+    llvm::Value* query = &*arg++;
+    llvm::Value* headers = &*arg++;
+    llvm::Value* body = &*arg++;
+    llvm::Value* out_status = &*arg++;
+    llvm::Value* out_headers = &*arg++;
+    llvm::Value* out_body = &*arg++;
+    method->setName("method");
+    path->setName("path");
+    query->setName("query");
+    headers->setName("headers");
+    body->setName("body");
+    out_status->setName("out_status");
+    out_headers->setName("out_headers");
+    out_body->setName("out_body");
+
+    auto* entry = llvm::BasicBlock::Create(context_, "entry", fn);
+    llvm::IRBuilder<> thunk(entry);
+
+    const IrRecord* request = nullptr;
+    const IrRecord* response = nullptr;
+    for (const auto& rec : ir_.records) {
+        if (rec.name == "Request" && (request == nullptr || rec.identity == "std$http$Request")) {
+            request = &rec;
+        }
+        if (rec.name == "Response" && (response == nullptr || rec.identity == "std$http$Response")) {
+            response = &rec;
+        }
+    }
+
+    auto intern = [&](llvm::Value* text) -> llvm::Value* {
+        return thunk.CreateCall(runtime("yukt_str_from_lit"), {text});
+    };
+
+    if (request == nullptr || response == nullptr) {
+        thunk.CreateStore(llvm::ConstantInt::get(i64, 500, true), out_status);
+        thunk.CreateStore(llvm::ConstantPointerNull::get(ptr), out_headers);
+        thunk.CreateStore(intern(llvm::ConstantPointerNull::get(ptr)), out_body);
+        thunk.CreateRetVoid();
+        http_thunks_[handler_name] = fn;
+        return fn;
+    }
+
+    llvm::Value* req = llvm::UndefValue::get(record_type(request->id));
+    for (int i = 0; i < static_cast<int>(request->fields.size()); ++i) {
+        const IrRecordField& field = request->fields[static_cast<std::size_t>(i)];
+        llvm::Value* stored = nullptr;
+        if (field.name == "method") {
+            stored = intern(method);
+        } else if (field.name == "path") {
+            stored = intern(path);
+        } else if (field.name == "query") {
+            stored = intern(query);
+        } else if (field.name == "headers") {
+            stored = headers;
+        } else if (field.name == "body") {
+            stored = intern(body);
+        }
+        if (stored == nullptr) {
+            continue;
+        }
+        req = thunk.CreateInsertValue(req, stored, {record_llvm_index(request->id, i)});
+    }
+
+    auto* callee = functions_.at(handler_name);
+    llvm::Value* resp = thunk.CreateCall(callee->getFunctionType(), callee, {req});
+    for (int i = 0; i < static_cast<int>(response->fields.size()); ++i) {
+        const IrRecordField& field = response->fields[static_cast<std::size_t>(i)];
+        llvm::Value* loaded = thunk.CreateExtractValue(resp, {record_llvm_index(response->id, i)});
+        if (field.name == "status") {
+            thunk.CreateStore(loaded, out_status);
+        } else if (field.name == "headers") {
+            thunk.CreateStore(loaded, out_headers);
+        } else if (field.name == "body") {
+            thunk.CreateStore(loaded, out_body);
+        }
+    }
+    thunk.CreateRetVoid();
+    http_thunks_[handler_name] = fn;
+    return fn;
+}
+
 llvm::Value* LlvmEmitter::emit_start(const IrInst& inst) {
     auto* ptr = llvm::PointerType::getUnqual(context_);
     auto* i64 = llvm::Type::getInt64Ty(context_);
@@ -1622,6 +1729,24 @@ llvm::Value* LlvmEmitter::emit_stdlib_call(const IrInst& inst) {
     }
     if (name == "std$net$close") {
         return call_runtime("yukt_net_close", {args.at(0)});
+    }
+    if (name == "std$http$get_status") {
+        return call_runtime("yukt_http_get_status", {args.at(0)});
+    }
+    if (name == "std$http$get_code") {
+        return call_runtime("yukt_http_get_code", {});
+    }
+    if (name == "std$http$get_headers") {
+        return call_runtime("yukt_http_get_headers", {});
+    }
+    if (name == "std$http$get_body") {
+        return call_runtime("yukt_http_get_body", {});
+    }
+    if (name == "std$http$serve" || name == "std$http$serve_on") {
+        llvm::Function* thunk = make_http_handler_thunk(inst.extra);
+        llvm::Value* handler = thunk;
+        const char* runtime_name = name == "std$http$serve" ? "yukt_http_serve" : "yukt_http_serve_on";
+        return call_runtime(runtime_name, {args.at(0), handler});
     }
     return llvm::PoisonValue::get(type_of(inst.dest.type));
 }

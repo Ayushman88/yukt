@@ -286,6 +286,22 @@ void yukt_map_remove(void* map, const char* key) {
     m->len -= 1;
 }
 
+void yukt_map_each_cstr(void* map, void (*fn)(const char* key, const char* value, void* ctx), void* ctx) {
+    if (map == NULL || fn == NULL) {
+        return;
+    }
+    YuktMap* m = as_map(map);
+    for (int64_t i = 0; i < m->cap; ++i) {
+        if (m->state[i] != 1 || m->keys[i] == NULL) {
+            continue;
+        }
+        if (m->val_kind != 3) {
+            continue;
+        }
+        fn(m->keys[i], m->s_vals[i] != NULL ? m->s_vals[i] : "", ctx);
+    }
+}
+
 void* yukt_set_new(void) {
     return yukt_map_new();
 }
