@@ -186,7 +186,7 @@ Do not implement a whole version in one task. Spec → plan → code → tests, 
 
 Finish line: a developer comfortably builds a CLI, JSON API client, HTTP server, and concurrent file processor — not a longer keyword list.
 
-**Next objective:** specify 0.17 concurrency and networking. Do not implement mutexes, channels, sockets, or HTTP until that spec is frozen.
+**Next objective:** write the 0.17.1 implementation plan (channels, process I/O rules, TCP, HTTP/1.1). Do not start compiler or runtime. Mutex is specified and deferred (not 0.17.1). Do not start 0.18.
 
 ## 0.16 — Practical language (phase 1)
 
@@ -203,12 +203,14 @@ HTTP syntax in design sketches is illustrative only and belongs to 0.17.
 
 ## 0.17 — Concurrency and networking (phase 2)
 
-**Status: proposed.** Specify before implementing. Starts after 0.16 acceptance tests that 0.17 depends on (growing lists, at least). GPU stays off this path.
+**Status: specified, not implemented.** Language law: `docs/LANGUAGE_SPEC.md` § 0.17 and `docs/STDLIB_SPEC.md` (`std/sync`, `std/net`, `std/http`). Rationale: `docs/YUKT_017_DESIGN.md` (accepted 2026-11-01). Process I/O versus `start` is implemented (0.17.1 D-IO). Next authorized coding objective is channels. Mutex is specified and deferred (not 0.17.1). GPU stays off this path.
 
-- Safe coordination for `start` / `wait` (channels or message passing; mutexes)
-- HTTP client and HTTP server
-- Socket support
-- Concurrency and networking stress tests
+- Process I/O versus `start` (origin-thread stdin, env lock, say lock) (**implemented**, 0.17.1 D-IO)
+- Channels (`sync.channel` / `receiver` / `send` / `recv` / `close`)
+- POSIX TCP (`std/net`)
+- HTTP/1.1 client and server (`std/http`)
+- Mutex API specified, deferred — not a 0.17.1 ship-gate
+- Concurrency and networking stress tests after the 0.17.1 plan
 
 Proof: a small HTTP server a developer can write without inventing the API in application code.
 

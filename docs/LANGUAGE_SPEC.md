@@ -1,9 +1,9 @@
 # YUKT Language Specification
 
-Version: 0.14.1 (released as `v0.14.1`) plus **0.16.1 growing lists (implemented; not released)** plus **0.16.2 stdin / argv / environment (implemented; not released)** plus **0.16.3 richer strings (implemented; not released)**. `v0.13.1` exists locally and is not pushed. `v0.13.6` is `eb42a0a`. 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`. 0.15 is stabilization in `docs/YUKT_015_DESIGN.md` and adds no syntax.  
-Status: 0.12 language plus **records** ([0.13.1 — Records](#0131--records)), **ownership** ([0.13.2 — Ownership](#0132--ownership)), **references** ([0.13.3 — References](#0133--references)), **foreign C** ([0.13.4 — Foreign C](#0134--foreign-c)), **errors** ([0.13.5 — Errors](#0135--errors)), **stdlib expansion** ([0.13.6 — Stdlib](#0136--stdlib)), **CPU tasks** ([0.14.1 — CPU tasks](#0141--cpu-tasks)), **growing lists** ([0.16.1 — Growing lists](#0161--growing-lists)), **standard input and environment** ([0.16.2 — Standard input and environment](#0162--standard-input-and-environment)), and **richer strings** ([0.16.3 — Richer strings](#0163--richer-strings)). Numerical semantics for signed overflow and float rounding are unchanged.
+Version: 0.14.1 (released as `v0.14.1`) plus **0.16.1 growing lists (implemented; not released)** plus **0.16.2 stdin / argv / environment (implemented; not released)** plus **0.16.3 richer strings (implemented; not released)** plus **0.17 coordination and networking (specified, not implemented)**. `v0.13.1` exists locally and is not pushed. `v0.13.6` is `eb42a0a`. 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`. 0.15 is stabilization in `docs/YUKT_015_DESIGN.md` and adds no syntax.  
+Status: 0.12 language plus **records** ([0.13.1 — Records](#0131--records)), **ownership** ([0.13.2 — Ownership](#0132--ownership)), **references** ([0.13.3 — References](#0133--references)), **foreign C** ([0.13.4 — Foreign C](#0134--foreign-c)), **errors** ([0.13.5 — Errors](#0135--errors)), **stdlib expansion** ([0.13.6 — Stdlib](#0136--stdlib)), **CPU tasks** ([0.14.1 — CPU tasks](#0141--cpu-tasks)), **growing lists** ([0.16.1 — Growing lists](#0161--growing-lists)), **standard input and environment** ([0.16.2 — Standard input and environment](#0162--standard-input-and-environment)), **richer strings** ([0.16.3 — Richer strings](#0163--richer-strings)), and **coordination and networking** ([0.17 — Coordination and networking](#017--coordination-and-networking)). Numerical semantics for signed overflow and float rounding are unchanged.
 
-This document is the source of truth for YUKT syntax. **0.13.1 through 0.14.1 are implemented.** **0.16.1 growing lists are implemented** in the compiler, runtime, and `std/list`. **0.16.2 stdin / argv / environment are implemented** in the runtime, `std/io`, `std/env`, and `yukt run` argv forwarding. **0.16.3 richer strings are implemented** in the runtime, `std/str`, analyzer, and LLVM lowering. For implemented slices, if the compiler and this file disagree, that is a bug. Design notes: `docs/YUKT_016_DESIGN.md`.
+This document is the source of truth for YUKT syntax. **0.13.1 through 0.14.1 are implemented.** **0.16.1 growing lists are implemented** in the compiler, runtime, and `std/list`. **0.16.2 stdin / argv / environment are implemented** in the runtime, `std/io`, `std/env`, and `yukt run` argv forwarding. **0.16.3 richer strings are implemented** in the runtime, `std/str`, analyzer, and LLVM lowering. **0.17 is specified, not implemented.** For implemented slices, if the compiler and this file disagree, that is a bug. For 0.17, the compiler must not yet accept the new surface. Design notes: `docs/YUKT_016_DESIGN.md` (0.16). `docs/YUKT_017_DESIGN.md` is the accepted 0.17 rationale; language law is this file and `docs/STDLIB_SPEC.md`.
 
 ## Design
 
@@ -19,6 +19,7 @@ YUKT is an English-inspired, statically typed, compiled language. The first synt
 - `if` / `otherwise` choose a branch
 - `ok` / `fail` construct `result[T]` (0.13.5)
 - `start` / `wait` and `task[T]` run a function on the host pool (0.14.1)
+- 0.17 adds no reserved words; channels, TCP, and HTTP live in `std/sync`, `std/net`, and `std/http` (specified, not implemented)
 
 The compiler does not invent additional syntax beyond this document.
 
@@ -47,7 +48,7 @@ start
 wait
 ```
 
-These cannot be used as variable names, parameter names, aliases, `repeat` iterators, record names, field names, or function names, with one exception: **`repeat`** may be a function name after `create` / `share create` and after `.` in a qualified call, so `std/str` can export `str.repeat(...)`. `create if`, `record if`, and `math.give(...)` remain errors. Statement position is unchanged: `repeat i in 1..5:` is still a loop. `use`, `share`, and `as` are reserved from 0.12. `record` is reserved from 0.13.1. `ref` is reserved from 0.13.3. `foreign` is reserved from 0.13.4. `ok` and `fail` are reserved from 0.13.5. `start` and `wait` are reserved keywords from 0.14.1. The lexer emits `START` / `WAIT` tokens, and the parser accepts `start name(args)` and `wait` expressions. `task` is a builtin type name like `map`, not a reserved word.
+These cannot be used as variable names, parameter names, aliases, `repeat` iterators, record names, field names, or function names, with one exception: **`repeat`** may be a function name after `create` / `share create` and after `.` in a qualified call, so `std/str` can export `str.repeat(...)`. `create if`, `record if`, and `math.give(...)` remain errors. Statement position is unchanged: `repeat i in 1..5:` is still a loop. `use`, `share`, and `as` are reserved from 0.12. `record` is reserved from 0.13.1. `ref` is reserved from 0.13.3. `foreign` is reserved from 0.13.4. `ok` and `fail` are reserved from 0.13.5. `start` and `wait` are reserved keywords from 0.14.1. The lexer emits `START` / `WAIT` tokens, and the parser accepts `start name(args)` and `wait` expressions. `task` is a builtin type name like `map`, not a reserved word. 0.17 adds **no** reserved words. `send`, `recv`, `mutex`, `conn`, and `listener` are builtin type names like `task` and `map`, not reserved words. `http.serve` and `http.serve_on` are special callee-name forms, not keywords.
 
 **Compatibility.** Making `start` and `wait` reserved is a breaking change for 0.13 programs that used those spellings as identifiers. Those identifiers were renamed when 0.14.1 landed (`from` / `lo`). See [Reserved-word compatibility](#reserved-word-compatibility). Contextual keywords are not authorized.
 
@@ -1416,7 +1417,7 @@ A non-empty unterminated final chunk is `ok(bytes)` with no terminator to strip.
 
 These calls borrow no list. They allocate a new string (and `read_all` may grow an internal buffer). A `repeat` body that calls them is not independent and must stay sequential.
 
-Stdin is process-global. Two `start` tasks that both `read_line` have no defined interleaving in 0.16. Do not document it as safe. Sharing stdin across tasks waits for 0.17.
+Stdin is process-global. Rules for stdin and environment across `start` are frozen in [0.17 — Coordination and networking](#017--coordination-and-networking): origin-thread stdin only, one internal env lock, one internal `say` lock. This section does not leave those races undefined. Call tables and fail codes in this section are unchanged.
 
 ### Environment
 
@@ -1427,7 +1428,7 @@ Stdin is process-global. Two `start` tasks that both `read_line` have no defined
 | `env.set(name, value)` | void | Empty `name` traps. Overwrites. Does not change the parent process after exit. |
 | `env.has(name)` | boolean | False if unset. Empty `name` traps. |
 
-`setenv` visibility is this process and later `env.get` in this process, including `start` workers on the same host process.
+`setenv` visibility is this process and later `env.get` in this process, including `start` workers on the same host process. Concurrent `env.*` serialization is [0.17](#017--coordination-and-networking). Empty-name traps and `fail` codes stay as this section specifies.
 
 ### What this is not
 
@@ -1561,4 +1562,519 @@ These are the cases an implementation must pass. They are not test files in this
 - Existing `str.at` / `str.slice` / `str.find` / `str.split` trap and miss rules unchanged.
 - String-returning calls allocate; a `repeat` body that calls them stays sequential.
 - Do not overwrite `benchmarks/results-0.11.json`.
+
+## 0.17 — Coordination and networking
+
+**Status: specified, not implemented.** This section is language law for 0.17. API rows live in `docs/STDLIB_SPEC.md` (`std/sync`, `std/net`, `std/http`). Rationale: `docs/YUKT_017_DESIGN.md` (accepted 2026-11-01). Do not start compiler or runtime work from this section. A follow-on 0.17.1 implementation plan is required first.
+
+0.17 adds **no new reserved words**. Surface lives in `std/sync`, `std/net`, and `std/http`. `start` / `wait` / `task[T]` stay exactly as [0.14.1](#0141--cpu-tasks). A `ref` still cannot cross `start`.
+
+Independently releasable in slices:
+
+| Slice | Ships | Must not require |
+| --- | --- | --- |
+| **0.17.1 channels + process I/O rules + TCP + HTTP/1.1** | Process I/O versus `start`, channels, sockets, HTTP, and the ownership / error / lifecycle rules as they apply | Mutex as a cross-task tool, TLS, UDP, bounded channels, `async` / `await` |
+| **Later (specified here, not a 0.17.1 ship-gate)** | `std/sync` mutex API | A share box, `sync.shared`, or `ref` across `start` |
+
+Programs that never call `std/sync`, `std/net`, or `std/http` keep 0.14.1 / 0.16 meaning. The process-I/O rules below apply to every program that already uses `std/io`, `std/env`, or `say`.
+
+What 0.14.1 and 0.16 already froze stays: heap arguments to `start` move; `start` cannot take `ref`; two tasks never own the same YUKT heap value; same host pool; `wait` may run a still-queued body on the current thread; no cancel or timeout; `start` inside a planned-parallel `repeat` is a compile error; allocator caps stay as `docs/RUNTIME.md`; traps abort the process; recoverable I/O and parse failures are `result[T]` / `ok` / `fail`; D1–D11 stay frozen. 0.17 does not weaken those rules.
+
+### Process I/O versus `start` / `wait`
+
+Process I/O versus start is implemented (0.17.1 D-IO).
+
+0.16.2 left stdin and environment races undefined. 0.17 does not fix that by passing `ref` of stdin or env into `start`. There is no stdin value and no env value.
+
+#### `io.program` / `io.args`
+
+Captured once at process start (the same snapshot `yukt run` / the host `argv` already provide).
+
+- Any thread may call them, including a started worker.
+- Each call returns a **new owned** string / `list[string]`. Callers do not alias the process `argv`.
+- Later `list.append` on an `io.args()` result does not change the process `argv` ([0.16.2](#0162--standard-input-and-environment)).
+- These calls do not race with each other or with `start`.
+
+#### Stdin (`io.read_line` / `io.read_all`)
+
+**Origin-thread only.**
+
+The origin thread is the thread that entered `yukt_main`. After `wait` returns to that thread, it is still the origin thread. A pool worker is never the origin thread.
+
+- Two origin-thread reads stay sequential as today (0.16.2).
+- A started worker that calls `io.read_line` or `io.read_all` **traps**: `stdin from worker`.
+- The runtime test is **thread identity**, not “am I inside a `start` body.” If `wait` claims a still-queued task and runs it on the origin thread, that body may read stdin. If a worker claimed it, the same body traps.
+- **Compile diagnostic (required when obvious):** `start name(...)` is `Cannot read stdin from a started function` when the static callee graph of `name` (whole-program, same 0.12 DAG used for ordinary calls) contains `io.read_line` or `io.read_all`. YUKT has no function values, so the graph is the named `create` / `share create` tree. A handler name of `http.serve` / `http.serve_on` is **not** a stdin edge of the function that only contains the serve form; see [HTTP](#http-0171). The runtime trap remains a safety net.
+
+Do not add an stdin handle. Do not let `start` take `ref` of stdin.
+
+#### Environment (`env.get` / `get_or` / `has` / `set`)
+
+Any thread may call them.
+
+The runtime serializes every `env.*` call on **one internal process lock**. That lock is not a user mutex, not a `std/sync` value, and not shareable. There is no POSIX `getenv` / `setenv` data race.
+
+- `env.set` is visible to the next `env.get` / `get_or` / `has` that acquires the lock.
+- Empty-name traps and `fail` codes stay as [0.16.2](#0162--standard-input-and-environment).
+- This is not a user-shareable object. It does not authorize sharing lists, sockets, channels, or any other heap value.
+
+#### `say`
+
+`say` remains the only stdout print. Do not invent `print`.
+
+**0.17 requires one internal process print lock** covering every `say` (and the C print helpers it uses). Each `say` holds that lock for the whole value plus the trailing newline. Two tasks may `say` concurrently; the lines do not interleave at byte granularity.
+
+This lock is not a user mutex. It does not authorize sharing other state.
+
+#### What process I/O does not do
+
+- No `ref` of stdin or env into `start`
+- No stdin multiplexer, no `io.read_line` from two workers
+- No user-visible env object
+- No change to `fail("eof")` / `fail("io")` / `fail("not_found")` codes
+
+### Channels (0.17.1 ship-gate)
+
+Coordination across `start` is by **moving** values through two owned ends. There is no shared list, no shared mutex, and no `sync.shared`.
+
+A single owned channel cannot be used by two tasks: `start` moves the argument, and `start` cannot take `ref`. YUKT has **no tuple type** and **no field move-out** (`Cannot move out of record field`, 0.13.2). `sync.channel()` therefore cannot give `(tx, rx)` and cannot give a record from which the caller writes `tx = ends.tx`.
+
+**Frozen factory:** `sync.channel()` gives the **send** end. `sync.receiver(tx)` takes `ref` of that send end **on the same thread** and gives the **recv** end, once. After the split, the two ends are independent owners. Either end may be moved into `start`. Ends are not `ref`-shared across tasks.
+
+```yukt
+use std/sync
+
+create worker(rx):
+    r = sync.recv(rx)
+    if r.ok:
+        say r.value
+
+create main:
+    tx = sync.channel()
+    rx = sync.receiver(tx)
+    t = start worker(rx)
+    sync.send(tx, 1)
+    sync.close(tx)
+    wait t
+```
+
+The program prints `1`.
+
+#### Channel types
+
+`send` and `recv` are builtin type names like `task` and `map`. They are **not** reserved words. A later identifier may be named `send` or `recv`. A **record** must not be named `send`, `recv`, `mutex`, `conn`, or `listener`.
+
+| Type | Meaning |
+| --- | --- |
+| `send` | send end of a channel of inferred `E` (`send[E]` in this document) |
+| `recv` | recv end of that same channel (`recv[E]`) |
+
+No fields. No `say`. No constructor except `sync.channel` / `sync.receiver`. `E` is inferred from `sync.send` / `sync.recv` uses, the same way `map.new()` fixes `V`. A channel never used to send or recv is `Cannot infer type`.
+
+`E` is any type that may be moved into a by-value function argument: plain values, heap values, records that contain ownership, `task[T]`, `result[T]`. Not `ref`. Not void.
+
+#### Channel operations
+
+Programs write `use std/sync`. First arguments that are ends are **borrows** of a place (same pattern as `list.append`), except `start`, which **moves**.
+
+| Call | Gives | Effect |
+| --- | --- | --- |
+| `sync.channel()` | `send[E]` | Create a paired channel. Returns the send end. The recv capability is still inside it. |
+| `sync.receiver(tx)` | `recv[E]` | Borrow `tx`. Extract the unique recv end. |
+| `sync.send(tx, value)` | void | Borrow `tx`. Move heap `E` (copy plain `E`) into the unbounded buffer. |
+| `sync.recv(rx)` | `result[E]` | Borrow `rx`. Block while empty and not closed. |
+| `sync.close(end)` | void | Borrow a `send` or `recv`. Idempotent. |
+
+`start` may take a `send` or `recv` **by move**, not `ref`. After `start worker(rx)`, `rx` is Moved.
+
+#### Close, drop, and `fail("closed")`
+
+- `sync.recv` on a closed end whose buffer is empty is `fail("closed")`. This is expected, not a programmer bug.
+- `sync.recv` on a closed end with buffered values still gives those values, then `fail("closed")`.
+- `sync.send` after the send end is closed **traps** (`send on closed channel`).
+- `sync.send` after the recv end is closed or dropped **traps** (`send on closed channel`).
+- `sync.close` on a send end: no more sends; recvs drain, then `fail("closed")`.
+- `sync.close` on a recv end: remaining buffered `E` values are dropped; later recv is `fail("closed")`; later send traps.
+- Close is **idempotent**. A second close is a no-op, not a trap.
+- **Drop of an end without close is implicit close of that end.**
+- Drop of the last end releases the runtime queue.
+
+#### `sync.receiver` once
+
+The analyzer tracks a Taken flag on a `send` name in the same function: `sync.receiver(tx)` sets it; a second `sync.receiver` on that name is `receiver already taken`. If extraction happens inside a callee through `ref`, the caller flag is not set. A second extract **traps** (`receiver already taken`).
+
+`sync.receiver` after the send end is closed is still valid if it has not been taken: the recv end is born closed (recv is `fail("closed")` once empty).
+
+#### Buffer and blocking
+
+0.17.1 buffers are **unbounded**. `sync.send` does not wait for a receiver. A fast sender may grow until allocation failure, which **traps** (`out of memory`) like `list.append`. Bounded capacity is a later spec.
+
+`sync.recv` blocks while the buffer is empty and the channel is not closed. No `try_recv`, `try_send`, timeout, or select in 0.17.1.
+
+A recv/send wait cycle can hang. 0.17.1 has no detector (same acceptance as 0.14.1 running-wait cycles).
+
+#### Internal queue is not a YUKT share
+
+The two ends are two tracked YUKT heap allocations. The message queue they point at is a **runtime object** with an internal refcount (the same idea as the 0.14.1 task wrapper’s waiter + worker refs). Users cannot name the queue, borrow it, `start` it, or store it.
+
+This is **not** a share type. It does not authorize two tasks owning one list, socket, or mutex.
+
+Send **moves** `E` into the queue. Recv **moves** `E` to the waiter. Two tasks never own the same `E`.
+
+#### One producer, one consumer per channel
+
+0.17.1: one send end, one recv end. Ends are not cloned. Two producers need two channels, or one producer task that owns the only send end.
+
+Ping-pong uses two channels:
+
+```yukt
+use std/sync
+
+create bounce(rx, tx):
+    repeat i in 1..1000:
+        r = sync.recv(rx)
+        if r.ok:
+            sync.send(tx, r.value)
+    sync.close(tx)
+
+create main:
+    to_w = sync.channel()
+    back = sync.channel()
+    rx_w = sync.receiver(to_w)
+    rx_m = sync.receiver(back)
+    t = start bounce(rx_w, back)
+    repeat i in 1..1000:
+        sync.send(to_w, i)
+        r = sync.recv(rx_m)
+        if r.ok:
+            say r.value
+    sync.close(to_w)
+    wait t
+```
+
+#### Diagnostics (channels)
+
+| Situation | Title |
+| --- | --- |
+| `start` of a function taking `ref send` / `ref recv` | `Cannot start a ref` (existing) |
+| Use of a moved end | `Use after move` |
+| Second `sync.receiver` on the same name | `receiver already taken` |
+| Channel never sent or recvd | `Cannot infer type` |
+| `say tx` / `say rx` | `Type mismatch` |
+| `sync.send` / `recv` / `close` / `receiver` of the wrong end type | `Type mismatch` |
+
+#### Parallel `repeat`
+
+Channel operations allocate and/or block. A `repeat` body that mentions them is not independent and is not planned-parallel (same family as maps). `start` inside a planned-parallel `repeat` stays illegal.
+
+### Mutex (specified, deferred — not 0.17.1)
+
+The mutex API is specified here. It is **not** a 0.17.1 ship-gate. Do not implement it as part of 0.17.1.
+
+```yukt
+use std/sync
+
+create main:
+    m = sync.mutex()
+    sync.lock(m)
+    sync.unlock(m)
+```
+
+- `mutex` is a builtin type name (not reserved). Opaque owned heap value. No `say`. No fields.
+- `sync.mutex()` gives a new unlocked mutex.
+- `sync.lock(m)` and `sync.unlock(m)` take `ref` of a mutex place (borrow, same thread).
+- The analyzer tracks a Locked flag on a mutex name in the same function. `lock` sets it; `unlock` clears it. Move, `give`, overwrite, or pass-by-value of a Locked name is `Cannot move a locked mutex`.
+- If lock happens inside a callee through `ref mutex`, the caller flag is not set. Unlock of an unlocked mutex **traps** (`unlock of unlocked mutex`).
+- Lock of an already locked mutex on the **same thread** traps (`mutex already locked`). 0.17 mutexes are not recursive. Cross-thread lock of a locked mutex would block — and cannot occur without a share.
+- `start` cannot take `ref mutex` (existing `Cannot start a ref`).
+- A mutex is not moved into a task for the purpose of sharing it. Moving an **unlocked** mutex into `start` transfers exclusive ownership; the other task does not keep a handle. That is a move, not coordination.
+
+`start` cannot take `ref`. Two tasks cannot both borrow one mutex. A mutex therefore cannot coordinate two tasks unless a later design invents a share box. **Do not invent `sync.shared` in this freeze.** CLI workers in 0.17.1 use channels, not shared memory.
+
+What mutex does not do:
+
+- No `lock` / `unlock` keywords
+- No condition variables
+- No recursive lock
+- No `sync.shared`, atomics, or `ref` across `start`
+
+### Sockets (0.17.1)
+
+`use std/net`. POSIX TCP only (`AF_INET` / `AF_INET6`). No TLS. No UDP. No Unix-domain sockets.
+
+`conn` and `listener` are builtin type names (not reserved). Opaque owned heap values. Tracked allocations. They move like other heap values. They are **not** shared across `start`.
+
+#### Address strings
+
+One string, host and port:
+
+| Form | Example |
+| --- | --- |
+| IPv4 | `127.0.0.1:8080` |
+| IPv6 | `[::1]:8080` |
+| Hostname | `localhost:8080` |
+
+Hostname lookup uses `getaddrinfo`. A listen or connect uses exactly the family of the resolved address. No implicit v4-mapped dual-stack. Port `0` on listen requests an ephemeral port.
+
+Malformed addr is `fail("io")` on the listen/connect call, not a trap.
+
+#### Socket operations
+
+| Call | Gives | Failure | Behavior |
+| --- | --- | --- | --- |
+| `net.listen(addr)` | `result[listener]` | `fail("io")` | Bind and listen. Does not accept. |
+| `net.connect(addr)` | `result[conn]` | `fail("io")` | TCP connect. |
+| `net.accept(ln)` | `result[conn]` | `fail("io")` / `fail("closed")` | Blocks until a connection or the listener is closed. |
+| `net.addr(ln)` | string | — | Borrow. Bound `host:port` (IPv6 in brackets). New owned string. |
+| `net.port(ln)` | integer | — | Borrow. Bound port. |
+| `net.read(c, max)` | `result[string]` | `fail("io")` / `fail("closed")` | At most `max` bytes. |
+| `net.write(c, data)` | `result[integer]` | `fail("io")` / `fail("closed")` | Write all of `data`, or fail. Ok payload is `str.len(data)`. |
+| `net.close(x)` | void | — | Borrow a `conn` or `listener`. Idempotent. |
+
+`max <= 0` **traps** (`invalid read size`). That is a programmer bug.
+
+`net.read`: `ok(bytes)` of length `1..max`. Peer close with no bytes left is `fail("closed")`, not `ok("")`. Local close, then read or write, is `fail("closed")`.
+
+`net.write` tries to send every byte. On failure the connection may be half-written; the payload is `fail`, not a partial count. Close it.
+
+Drop of a `conn` or `listener` is implicit `net.close`.
+
+`net.accept` after `net.close` on that listener is `fail("closed")`.
+
+Listen backlog is implementation, not language.
+
+#### Socket ownership
+
+`start` may take a `conn` or `listener` **by move**. Two tasks never own the same connection or listener. There is no `ref` across `start`.
+
+Read/write/close/accept borrow the place on the owning thread (or on the origin thread after `wait` if the owner never moved).
+
+A `repeat` body that calls `net.*` allocates or blocks and is not planned-parallel.
+
+#### Diagnostics (sockets)
+
+| Situation | Title |
+| --- | --- |
+| `start` with `ref conn` / `ref listener` | `Cannot start a ref` |
+| Use after move | `Use after move` |
+| `say` of `conn` / `listener` | `Type mismatch` |
+| `net.read` with non-integer `max` | `Type mismatch` |
+
+### HTTP (0.17.1)
+
+`use std/http`. HTTP/1.1 over the TCP above. No TLS (`https` is `fail("io")`). No HTTP/2. No chunked transfer. No keepalive: the server closes after one response; `http.get` sends `Connection: close` and reads one response.
+
+#### Records
+
+Shared records in `std/http`. Heap fields are 0.13.2-legal. Positional constructors, declaration order.
+
+```yukt
+share record Request:
+    method: string
+    path: string
+    query: string
+    headers: map
+    body: string
+
+share record Response:
+    status: integer
+    headers: map
+    body: string
+```
+
+- `method` is the verb as received (`GET`, `POST`, …), ASCII as on the wire.
+- `path` is the path without `?query`. Empty path in the request line becomes `/`.
+- `query` is the raw query without `?`. Empty string if there was no query.
+- `headers` is `map` of **string** values. Keys are lowercased. Duplicate names: last value wins. 0.17.1 does not keep multi-value headers.
+- `body` is raw bytes as a YUKT string. No multipart parse.
+
+Users who build headers write `use std/map`. `map.get(req.headers, "content-type")` borrows the field (no field move-out).
+
+Do not require `say` of `Request` / `Response` in this slice (`headers` is an opaque `map`). Print `status` and `body`.
+
+#### Client
+
+| Call | Gives | Failure |
+| --- | --- | --- |
+| `http.get(url)` | `result[Response]` | `fail("io")` |
+
+`url` is a string `http://host[:port]/path[?query]`. Default port is `80`. Userinfo, fragment, and `https://` are `fail("io")`. Connect, write, or parse failures are `fail("io")`.
+
+0.17.1 `http.get` sends `GET`, `Host`, `Connection: close`, and no body. There is no `http.get_with` in this slice.
+
+The ok payload is a **record** `Response`, not a bare string.
+
+**Body framing (`http.get`).** After the response headers, `http.get` reads exactly `Content-Length` body bytes when that header is present and valid. If `Content-Length` is absent, `http.get` reads until TCP close. No chunked transfer. A `Transfer-Encoding: chunked` response is `fail("io")`.
+
+#### Server: named `create`, not a closure
+
+YUKT has no closures and no first-class functions. Parameters still have no ordinary type annotations (`req: Request` is **not** authorized; only `name: ref T` exists).
+
+`http.serve` / `http.serve_on` are **compiler-recognized stdlib forms**, in the same family as `start`: the handler argument is a **callee name** in scope (unqualified or `alias.name`), not an expression and not a value. They are not reserved words.
+
+```
+http_serve_form ::= serve_callee "(" expression "," handler_name ")"
+serve_callee    ::= name resolving to http.serve or http.serve_on
+handler_name    ::= callee
+```
+
+Required handler shape, by inference from the serve form:
+
+- one parameter, type `http.Request` (moved in)
+- `give` type `http.Response` (moved out)
+
+```yukt
+use std/http
+use std/map
+
+create handle(req):
+    headers = map.new()
+    map.set(headers, "content-type", "text/plain")
+    give http.Response(200, headers, "ok")
+```
+
+Wrong arity, a `ref` parameter, a `foreign` handler, or a give type that is not `Response` is a type error at the serve call (`Invalid http handler`). `main` is not a handler. The handler **may** be started as an ordinary function (`start handle(req)` is legal if `req` is a `Request` and `start` rules hold). The serve form is not `start`.
+
+#### Serve operations
+
+| Call | Gives | Behavior |
+| --- | --- | --- |
+| `http.serve(addr, Handler)` | void | Bind `addr`, then accept forever. Special form. Blocks. |
+| `http.serve_on(ln, Handler)` | void | Move a `listener`. Accept forever. Special form. Blocks. |
+
+`http.serve_on` exists so a test can `net.listen` + `net.addr` + `start` without racing bind, and without integer-to-string (YUKT has no `"http://" + port`).
+
+**Bind / listen failure.** `http.serve` listen/bind failure **traps** with the named message `http bind failed`. The form is void and cannot return `result`. Programs that need `fail("io")` on bind use `net.listen` + `http.serve_on`. `http.serve_on` does not bind. An already-closed or otherwise unusable listener **traps** with the named message `http listener closed` (void form; cannot return `result`).
+
+**Accept / handle.** 0.17.1 is strictly sequential on the serve thread: accept → handle → write → close → accept. The server does not `start` the handler. The handler may `start` its own work.
+
+```yukt
+use std/http
+use std/net
+use std/map
+
+create handle(req):
+    headers = map.new()
+    give http.Response(200, headers, "ok")
+
+create run(ln):
+    http.serve_on(ln, handle)
+
+create main:
+    bound = net.listen("127.0.0.1:0")
+    if bound.ok:
+        ln = bound.value
+        url = "http://" + net.addr(ln) + "/"
+        t = start run(ln)
+        r = http.get(url)
+        if r.ok:
+            say r.value.status
+        wait t
+```
+
+`wait t` does **not** complete this program. The serve task stays in `accept` until process exit; `wait t` blocks until then. Unused `task` is still a compile error, so the `wait` stays in the listing.
+
+`http.serve` / `http.serve_on` return only on listener close or process exit. 0.17.1 has no `http.shutdown`. The localhost stress test may leave the server blocked in `accept` and let `yukt_task_shutdown` release the listener. Accepted: process exit is the 0.17.1 server stop.
+
+#### Request parse and body
+
+- HTTP/1.1 request line and headers.
+- Nonempty body only when `Content-Length` is present and valid. No chunked encoding: a `Transfer-Encoding: chunked` request is treated as malformed.
+- Missing `Content-Length`: empty body.
+- Malformed request line or headers: the server does **not** call the handler. It writes `Response(400, empty map, "")` if possible, then closes that connection. The process does not abort.
+- Allocation failure while reading a body **traps** (`out of memory`). There is no extra HTTP body cap in 0.17.1.
+
+**Response write.** The server always writes `Content-Length` from `str.len(body)`. A handler `headers` entry for `content-length` is **overridden**, not rejected. No chunked encoding on the response.
+
+#### Handler and tasks
+
+The handler may `start` work and `wait` before `give` of the `Response`, subject to the 0.14.1 deadlock rule (inline claim if still queued; otherwise block). A trap in the handler aborts the process.
+
+The server does not `start` the handler. It invokes the handler on the serve thread (the thread that accepted): origin if `http.serve` is in `main`; a pool worker if `http.serve_on` was `start`ed.
+
+**Stdin callee-graph.** A handler name is **not** a stdin callee-graph edge of the function that merely contains the serve form. `start run(ln)` where `run` only contains `http.serve_on(ln, handle)` is not `Cannot read stdin from a started function` merely because `handle` reads stdin. Stdin rules apply to the **thread that runs the handler**: origin-thread stdin is allowed if `http.serve` runs in `main`; a handler that reads stdin on a worker (`serve_on` was `start`ed) **traps** `stdin from worker`. The compile diagnostic still applies when an ordinary `start` callee graph (not through a serve form) contains `io.read_line` / `io.read_all`, including `start handle(...)` of the handler as an ordinary function.
+
+#### Diagnostics (HTTP)
+
+| Situation | Title |
+| --- | --- |
+| Handler is not a known function | `Unknown function` |
+| Handler arity / types / `ref` / `foreign` / `main` | `Invalid http handler` |
+| First argument of `serve_on` is not a `listener` | `Type mismatch` |
+| First argument of `serve` is not a string | `Type mismatch` |
+
+### Ownership (summary)
+
+0.13.2 / 0.14.1 stay. 0.17 adds **no** share type.
+
+| Value | Across `start` |
+| --- | --- |
+| list, string, map, set, json, record, `task[T]`, `result[T]` | move only (existing) |
+| `send` / `recv` | move one end; the other end is a different owner |
+| `conn` / `listener` | move only |
+| `mutex` | move only if unlocked; cannot coordinate two tasks |
+| stdin / env | not values; process I/O rules above |
+
+`ref` still cannot cross `start`. Two tasks never own the same YUKT heap allocation. The channel queue and the HTTP listen fd are runtime objects, not YUKT names.
+
+A record must not be named `send`, `recv`, `mutex`, `conn`, `listener`, `task`, `map`, `set`, `json`, `string`, `list`, `integer`, `float`, or `boolean`.
+
+### Errors
+
+Recoverable failures stay `result[T]` / `ok` / `fail`. Traps stay for programmer bugs. `http.serve` bind/listen failure is a trap only because the form is void and cannot return `result`; it is not a new class of programmer-bug trap. Prefer `net.listen` + `http.serve_on` when the program must see `fail("io")`.
+
+| Code / trap | When |
+| --- | --- |
+| `fail("closed")` | `sync.recv` after close and drain; `net.read` / `write` / `accept` on a closed object; peer TCP close with no bytes |
+| `fail("io")` | Socket and HTTP I/O (including `net.listen` bind failure), bad URL, connect failure, malformed addr |
+| trap `http bind failed` | `http.serve` listen/bind failure (void form; use `net.listen` + `http.serve_on` for `fail("io")`) |
+| trap `http listener closed` | `http.serve_on` given an already-closed or unusable listener |
+| `fail("eof")` / `fail("not_found")` / `fail("io")` on stdin/env | unchanged 0.16.2 |
+| trap `stdin from worker` | stdin on a non-origin thread |
+| trap `send on closed channel` | send after close or after recv drop |
+| trap `receiver already taken` | second `sync.receiver` |
+| trap `unlock of unlocked mutex` / `mutex already locked` | mutex bugs (when implemented) |
+| trap `invalid read size` | `net.read` with `max <= 0` |
+| trap `out of memory` | channel growth, I/O buffers |
+| trap (existing) | worker slice / double release / stdin empty-name env, etc. |
+
+Unused `result` is still a compile error. Traps abort the process. They do not become `fail`. They do not unwind to `wait`.
+
+### Runtime lifecycle
+
+- **Same host pool.** `start` enqueues. Channels, `net.accept`, `net.read`, `net.connect`, and HTTP do not create a second scheduler. Blocking I/O may block a pool worker. That is accepted in 0.17.1 (same class as blocking `wait`).
+- **Allocator caps frozen.** Six classes, four slots, 8,948,352-byte retained cap. `benchmarks/results-0.11.json` unchanged.
+- **Heap mutex.** Alloc, free, and tracker operations take `yukt_heap_mu`. Do not hold it across `sync.recv`, `net.accept`, `net.read`, `net.connect`, `http.get`, or a user `start` body.
+- **Internal locks (not user mutexes):** env lock, say lock, plus per-channel wait objects and socket close flags.
+- **Tracked allocations:** `send`, `recv`, the channel queue as an **internal payload** (not a second user owner), `mutex` (when built), `conn`, `listener`, HTTP parse buffers that are YUKT strings/maps. Channel ends, listeners, and connections are tracked.
+- **Process exit:** `yukt_task_shutdown` (refuse new `start`; drain or abort running tasks as 0.14.1 already requires) **then** `yukt_runtime_release`. Open channels, listeners, and connections still owned at that point are released there (implicit close, then untrack).
+- **`start` inside planned-parallel `repeat`** stays illegal.
+- Worker traps still `die()` → `YUKT runtime error:` and `exit(1)`.
+
+### No new reserved words
+
+| Kind | Names |
+| --- | --- |
+| Reserved words | none added (`start` / `wait` already reserved) |
+| New builtin type names (not reserved) | `send`, `recv`, `mutex`, `conn`, `listener` |
+| New `share record` in stdlib | `http.Request`, `http.Response` |
+| New modules | `std/sync`, `std/net`, `std/http` |
+| Special callee-name forms | `http.serve`, `http.serve_on` (like `start`, not keywords) |
+
+### What this is not
+
+Windows targets, CUDA / GPU, TLS, UDP, Unix sockets, `async` / `await`, first-class functions, closures, `std/array`, reopening D1–D11, 0.18 tooling (REPL, packages, formatter, LSP), bounded channels, select, timeouts, cancel, `try_recv`, recursive mutex, `sync.shared`, HTTP/2, chunked encoding, keepalive, `https`, `http.post` / header-custom `get`, `env.unset`, `cwd` / `chdir`, integer-to-string (use `net.addr`).
+
+### Regression gate (0.17.1, after implementation)
+
+These are the cases a 0.17.1 implementation must pass. They are not test files in this task. Mutex is **not** in this gate.
+
+- Previous 0.16 suite green on macOS arm64 and Linux x86-64
+- Worker `io.read_line` traps `stdin from worker`; origin thread still reads. `start` of a callee graph that contains those calls is a compile error. `env.set` in a worker is seen by the next `env.get` on any thread. Two concurrent `say`s do not byte-interleave
+- `start` still cannot take `ref`. Unused `task` still a compile error. Planned-parallel `repeat` still rejects `start`
+- 1000-message channel ping-pong prints `1` … `1000`
+- `sync.recv` after `sync.close` and drain is `fail("closed")`. Drop of last end without close is implicit close
+- `net.listen` + `net.connect` + `net.write` / `net.read` on localhost. Close then read is `fail("closed")`
+- `http.get` against `http.serve_on` on localhost returns status `200` and the handler body
+- Process exit still `yukt_task_shutdown` then `yukt_runtime_release`. Caps unchanged
 

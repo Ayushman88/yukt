@@ -1,6 +1,6 @@
 # YUKT standard library API contract
 
-Status: **now-gated modules implemented** (`std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`). 0.13 modules remain specified only. **0.16.1** `list.append` / `remove` / `pop` are implemented. **0.16.2** `std/io` and `std/env` are implemented. **0.16.3** richer strings (`trim` / `replace` / `lower` / `upper` / `to_int` / `to_float`) are **implemented**. See `docs/STDLIB_IMPLEMENTATION_REPORT.md` and `docs/LANGUAGE_SPEC.md` § 0.16.1, § 0.16.2, and § 0.16.3.
+Status: **now-gated modules implemented** (`std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`). 0.13 modules remain specified only. **0.16.1** `list.append` / `remove` / `pop` are implemented. **0.16.2** `std/io` and `std/env` are implemented. **0.16.3** richer strings (`trim` / `replace` / `lower` / `upper` / `to_int` / `to_float`) are **implemented**. **0.17** `std/sync` / `std/net` / `std/http` are **specified, not implemented** (gate is not `now`). See `docs/STDLIB_IMPLEMENTATION_REPORT.md` and `docs/LANGUAGE_SPEC.md` § 0.16.1, § 0.16.2, § 0.16.3, and § 0.17.
 
 This file is the source of truth for **stdlib APIs**. `docs/LANGUAGE_SPEC.md` remains the source of truth for syntax. If this document needs a new type, keyword, or operator, that change belongs in the language spec first.
 
@@ -12,7 +12,7 @@ This file is the source of truth for **stdlib APIs**. `docs/LANGUAGE_SPEC.md` re
 2. **Implementation**: YUKT under `std/` wherever the language can express it; C runtime primitives only where it cannot. No source concatenation into the entry file. No package manager.
 3. **Validation**: correctness, allocation behavior, edge cases, and (later) performance against native baselines. Do not overwrite 0.11 bench files.
 
-Implementation of a section starts only when that section is tagged **now**.
+Implementation of a section starts only when that section is tagged **now**. **0.17** and **deferred** are not `now`. They do not authorize compiler or runtime work.
 
 ## How to read a ship-gate
 
@@ -20,6 +20,8 @@ Implementation of a section starts only when that section is tagged **now**.
 | --- | --- |
 | **now** | Expressible with 0.12 types and `use` / `share`. May still need a runtime primitive. |
 | **0.13** | Blocked on language work: structs or an opaque heap type, ownership / intra-function free, FFI, or an error type. The signature here is the intended contract, not a promise that 0.12 can compile it. |
+| **0.17** | Specified in `docs/LANGUAGE_SPEC.md` § 0.17. **Not implemented.** Does not authorize compiler or runtime work. A follow-on 0.17.1 implementation plan is required first. |
+| **deferred** | Specified API that is not part of the 0.17.1 ship-gate (`std/sync` mutex). |
 
 `.` in examples is **module qualification** (`str.len(s)`), never a method.
 
@@ -60,6 +62,9 @@ Until 0.13 specifies an error type in the language spec:
 | `std/stat` | `stat` | now | Reductions on numeric lists |
 | `std/io` | `io` | now | 0.16.2 process args and stdin |
 | `std/env` | `env` | now | 0.16.2 environment |
+| `std/sync` | `sync` | 0.17 | Channels (0.17.1); mutex specified, deferred / not 0.17.1 |
+| `std/net` | `net` | 0.17 | POSIX TCP |
+| `std/http` | `http` | 0.17 | HTTP/1.1 client and server |
 | `std/array` | `array` | 0.13 | Distinct array type (stack or sized); 0.12 lists are not arrays |
 | `std/map` | `map` | 0.13 | Associative map |
 | `std/set` | `set` | 0.13 | Unique keys |
@@ -206,6 +211,8 @@ No variance/stddev in this contract (easy to add later; omit rather than undersp
 
 **Status: implemented.** Language surface: [`docs/LANGUAGE_SPEC.md`](LANGUAGE_SPEC.md) § 0.16.2. No new reserved words. Programs write `use std/io` and `use std/env`. `say` remains the only stdout print.
 
+Call tables and fail codes below are unchanged. 0.17 origin-thread stdin, env lock, and say lock are **implemented** (0.17.1 D-IO). Language law: [`docs/LANGUAGE_SPEC.md`](LANGUAGE_SPEC.md) § 0.17.
+
 | Call | Gives | Alloc | Failure | Behavior |
 | --- | --- | --- | --- | --- |
 | `io.program()` | string | yes | — | `argv[0]` |
@@ -224,6 +231,80 @@ No variance/stddev in this contract (easy to add later; omit rather than undersp
 The eight new rows are in the `std/str` table above. Existing `len` / `at` / `slice` / `find` / `contains` / `starts` / `ends` / `repeat` / `join` / `split` rows are unchanged.
 
 Arguments are borrowed. String results are new Owned allocations and stay sequential in `repeat`. Empty `replace` pattern traps; `to_int` / `to_float` use `fail("bad_int")` / `fail("bad_float")`. Strings stay NUL-terminated bytes. No regex, UTF-8 decoding, or interpolation.
+
+## 0.17 — `std/sync`, `std/net`, `std/http`
+
+**Status: specified, not implemented.** Language surface: [`docs/LANGUAGE_SPEC.md`](LANGUAGE_SPEC.md) § 0.17. Gate is **0.17**, not **now**. This section does not authorize compiler or runtime work. No new reserved words. `http.serve` / `http.serve_on` are special callee-name forms.
+
+### `std/sync` — 0.17 (channels 0.17.1; mutex deferred)
+
+Programs write `use std/sync`. First arguments that are channel ends or a mutex are **borrows** of a place (same pattern as `list.append`), except `start`, which **moves** an end. `send`, `recv`, and `mutex` are builtin type names, not reserved words.
+
+| Call | Gives | Mutates | Alloc | Failure | Behavior | Gate |
+| --- | --- | --- | --- | --- | --- | --- |
+| `sync.channel()` | `send[E]` | — | yes | — | Create a paired channel. Returns the send end. The recv capability is still inside it. | 0.17 |
+| `sync.receiver(tx)` | `recv[E]` | no | yes | compile `receiver already taken` on the same name; **trap** `receiver already taken` if extracted through `ref` a second time | Borrow `tx`. Extract the unique recv end, once. | 0.17 |
+| `sync.send(tx, value)` | void | no | maybe | **trap** `send on closed channel`; OOM **trap** | Borrow `tx`. Move heap `E` (copy plain `E`) into the unbounded buffer. | 0.17 |
+| `sync.recv(rx)` | result[E] | no | no | `fail("closed")` after close and drain | Borrow `rx`. Block while empty and not closed. | 0.17 |
+| `sync.close(end)` | void | no | no | — | Borrow a `send` or `recv`. Idempotent. Drop of an end without close is implicit close. | 0.17 |
+| `sync.mutex()` | mutex | — | yes | — | New unlocked mutex. Same-thread API only; cannot coordinate two tasks. | deferred |
+| `sync.lock(m)` | void | no | no | **trap** `mutex already locked` on the same thread | Borrow. Sets the same-function Locked flag. | deferred |
+| `sync.unlock(m)` | void | no | no | **trap** `unlock of unlocked mutex` | Borrow. Clears the Locked flag. Move of a locked mutex is `Cannot move a locked mutex`. | deferred |
+
+`E` is inferred from `sync.send` / `sync.recv`. A channel never used to send or recv is `Cannot infer type`. 0.17.1: one send end, one recv end; ends are not cloned. No `try_recv`, `try_send`, timeout, select, bounded capacity, or `sync.shared`.
+
+Mutex rows are **deferred / not 0.17.1**. Do not implement them in the 0.17.1 slice.
+
+### `std/net` — 0.17
+
+Programs write `use std/net`. POSIX TCP only (`AF_INET` / `AF_INET6`). No TLS, UDP, or Unix-domain sockets. `conn` and `listener` are builtin type names, not reserved words. They move like other heap values and are not shared across `start`.
+
+Address is one string: `127.0.0.1:8080`, `[::1]:8080`, or `localhost:8080`. Hostname lookup uses `getaddrinfo`. No implicit v4-mapped dual-stack. Port `0` on listen requests an ephemeral port. Malformed addr is `fail("io")`.
+
+| Call | Gives | Mutates | Alloc | Failure | Behavior |
+| --- | --- | --- | --- | --- | --- |
+| `net.listen(addr)` | result[listener] | — | yes | `fail("io")` | Bind and listen. Does not accept. |
+| `net.connect(addr)` | result[conn] | — | yes | `fail("io")` | TCP connect. |
+| `net.accept(ln)` | result[conn] | no | yes | `fail("io")` / `fail("closed")` | Borrow. Blocks until a connection or the listener is closed. |
+| `net.addr(ln)` | string | no | yes | — | Borrow. Bound `host:port` (IPv6 in brackets). New owned string. |
+| `net.port(ln)` | integer | no | no | — | Borrow. Bound port. |
+| `net.read(c, max)` | result[string] | no | yes | `fail("io")` / `fail("closed")`; **trap** `invalid read size` if `max <= 0` | Borrow. At most `max` bytes. `ok` length is `1..max`. Peer close with no bytes left is `fail("closed")`, not `ok("")`. |
+| `net.write(c, data)` | result[integer] | no | no | `fail("io")` / `fail("closed")` | Borrow. Write all of `data`, or fail. Ok payload is `str.len(data)`. Partial count is not returned. |
+| `net.close(x)` | void | no | no | — | Borrow a `conn` or `listener`. Idempotent. Drop is implicit close. |
+
+`start` may take a `conn` or `listener` by move. A `repeat` body that calls `net.*` is not planned-parallel. Listen backlog is implementation, not language.
+
+### `std/http` — 0.17
+
+Programs write `use std/http`. HTTP/1.1 over `std/net`. No TLS (`https` is `fail("io")`). No HTTP/2. No chunked transfer. No keepalive.
+
+Shared records in `std/http` (positional constructors, declaration order):
+
+```yukt
+share record Request:
+    method: string
+    path: string
+    query: string
+    headers: map
+    body: string
+
+share record Response:
+    status: integer
+    headers: map
+    body: string
+```
+
+`headers` is `map` of string values. Keys are lowercased. Duplicate names: last value wins. Users who build headers write `use std/map`.
+
+| Call | Gives | Alloc | Failure | Behavior |
+| --- | --- | --- | --- | --- |
+| `http.get(url)` | result[Response] | yes | `fail("io")` | `GET` + `Host` + `Connection: close`, no body. URL `http://host[:port]/path[?query]`; default port `80`. Userinfo, fragment, and `https://` fail. Reads `Content-Length` bytes when that header is valid; otherwise until TCP close. `Transfer-Encoding: chunked` fails. |
+| `http.serve(addr, Handler)` | void | yes | **trap** `http bind failed` | Special form. Bind `addr`, then accept forever. Sequential accept → handle → write → close. |
+| `http.serve_on(ln, Handler)` | void | no | **trap** `http listener closed` | Special form. Move a `listener`. Accept forever. Does not bind. |
+
+`http.serve` / `http.serve_on` are compiler-recognized callee-name forms: `Handler` is a function name in scope, not an expression. Required handler shape: one parameter of type `http.Request` (moved in); `give` type `http.Response` (moved out). Wrong arity / `ref` / `foreign` / `main` / non-`Response` give is `Invalid http handler`. The server does not `start` the handler. 0.17.1 has no `http.shutdown`. Process exit is the server stop.
+
+Malformed request: write `Response(400, empty map, "")` if possible, then close; do not call the handler. Response `Content-Length` is always `str.len(body)`; a handler `content-length` header is overridden.
 
 ## `std/map` — 0.13
 
@@ -323,7 +404,8 @@ When a **now** section is implemented:
 - Package versions, downloads, or a registry
 - Methods, type annotations, generics, `and` / `or` / `not`
 - Growable vectors, garbage collection, thread-safe allocation
-- Unicode segmentation, regex, datetime, networking, crypto
+- Unicode segmentation, regex, datetime, crypto
+- TLS, UDP, Unix sockets, HTTP/2, chunked encoding, keepalive, `https`, `http.post`
 - Rewriting `count` / `zeros` into `std/`
 
 ## First implementation slice
@@ -336,4 +418,4 @@ After this spec is accepted, implement **only** gate **now**, in this order:
 4. `std/math`
 5. `std/stat`
 
-Stop. Do not start map, set, array, file, json, or error until 0.13 (or a language-spec change) unblocks them.
+Stop. Do not start map, set, array, file, json, or error until 0.13 (or a language-spec change) unblocks them. Do not start `std/sync`, `std/net`, or `std/http`: they are specified, not tagged **now**.
