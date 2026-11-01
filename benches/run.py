@@ -181,7 +181,7 @@ def compile_yukt_kernel(yukt: Path, clang: str, name: str, runtime: Path) -> lis
     llc = find_llc(clang)
     kernel_obj = OUT / f"yukt_{name}.o"
     driver_obj = OUT / "driver.o"
-    ir_cmd = [llc, "-O3", "-filetype=obj", str(ll_path), "-o", str(kernel_obj)]
+    ir_cmd = [llc, "-O3", "-relocation-model=pic", "-filetype=obj", str(ll_path), "-o", str(kernel_obj)]
     driver_cmd = [clang, "-c", "-O3", str(BENCH / "driver.c"), "-o", str(driver_obj)]
     link_cmd = [clang, "-O3", "-o", str(bin_path), str(driver_obj), str(kernel_obj), str(runtime)]
     if sysroot:
