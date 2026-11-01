@@ -2,7 +2,7 @@
 
 YUKT is an English-inspired, statically typed, compiled programming language. This repository contains its compiler, language specification, and tests.
 
-The current public tags include **v0.14.1**, **v0.13.6**, **v0.12.1**, and **v0.11.0**. `v0.13.1` is the records tag (local until pushed). There is no `v0.13.2` tag. 0.15 is **proposed**, not implemented. `yukt build` and `yukt run` produce **host-native** binaries optimized at LLVM O3, including multi-file programs linked through `use`. Independent `repeat` loops and simple `+`/`*` reductions may run in parallel when estimated work is large; the runtime can still sequentialize a call that is not worth dispatching. `start` / `wait` run a function on the host pool and move `task[T]`. `yukt --explain` reports those decisions only when they appear in generated LLVM IR. See `docs/YUKT_011_DESIGN.md`, `docs/YUKT_012_DESIGN.md`, `docs/YUKT_013_DESIGN.md`, `docs/YUKT_014_DESIGN.md`, `docs/EXECUTION_ENGINE.md`, `docs/RUNTIME.md`, and `docs/STDLIB.md`. Shipped library modules: `std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`, `std/map`, `std/set`, `std/file`, `std/json`.
+Licensed under the [Apache License 2.0](LICENSE). The current public tags include **v0.14.1**, **v0.13.6**, **v0.12.1**, and **v0.11.0**. `v0.13.1` is the records tag (local until pushed). There is no `v0.13.2` tag. 0.15 is **proposed**, not implemented. `yukt build` and `yukt run` produce **host-native** binaries optimized at LLVM O3, including multi-file programs linked through `use`. Independent `repeat` loops and simple `+`/`*` reductions may run in parallel when estimated work is large; the runtime can still sequentialize a call that is not worth dispatching. `start` / `wait` run a function on the host pool and move `task[T]`. `yukt --explain` reports those decisions only when they appear in generated LLVM IR. See `docs/YUKT_011_DESIGN.md`, `docs/YUKT_012_DESIGN.md`, `docs/YUKT_013_DESIGN.md`, `docs/YUKT_014_DESIGN.md`, `docs/EXECUTION_ENGINE.md`, `docs/RUNTIME.md`, and `docs/STDLIB.md`. Shipped library modules: `std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`, `std/map`, `std/set`, `std/file`, `std/json`.
 
 ## Example
 
@@ -114,7 +114,7 @@ Same-algorithm C++ and Rust benches. The harness times in-process kernel compute
 python3 benches/run.py
 ```
 
-Numbers and the claims that run supports are written to `docs/BENCHMARKS.md`.
+`docs/BENCHMARKS.md` and `benchmarks/results-0.11.json` are the frozen **0.11** table. 0.15 measurements use `python3 benches/run.py --suite=0.15` and write `benchmarks/results-0.15.<host>.json`. GitHub Actions checksums are `publication: false` and are not a dedicated-host verdict.
 
 ## Usage
 
