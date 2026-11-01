@@ -1,9 +1,9 @@
 # YUKT Language Specification
 
-Version: 0.14.1 (released as `v0.14.1`) plus **0.16.1 growing lists (implemented; not released)** plus **0.16.2 stdin / argv / environment (specified, not implemented)**. `v0.13.1` exists locally and is not pushed. `v0.13.6` is `eb42a0a`. 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`. 0.15 is stabilization in `docs/YUKT_015_DESIGN.md` and adds no syntax.  
-Status: 0.12 language plus **records** ([0.13.1 — Records](#0131--records)), **ownership** ([0.13.2 — Ownership](#0132--ownership)), **references** ([0.13.3 — References](#0133--references)), **foreign C** ([0.13.4 — Foreign C](#0134--foreign-c)), **errors** ([0.13.5 — Errors](#0135--errors)), **stdlib expansion** ([0.13.6 — Stdlib](#0136--stdlib)), **CPU tasks** ([0.14.1 — CPU tasks](#0141--cpu-tasks)), **growing lists** ([0.16.1 — Growing lists](#0161--growing-lists)), and **standard input and environment** ([0.16.2 — Standard input and environment](#0162--standard-input-and-environment)) **specified, not implemented**. Numerical semantics for signed overflow and float rounding are unchanged.
+Version: 0.14.1 (released as `v0.14.1`) plus **0.16.1 growing lists (implemented; not released)** plus **0.16.2 stdin / argv / environment (implemented; not released)**. `v0.13.1` exists locally and is not pushed. `v0.13.6` is `eb42a0a`. 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`. 0.15 is stabilization in `docs/YUKT_015_DESIGN.md` and adds no syntax.  
+Status: 0.12 language plus **records** ([0.13.1 — Records](#0131--records)), **ownership** ([0.13.2 — Ownership](#0132--ownership)), **references** ([0.13.3 — References](#0133--references)), **foreign C** ([0.13.4 — Foreign C](#0134--foreign-c)), **errors** ([0.13.5 — Errors](#0135--errors)), **stdlib expansion** ([0.13.6 — Stdlib](#0136--stdlib)), **CPU tasks** ([0.14.1 — CPU tasks](#0141--cpu-tasks)), **growing lists** ([0.16.1 — Growing lists](#0161--growing-lists)), and **standard input and environment** ([0.16.2 — Standard input and environment](#0162--standard-input-and-environment)). Numerical semantics for signed overflow and float rounding are unchanged.
 
-This document is the source of truth for YUKT syntax. **0.13.1 through 0.14.1 are implemented.** **0.16.1 growing lists are implemented** in the compiler, runtime, and `std/list`. **0.16.2 is specified, not implemented.** For implemented slices, if the compiler and this file disagree, that is a bug. Design notes: `docs/YUKT_016_DESIGN.md`.
+This document is the source of truth for YUKT syntax. **0.13.1 through 0.14.1 are implemented.** **0.16.1 growing lists are implemented** in the compiler, runtime, and `std/list`. **0.16.2 stdin / argv / environment are implemented** in the runtime, `std/io`, `std/env`, and `yukt run` argv forwarding. For implemented slices, if the compiler and this file disagree, that is a bug. Design notes: `docs/YUKT_016_DESIGN.md`.
 
 ## Design
 
@@ -1388,7 +1388,7 @@ A `repeat` body that structurally mutates a list, or calls a function that may, 
 
 ## 0.16.2 — Standard input and environment
 
-**Status: specified, not implemented.** No new reserved words. Programs write `use std/io` and `use std/env`.
+**Status: implemented.** No new reserved words. Programs write `use std/io` and `use std/env`.
 
 `say` remains the only stdout print. This section does not add `print` or format strings.
 

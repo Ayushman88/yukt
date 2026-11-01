@@ -1,6 +1,6 @@
 # YUKT standard library API contract
 
-Status: **now-gated modules implemented** (`std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`). 0.13 modules remain specified only. **0.16.1** `list.append` / `remove` / `pop` are implemented. **0.16.2** `std/io` and `std/env` are specified, not implemented. See `docs/STDLIB_IMPLEMENTATION_REPORT.md` and `docs/LANGUAGE_SPEC.md` § 0.16.1 and § 0.16.2.
+Status: **now-gated modules implemented** (`std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`). 0.13 modules remain specified only. **0.16.1** `list.append` / `remove` / `pop` are implemented. **0.16.2** `std/io` and `std/env` are implemented. See `docs/STDLIB_IMPLEMENTATION_REPORT.md` and `docs/LANGUAGE_SPEC.md` § 0.16.1 and § 0.16.2.
 
 This file is the source of truth for **stdlib APIs**. `docs/LANGUAGE_SPEC.md` remains the source of truth for syntax. If this document needs a new type, keyword, or operator, that change belongs in the language spec first.
 
@@ -196,7 +196,7 @@ No variance/stddev in this contract (easy to add later; omit rather than undersp
 
 ## 0.16.2 — `std/io` and `std/env`
 
-**Status: specified, not implemented.** Language surface: [`docs/LANGUAGE_SPEC.md`](LANGUAGE_SPEC.md) § 0.16.2. No new reserved words. Programs write `use std/io` and `use std/env`. `say` remains the only stdout print.
+**Status: implemented.** Language surface: [`docs/LANGUAGE_SPEC.md`](LANGUAGE_SPEC.md) § 0.16.2. No new reserved words. Programs write `use std/io` and `use std/env`. `say` remains the only stdout print.
 
 | Call | Gives | Alloc | Failure | Behavior |
 | --- | --- | --- | --- | --- |

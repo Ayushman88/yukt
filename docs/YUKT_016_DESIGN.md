@@ -1,6 +1,8 @@
 # YUKT 0.16 design — Growing collections
 
-Status: **reviewed, frozen (2026-11-01), and implemented.** D1–D11 accepted with the clarifications below. Language guarantees live in `docs/LANGUAGE_SPEC.md` (§ 0.16.1). Later 0.16 slices (stdin, environment, richer strings) are still unspecified. No new reserved words. HTTP, mutexes, and channels remain 0.17.
+Status: **reviewed, frozen (2026-11-01), and implemented.** D1–D11 accepted with the clarifications below. Language guarantees live in `docs/LANGUAGE_SPEC.md` (§ 0.16.1). **0.16.2 stdin / argv / environment is implemented.** Richer strings remain unspecified. No new reserved words. HTTP, mutexes, and channels remain 0.17.
+
+**0.16.2 note (2026-11-01):** `std/io` and `std/env` are specified in `docs/LANGUAGE_SPEC.md` § 0.16.2 / `docs/STDLIB_SPEC.md` and implemented in the runtime, wrappers, and `yukt run` argv forwarding. D1–D11 are unchanged. Concurrent `env` mutation and stdin sharing across `start` stay unspecified.
 
 **Read first:** `docs/LANGUAGE_SPEC.md` (lists, ownership, `ref`, `result`, `repeat`), `docs/STDLIB_SPEC.md`, `docs/RUNTIME.md`, `runtime/yukt_runtime.h` (`YuktList`), `compiler/backend/llvm_backend.cpp` (`list_data_pointer`, `invariant.load`), `std/list.yukt`.
 
