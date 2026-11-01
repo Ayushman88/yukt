@@ -189,6 +189,7 @@ def compile_yukt_kernel(yukt: Path, clang: str, name: str, runtime: Path) -> lis
             cmd.extend(["-isysroot", sysroot])
     if sys.platform != "darwin":
         link_cmd.append("-pthread")
+    link_cmd.append("-lm")
     for cmd in (ir_cmd, driver_cmd, link_cmd):
         built = run(cmd)
         if built.returncode != 0:
