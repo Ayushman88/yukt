@@ -1,0 +1,8 @@
+use std/list
+
+create main:
+    items = [1, 2, 3]
+    alias = items
+    repeat i in 0..(count(items) - 1):
+        list.append(alias, 4)
+    say alias

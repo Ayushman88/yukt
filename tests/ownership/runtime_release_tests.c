@@ -118,6 +118,39 @@ int main(int argc, char** argv) {
         REQUIRE(yukt_debug_live_allocs() == 0);
     }
 
+    /* Pop steals a string slot; dropping the list does not release the result. */
+    {
+        YuktList* words = yukt_list_new(2, 3);
+        yukt_list_set_cstr(words, 0, yukt_str_from_lit("a"));
+        yukt_list_set_cstr(words, 1, yukt_str_from_lit("b"));
+        REQUIRE(yukt_debug_live_allocs() == 3);
+        const char* stolen = yukt_list_pop_cstr(words);
+        REQUIRE(stolen != NULL);
+        REQUIRE(strcmp(stolen, "b") == 0);
+        REQUIRE(words->length == 1);
+        REQUIRE(yukt_debug_live_allocs() == 3);
+        yukt_release(words);
+        REQUIRE(yukt_debug_live_allocs() == 1);
+        REQUIRE(strcmp(stolen, "b") == 0);
+        yukt_release((void*)stolen);
+        REQUIRE(yukt_debug_live_allocs() == 0);
+    }
+
+    /* Growth copies live elements and does not drop them. */
+    {
+        YuktList* words = yukt_list_new(0, 3);
+        for (int i = 0; i < 9; ++i) {
+            char buf[2] = {(char)('a' + i), 0};
+            yukt_list_append_cstr(words, yukt_str_from_lit(buf));
+        }
+        REQUIRE(words->length == 9);
+        REQUIRE(words->capacity >= 9);
+        REQUIRE(strcmp(yukt_list_get_cstr(words, 0), "a") == 0);
+        REQUIRE(strcmp(yukt_list_get_cstr(words, 8), "i") == 0);
+        yukt_release(words);
+        REQUIRE(yukt_debug_live_allocs() == 0);
+    }
+
     yukt_runtime_release();
     REQUIRE(yukt_debug_live_allocs() == 0);
     return fail ? 1 : 0;

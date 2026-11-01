@@ -1,9 +1,9 @@
 # YUKT Language Specification
 
-Version: 0.14.1 (released as `v0.14.1`). `v0.13.1` exists locally and is not pushed. `v0.13.6` is `eb42a0a`. 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`. 0.15 is proposed in `docs/YUKT_015_DESIGN.md` and is **not** in this file.  
-Status: 0.12 language plus **records** ([0.13.1 — Records](#0131--records)), **ownership** ([0.13.2 — Ownership](#0132--ownership)), **references** ([0.13.3 — References](#0133--references)), **foreign C** ([0.13.4 — Foreign C](#0134--foreign-c)), **errors** ([0.13.5 — Errors](#0135--errors)), **stdlib expansion** ([0.13.6 — Stdlib](#0136--stdlib)), and **CPU tasks** ([0.14.1 — CPU tasks](#0141--cpu-tasks)). Numerical semantics for signed overflow and float rounding are unchanged.
+Version: 0.14.1 (released as `v0.14.1`) plus **0.16.1 growing lists (implemented; not released)**. `v0.13.1` exists locally and is not pushed. `v0.13.6` is `eb42a0a`. 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`. 0.15 is stabilization in `docs/YUKT_015_DESIGN.md` and adds no syntax.  
+Status: 0.12 language plus **records** ([0.13.1 — Records](#0131--records)), **ownership** ([0.13.2 — Ownership](#0132--ownership)), **references** ([0.13.3 — References](#0133--references)), **foreign C** ([0.13.4 — Foreign C](#0134--foreign-c)), **errors** ([0.13.5 — Errors](#0135--errors)), **stdlib expansion** ([0.13.6 — Stdlib](#0136--stdlib)), **CPU tasks** ([0.14.1 — CPU tasks](#0141--cpu-tasks)), and **growing lists** ([0.16.1 — Growing lists](#0161--growing-lists)). Numerical semantics for signed overflow and float rounding are unchanged.
 
-This document is the source of truth for YUKT syntax. **0.13.1 through 0.14.1 are implemented.** For implemented slices, if the compiler and this file disagree, that is a bug.
+This document is the source of truth for YUKT syntax. **0.13.1 through 0.14.1 are implemented.** **0.16.1 growing lists are implemented** in the compiler, runtime, and `std/list`. For implemented slices, if the compiler and this file disagree, that is a bug. Design notes: `docs/YUKT_016_DESIGN.md`.
 
 ## Design
 
@@ -214,9 +214,11 @@ items[1] = 21
 
 `items[i]` reads one element. `items[i] = value` replaces one element. The collection must be a list. The index must be an integer. The first element is at index `0`. From 0.13.1, `point.x = value` assigns a record field; see [Dot resolution](#dot-resolution).
 
-Lists do not grow. `items = []` still cannot be filled later. Use `zeros(n)` to allocate a list of `n` integer zeros, then assign slots.
+**Index safety is not uniform.** `items[i]` keeps the out-of-bounds rule in the next paragraph. Growing a list, removing by index, and popping use different rules; see [0.16.1 — Growing lists](#0161--growing-lists). Do not read this subsection as “all list indexing is safe.”
 
-Integer and float index reads and writes are unchecked so numeric loops can vectorize. An out-of-range index on those lists is undefined. Boolean, string, and nested-list indexes still trap in the runtime.
+Integer and float index reads and writes are unchecked so numeric loops can vectorize. An out-of-range index on those lists is **undefined**. Boolean, string, nested-list, and record-list indexes still trap in the runtime. Changing `items[i]` to trap on integer/float lists is a future language decision, not a silent 0.16 change.
+
+`zeros(n)` still allocates a list of `n` integer zeros. From 0.16.1, a list may grow after allocation (`list.append`). `items = []` can be filled once the element type is known.
 
 ### Built-in functions
 
@@ -1252,4 +1254,135 @@ No current `.yukt` file uses `wait` as an identifier. `task` is not reserved. Co
 - `start` inside a planned-parallel `repeat` is rejected
 - Worker traps abort the process with `YUKT runtime error:`
 - Running-wait cycles can hang; 0.14.1 has no timeout or detector
+
+## 0.16.1 — Growing lists
+
+**Status: implemented.** Frozen with `docs/YUKT_016_DESIGN.md` (2026-11-01). No new reserved words. Verified on macOS arm64 (`ctest` 43/43), including `tests/runtime/grow_oom_keeps_list.c` and a C-level generation-guard test that does not go through compile-time resize rejection. Linux x86-64 CI is still required before a release.
+
+Programs that never call `list.append`, `list.remove`, or `list.pop` keep 0.14.1 meaning.
+
+### Model
+
+There is one type, `list[E]`. Literals, `zeros(n)`, `[]`, `list.copy`, `list.slice`, and `str.split` produce values of that type. Any of them may later grow or shrink.
+
+A list **value** is the header. Structural mutation does not create a new list and does not move the owner. A `ref list` taken before `append` remains valid after `append`. Slots are addressed by **logical index**, not by payload address. There is no operation that exposes an element pointer.
+
+`count(items)` and `list.len(items)` are the number of live elements, never capacity. Capacity is not a source-level value. After a successful `append`, `count` increases by one. After a successful `remove` or `pop`, `count` decreases by one. A sequence of `n` appends from empty is amortized O(1) per append. The growth factor is not part of this language.
+
+`items = []` is a live list of length 0. The first `append` / index / `fill` that mentions it fixes `E`. `[]` used only with `count` still cannot infer `E`.
+
+### Index safety boundary
+
+These three cases are different. 0.16.1 does not make all list indexing safe.
+
+| Form | Invalid index or empty | 
+| --- | --- |
+| `items[i]` / `items[i] = v` | **0.14.1 unchanged.** Integer and float: undefined. Boolean, string, nested-list, record-list: trap. |
+| `list.remove(items, i)` | **Trap** if `i < 0` or `i >= count(items)`, including `list[integer]`. Message: `list index out of range`. |
+| `list.pop(items)` | **Trap** if `count(items) == 0`. Message: `Cannot pop from an empty list`. |
+
+A later checked `items[i]` needs its own spec. It must not be slipped in as a fix.
+
+### Operations
+
+Require `use std/list`. First argument is a borrow of a list place (local, parameter, or `ref list`). The list stays Owned.
+
+```yukt
+use std/list
+
+create main:
+    names = []
+    list.append(names, "ann")
+    s = list.pop(names)
+    say s
+```
+
+| Call | Gives | Effect |
+| --- | --- | --- |
+| `list.append(items, value)` | void | New last slot. Plain `E`: copy in. Heap `E`: move `value` in; source becomes Moved. |
+| `list.remove(items, index)` | `E` | Remove `items[index]`. Remaining elements **shift left** and keep their relative order. The result owns the removed element; the list does not. |
+| `list.pop(items)` | `E` | `remove` of the last index, except empty is `Cannot pop from an empty list`. |
+
+`s = list.pop(names)`: `s` owns the removed element. `names` no longer does. Dropping `names` must not release `s`. The same transfer applies to `remove`. `s = names[0]` for heap `E` remains `Cannot move out of list element`.
+
+As a statement, `list.remove` / `list.pop` drops the returned value.
+
+`list.append(items, items)` is a type error, or `Use after move` / `Cannot move out of a ref` when `E` is a list. Self-append is not defined. `list.append(items, items[0])` for heap `E` is `Cannot move out of list element`.
+
+Evaluation order: the list place, then `value`, then mutate. If evaluating `value` fails, the list is unchanged.
+
+There is no `list.insert`, `list.clear`, `list.resize`, `list.push`, `list.cap`, or `list.reserve`. `items.append(1)` is still an error (`.` is not a method).
+
+### Allocation failure
+
+If growth cannot allocate, the process traps (`out of memory` or `list too large`). That is not `fail`. The destination remains a valid list: same owner, same `count`, same elements. No element is dropped, duplicated, or left half-moved. `count` does not change. Integer overflow of `count + 1` or of the byte size traps (`list too large`) with the same validity rule.
+
+### Iteration
+
+No new loop form. Use `repeat i in 0..(count(items) - 1):`. On an empty list that is `0..-1` and does not run. Range bounds are evaluated once.
+
+**Slot mutation** (`items[i] = v`) during that `repeat` is allowed if `i` is in range at the write.
+
+**Structural mutation** (`list.append` / `remove` / `pop`) of a list that is an **iteration subject** of an enclosing `repeat` is `Cannot resize list during iteration`.
+
+A list is an iteration subject of a `repeat` when that `repeat` (including nested) mentions its header in the range, indexes it, or passes it as `ref list`. The subject is the **header**, not the variable name.
+
+`alias = items` is a **move**. `items` becomes Moved. That is `Use after move` if `items` is used afterward. Two Owned names never share a header. A real alias is a `ref list` to the same header:
+
+```yukt
+use std/list
+
+create grow(dest: ref list):
+    list.append(dest, 0)
+
+create main:
+    xs = [1, 2, 3]
+    repeat i in 0..(count(xs) - 1):
+        grow(xs)
+```
+
+Rejected at `grow(xs)`.
+
+To drain, snapshot length first:
+
+```yukt
+n = count(items)
+repeat i in 1..n:
+    say list.pop(items)
+```
+
+The runtime keeps a generation on the header (not user-visible). An in-flight index iteration snapshots it. Structural mutation increments it. A mismatch traps `list changed during iteration`.
+
+A `repeat` body that structurally mutates a list, or calls a function that may, is not independent and must stay sequential.
+
+### Ownership
+
+0.13.2 / 0.13.3 stand. Additions:
+
+- `append` / `remove` / `pop` borrow the list.
+- `remove` / `pop` are the only steal of a heap element.
+- Reallocation must not drop elements.
+- After `remove` / `pop`, the vacated slot is not an owner.
+- List elements are still not places. `list.append(outer[0], 2)` is `Cannot borrow a temporary`.
+- `start` still cannot take `ref`. Tasks cannot share one list.
+
+### Implementation constraints (not user syntax)
+
+- Header field order, if `capacity` is added, stays `length`, `kind`, `data`, `stride`, then capacity.
+- A pointer derived from a list payload must not be treated as invariant across a region in which that list may be structurally mutated. Any optimization relying on payload stability must prove the list cannot be resized during that region. The header stays stable; the payload may move.
+- Allocate a new payload before installing it. On failure, leave the old payload installed, then trap.
+
+### Regression gate (0.16.1, after implementation)
+
+- Entire existing CTest suite green.
+- `s = items[0]` for heap `E` still rejected.
+- `items[i]` on integer/float lists still has 0.14.1 out-of-bounds meaning.
+- `list.remove` / `list.pop` trap as specified; they do not become `fail`.
+- `s = list.pop(names)` transfers ownership; dropping the list does not free `s`.
+- `remove` shifts left and preserves order.
+- Self-append rejected.
+- Structural mutation of an iteration subject rejected, including through `ref list`.
+- `alias = items` remains a move.
+- Failed growth does not change `count` or drop elements.
+- Do not overwrite `benchmarks/results-0.11.json`.
 

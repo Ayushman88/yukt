@@ -1,0 +1,16 @@
+use std/list
+
+create main:
+    words = []
+    list.append(words, "a")
+    list.append(words, "b")
+    list.append(words, "c")
+    list.append(words, "d")
+    list.append(words, "e")
+    list.append(words, "f")
+    list.append(words, "g")
+    list.append(words, "h")
+    list.append(words, "i")
+    say count(words)
+    say words[0]
+    say words[8]

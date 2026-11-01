@@ -1,0 +1,14 @@
+use std/list
+
+record Profile:
+    name: string
+    n: integer
+
+create main:
+    people = []
+    p = Profile("ann", 3)
+    list.append(people, p)
+    q = list.pop(people)
+    say q.name
+    say q.n
+    say count(people)

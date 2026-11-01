@@ -1,0 +1,7 @@
+use std/list
+
+create main:
+    words = ["a", "b", "c"]
+    gone = list.remove(words, 1)
+    say gone
+    say words

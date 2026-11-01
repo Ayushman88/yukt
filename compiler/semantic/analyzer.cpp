@@ -158,6 +158,11 @@ private:
     void consume_heap_expr(const Expr* expr);
     void reject_field_move(const Expr* expr, SourceLocation location);
     void reject_list_element_move(const Expr* expr, SourceLocation location);
+    void collect_list_places(const Expr* expr, std::unordered_set<std::string>& names);
+    void collect_indexed_lists(const Expr* expr, std::unordered_set<std::string>& names);
+    void collect_list_places_stmt(const Stmt* stmt, std::unordered_set<std::string>& names);
+    bool is_iteration_subject(const std::string& name) const;
+    void reject_resize_during_iteration(const std::string& name, SourceLocation location);
 
     bool expect_type(Type actual, Type expected, SourceLocation location, std::string title, std::string detail,
                      std::string suggestion);
@@ -199,6 +204,8 @@ private:
     std::unordered_map<std::string, SourceLocation> unhandled_results_;
     std::unordered_map<std::string, SourceLocation> unused_tasks_;
     int repeat_depth_ = 0;
+    std::vector<std::unordered_set<std::string>> iteration_subjects_;
+    std::unordered_map<const RepeatStmt*, std::vector<std::string>> repeat_iter_lists_;
 };
 
 bool is_numeric(Type type) {
@@ -267,35 +274,35 @@ SemanticInfo Analyzer::run() {
             continue;
         }
         for (const auto& function : program->functions) {
-            if (function == nullptr) {
-                continue;
-            }
+        if (function == nullptr) {
+            continue;
+        }
             const std::string ir_name = ir_name_for(module_index, *function);
             auto found = functions_.find(ir_name);
             if (found == functions_.end() || found->second == nullptr) {
-                continue;
-            }
+            continue;
+        }
             const FunctionSymbol& symbol = *found->second;
-            InferredFunction inferred;
-            inferred.name = function->name;
+        InferredFunction inferred;
+        inferred.name = function->name;
             inferred.ir_name = ir_name;
             inferred.return_type = types_.to_string(symbol.return_type);
-            for (std::size_t i = 0; i < function->parameters.size(); ++i) {
+        for (std::size_t i = 0; i < function->parameters.size(); ++i) {
                 std::string type_name = types_.to_string(symbol.parameters[i]);
                 if (i < symbol.param_is_ref.size() && symbol.param_is_ref[i]) {
                     type_name = "ref " + type_name;
                 }
-                inferred.parameters.push_back(InferredBinding{
-                    function->parameters[i],
+            inferred.parameters.push_back(InferredBinding{
+                function->parameters[i],
                     std::move(type_name),
-                });
-            }
+            });
+        }
             for (const auto& local : symbol.locals) {
-                inferred.locals.push_back(InferredBinding{local.name, types_.to_string(local.type)});
-            }
-            std::sort(inferred.locals.begin(), inferred.locals.end(),
-                      [](const InferredBinding& left, const InferredBinding& right) { return left.name < right.name; });
-            info.functions.push_back(std::move(inferred));
+            inferred.locals.push_back(InferredBinding{local.name, types_.to_string(local.type)});
+        }
+        std::sort(inferred.locals.begin(), inferred.locals.end(),
+                  [](const InferredBinding& left, const InferredBinding& right) { return left.name < right.name; });
+        info.functions.push_back(std::move(inferred));
             info.return_types[ir_name] = types_.prune(symbol.return_type);
             info.parameter_types[ir_name] = symbol.parameters;
             info.parameter_refs[ir_name] = symbol.param_is_ref;
@@ -303,21 +310,22 @@ SemanticInfo Analyzer::run() {
                 info.foreign_functions.insert(ir_name);
             }
             for (auto& parameter : info.parameter_types[ir_name]) {
-                parameter = types_.prune(parameter);
-            }
-            std::unordered_map<std::string, Type> locals;
-            for (std::size_t i = 0; i < function->parameters.size(); ++i) {
+            parameter = types_.prune(parameter);
+        }
+        std::unordered_map<std::string, Type> locals;
+        for (std::size_t i = 0; i < function->parameters.size(); ++i) {
                 locals[function->parameters[i]] = info.parameter_types[ir_name][i];
-            }
+        }
             for (const auto& local : symbol.locals) {
-                locals[local.name] = types_.prune(local.type);
-            }
+            locals[local.name] = types_.prune(local.type);
+        }
             info.local_types[ir_name] = std::move(locals);
         }
     }
     for (const auto& [expr, type] : expr_types_) {
         info.expression_types[expr] = types_.prune(type);
     }
+    info.repeat_iter_lists = repeat_iter_lists_;
     return info;
 }
 
@@ -352,9 +360,9 @@ void Analyzer::collect_functions() {
         }
         const bool is_entry = module_index == 0;
         for (const auto& function : program->functions) {
-            if (function == nullptr) {
-                continue;
-            }
+        if (function == nullptr) {
+            continue;
+        }
             if (function->shared && function->name == "main") {
                 error(function->name_location, "Invalid entry point",
                       "`create main` cannot be `share`.",
@@ -366,10 +374,10 @@ void Analyzer::collect_functions() {
                       "Move `main` to the file passed to `yukt build`, or rename this function.");
             }
             if (module_lookup_[static_cast<std::size_t>(module_index)].contains(function->name)) {
-                error(function->name_location, "Duplicate function",
-                      "A function named `" + function->name + "` is already defined.",
-                      "Give this function a different name.");
-                continue;
+            error(function->name_location, "Duplicate function",
+                  "A function named `" + function->name + "` is already defined.",
+                  "Give this function a different name.");
+            continue;
             }
             const std::string ir_name = ir_name_for(module_index, *function);
             if (functions_.contains(ir_name)) {
@@ -983,14 +991,14 @@ void Analyzer::walk_functions() {
             continue;
         }
         for (const auto& function : program->functions) {
-            if (function == nullptr) {
-                continue;
-            }
+        if (function == nullptr) {
+            continue;
+        }
             const std::string ir_name = ir_name_for(module_index, *function);
             auto found = functions_.find(ir_name);
             if (found == functions_.end() || found->second == nullptr) {
-                continue;
-            }
+            continue;
+        }
             if (is_stdlib_runtime_ir(ir_name)) {
                 continue;
             }
@@ -1309,8 +1317,8 @@ void Analyzer::analyze_function(FunctionSymbol& function) {
                 }
             }
         } else {
-            for (const auto& stmt : function.decl->body) {
-                analyze_statement(stmt.get());
+        for (const auto& stmt : function.decl->body) {
+            analyze_statement(stmt.get());
             }
         }
 
@@ -1429,8 +1437,8 @@ void Analyzer::analyze_assignment(const AssignStmt& stmt) {
         }
         if (!types_.unify(value_type, existing->type)) {
             error(stmt.name_location, "Type mismatch",
-                  "`" + stmt.name + "` has type " + types_.to_string(existing->type) + " but this assignment has type " +
-                      types_.to_string(value_type) + ".",
+                    "`" + stmt.name + "` has type " + types_.to_string(existing->type) + " but this assignment has type " +
+                        types_.to_string(value_type) + ".",
                   "Assign a value of type " + types_.to_string(existing->type) + ".",
                   {{existing->location, "first assigned here as " + types_.to_string(existing->type)}});
         }
@@ -1746,6 +1754,17 @@ void Analyzer::analyze_repeat(const RepeatStmt& stmt) {
         }
     }
 
+    std::unordered_set<std::string> subjects;
+    collect_list_places(stmt.start.get(), subjects);
+    collect_list_places(stmt.end.get(), subjects);
+    for (const auto& body_stmt : stmt.body) {
+        collect_list_places_stmt(body_stmt.get(), subjects);
+    }
+    std::vector<std::string> subject_list(subjects.begin(), subjects.end());
+    std::sort(subject_list.begin(), subject_list.end());
+    repeat_iter_lists_[&stmt] = subject_list;
+    iteration_subjects_.push_back(std::move(subjects));
+
     const bool nested = repeat_depth_ > 0;
     ++repeat_depth_;
     push_scope();
@@ -1754,6 +1773,9 @@ void Analyzer::analyze_repeat(const RepeatStmt& stmt) {
     }
     for (const auto& body_stmt : stmt.body) {
         analyze_statement(body_stmt.get());
+    }
+    if (!iteration_subjects_.empty()) {
+        iteration_subjects_.pop_back();
     }
     pop_scope();
     --repeat_depth_;
@@ -2417,12 +2439,12 @@ Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
     own_call_args(expr, function);
 
     const Type result = function->return_type;
-        if (result_used) {
-            require_non_void(result, expr.callee_location,
-                             "`" + expr.callee + "` does not give a value, so it cannot be used in an expression.",
-                             "Call `" + expr.callee + "(...)` as a statement, or add a `give` to the function.");
-        }
-        return result;
+    if (result_used) {
+        require_non_void(result, expr.callee_location,
+                         "`" + expr.callee + "` does not give a value, so it cannot be used in an expression.",
+                         "Call `" + expr.callee + "(...)` as a statement, or add a `give` to the function.");
+    }
+    return result;
 }
 
 Type Analyzer::analyze_start(const StartExpr& expr) {
@@ -2717,6 +2739,73 @@ Type Analyzer::analyze_stdlib_call(FunctionSymbol& function, const CallExpr& exp
         expect_type(analyze_arg(2), integer_type(), arg_location(2), "Type mismatch",
                     "`" + display + "` expects an integer end.", "Pass an integer index.");
         return finish(list_type(elem));
+    }
+    auto borrow_list_dest = [&](std::size_t i, Type expected_list) {
+        (void)expected_list;
+        if (i >= expr.arguments.size() || expr.arguments[i] == nullptr) {
+            return;
+        }
+        const std::string dest_place = borrow_place_name(expr.arguments[i].get());
+        if (dest_place.empty() || lookup_local(dest_place) == nullptr) {
+            error(arg_location(i), "Cannot borrow a temporary",
+                  "A list destination must be a local, a parameter, or a record field.",
+                  "Pass a name, for example `list.append(items, value)`.");
+            return;
+        }
+        own_check_read(dest_place, arg_location(i));
+        reject_resize_during_iteration(dest_place, arg_location(i));
+    };
+    if (ir == "std$list$append") {
+        if (!require_arity(2)) {
+            return finish(void_type());
+        }
+        Type elem = types_.fresh_variable();
+        const Type dest_type = analyze_arg(0);
+        expect_type(dest_type, list_type(elem), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a list.", "Pass a list.");
+        borrow_list_dest(0, dest_type);
+        const Type value = analyze_arg(1);
+        expect_type(value, elem, arg_location(1), "Type mismatch",
+                    "`" + display + "` requires a value that matches the list element type.",
+                    "Pass a value of the same type as the list elements.");
+        const std::string dest_place = borrow_place_name(expr.arguments[0].get());
+        const std::string value_place = borrow_place_name(expr.arguments[1].get());
+        if (!dest_place.empty() && dest_place == value_place) {
+            if (is_ref_parameter(dest_place)) {
+                error(arg_location(1), "Cannot move out of a ref",
+                      "`" + dest_place + "` is a `ref`, so it cannot be moved out of.",
+                      "Mutate the place through the `ref`, or pass the `ref` along.");
+            } else {
+                error(arg_location(1), "Use after move",
+                      "`" + dest_place + "` cannot be appended to itself.",
+                      "This value was moved. Use the new owner, or copy with list.copy before moving.");
+            }
+        } else if (type_owns_heap(types_, elem, &records_)) {
+            consume_heap_expr(expr.arguments[1].get());
+        }
+        return finish(void_type());
+    }
+    if (ir == "std$list$remove") {
+        if (!require_arity(2)) {
+            return finish(types_.fresh_variable());
+        }
+        Type elem = types_.fresh_variable();
+        expect_type(analyze_arg(0), list_type(elem), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a list.", "Pass a list.");
+        borrow_list_dest(0, list_type(elem));
+        expect_type(analyze_arg(1), integer_type(), arg_location(1), "Type mismatch",
+                    "`" + display + "` expects an integer index.", "Pass an integer index.");
+        return finish(elem);
+    }
+    if (ir == "std$list$pop") {
+        if (!require_arity(1)) {
+            return finish(types_.fresh_variable());
+        }
+        Type elem = types_.fresh_variable();
+        expect_type(analyze_arg(0), list_type(elem), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a list.", "Pass a list.");
+        borrow_list_dest(0, list_type(elem));
+        return finish(elem);
     }
     if (ir == "std$sort$asc" || ir == "std$sort$desc") {
         require_arity(1);
@@ -3169,6 +3258,9 @@ void Analyzer::borrow_argument(const Expr* expr, std::unordered_set<std::string>
         return;
     }
     own_check_read(place, expr->span.start);
+    if (expr_types_.contains(expr) && types_.prune(expr_types_.at(expr)).kind == TypeKind::List) {
+        reject_resize_during_iteration(place, expr->span.start);
+    }
     borrowed.insert(place);
 }
 
@@ -3250,6 +3342,182 @@ void Analyzer::reject_list_element_move(const Expr* expr, SourceLocation locatio
           "Copy the list with list.copy, or use the element in place.");
 }
 
+void Analyzer::collect_list_places(const Expr* expr, std::unordered_set<std::string>& names) {
+    if (expr == nullptr) {
+        return;
+    }
+    if (const auto* id = dynamic_cast<const IdentifierExpr*>(expr)) {
+        names.insert(id->name);
+        return;
+    }
+    if (const auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+        collect_list_places(unary->operand.get(), names);
+        return;
+    }
+    if (const auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+        collect_list_places(binary->left.get(), names);
+        collect_list_places(binary->right.get(), names);
+        return;
+    }
+    if (const auto* call = dynamic_cast<const CallExpr*>(expr)) {
+        for (const auto& argument : call->arguments) {
+            collect_list_places(argument.get(), names);
+        }
+        return;
+    }
+    if (const auto* list = dynamic_cast<const ListExpr*>(expr)) {
+        for (const auto& element : list->elements) {
+            collect_list_places(element.get(), names);
+        }
+        return;
+    }
+    if (const auto* index = dynamic_cast<const IndexExpr*>(expr)) {
+        const std::string place = borrow_place_name(index->collection.get());
+        if (!place.empty()) {
+            names.insert(place);
+        }
+        collect_list_places(index->collection.get(), names);
+        collect_list_places(index->index.get(), names);
+        return;
+    }
+    if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
+        collect_list_places(field->object.get(), names);
+        return;
+    }
+    if (const auto* start = dynamic_cast<const StartExpr*>(expr)) {
+        for (const auto& argument : start->arguments) {
+            collect_list_places(argument.get(), names);
+        }
+        return;
+    }
+    if (const auto* wait = dynamic_cast<const WaitExpr*>(expr)) {
+        collect_list_places(wait->task.get(), names);
+    }
+}
+
+void Analyzer::collect_indexed_lists(const Expr* expr, std::unordered_set<std::string>& names) {
+    if (expr == nullptr) {
+        return;
+    }
+    if (const auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+        collect_indexed_lists(unary->operand.get(), names);
+        return;
+    }
+    if (const auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+        collect_indexed_lists(binary->left.get(), names);
+        collect_indexed_lists(binary->right.get(), names);
+        return;
+    }
+    if (const auto* call = dynamic_cast<const CallExpr*>(expr)) {
+        for (const auto& argument : call->arguments) {
+            collect_indexed_lists(argument.get(), names);
+        }
+        return;
+    }
+    if (const auto* list = dynamic_cast<const ListExpr*>(expr)) {
+        for (const auto& element : list->elements) {
+            collect_indexed_lists(element.get(), names);
+        }
+        return;
+    }
+    if (const auto* index = dynamic_cast<const IndexExpr*>(expr)) {
+        const std::string place = borrow_place_name(index->collection.get());
+        if (!place.empty()) {
+            names.insert(place);
+        }
+        collect_indexed_lists(index->collection.get(), names);
+        collect_indexed_lists(index->index.get(), names);
+        return;
+    }
+    if (const auto* field = dynamic_cast<const FieldExpr*>(expr)) {
+        collect_indexed_lists(field->object.get(), names);
+        return;
+    }
+    if (const auto* start = dynamic_cast<const StartExpr*>(expr)) {
+        for (const auto& argument : start->arguments) {
+            collect_indexed_lists(argument.get(), names);
+        }
+        return;
+    }
+    if (const auto* wait = dynamic_cast<const WaitExpr*>(expr)) {
+        collect_indexed_lists(wait->task.get(), names);
+    }
+}
+
+void Analyzer::collect_list_places_stmt(const Stmt* stmt, std::unordered_set<std::string>& names) {
+    if (stmt == nullptr) {
+        return;
+    }
+    if (const auto* assign = dynamic_cast<const AssignStmt*>(stmt)) {
+        collect_indexed_lists(assign->value.get(), names);
+        return;
+    }
+    if (const auto* index_assign = dynamic_cast<const IndexAssignStmt*>(stmt)) {
+        const std::string place = borrow_place_name(index_assign->collection.get());
+        if (!place.empty()) {
+            names.insert(place);
+        }
+        collect_indexed_lists(index_assign->collection.get(), names);
+        collect_indexed_lists(index_assign->index.get(), names);
+        collect_indexed_lists(index_assign->value.get(), names);
+        return;
+    }
+    if (const auto* field_assign = dynamic_cast<const FieldAssignStmt*>(stmt)) {
+        if (dynamic_cast<const IndexExpr*>(field_assign->object.get()) != nullptr) {
+            const std::string place = borrow_place_name(field_assign->object.get());
+            if (!place.empty()) {
+                names.insert(place);
+            }
+        }
+        collect_indexed_lists(field_assign->object.get(), names);
+        collect_indexed_lists(field_assign->value.get(), names);
+        return;
+    }
+    if (const auto* say = dynamic_cast<const SayStmt*>(stmt)) {
+        collect_indexed_lists(say->value.get(), names);
+        return;
+    }
+    if (const auto* give = dynamic_cast<const GiveStmt*>(stmt)) {
+        collect_indexed_lists(give->value.get(), names);
+        return;
+    }
+    if (const auto* expr_stmt = dynamic_cast<const ExprStmt*>(stmt)) {
+        collect_indexed_lists(expr_stmt->expr.get(), names);
+        return;
+    }
+    if (const auto* iff = dynamic_cast<const IfStmt*>(stmt)) {
+        collect_indexed_lists(iff->condition.get(), names);
+        for (const auto& inner : iff->then_branch) {
+            collect_list_places_stmt(inner.get(), names);
+        }
+        for (const auto& inner : iff->otherwise_branch) {
+            collect_list_places_stmt(inner.get(), names);
+        }
+        return;
+    }
+    if (dynamic_cast<const RepeatStmt*>(stmt) != nullptr) {
+        return;
+    }
+}
+
+bool Analyzer::is_iteration_subject(const std::string& name) const {
+    for (const auto& frame : iteration_subjects_) {
+        if (frame.contains(name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void Analyzer::reject_resize_during_iteration(const std::string& name, SourceLocation location) {
+    if (name.empty() || !is_iteration_subject(name)) {
+        return;
+    }
+    error(location, "Cannot resize list during iteration",
+          "This list is the subject of an enclosing `repeat`, so it cannot grow or shrink here.",
+          "Resize before or after the loop, or drain with a snapshot length such as `n = count(items)`.");
+}
+
 void Analyzer::reject_field_move(const Expr* expr, SourceLocation location) {
     const auto* field = dynamic_cast<const FieldExpr*>(expr);
     if (field == nullptr) {
@@ -3284,7 +3552,8 @@ void Analyzer::error(SourceLocation location, std::string title, std::string det
                                  title == "Cannot move out of record field" || title == "Cannot move out of list element" ||
                                  title == "Overlapping borrow" || title == "Cannot borrow a temporary" ||
                                  title == "Cannot give a ref" || title == "Cannot move out of a ref" ||
-                                 title == "Cannot move while borrowed";
+                                 title == "Cannot move while borrowed" ||
+                                 title == "Cannot resize list during iteration";
     if (ownership_pass_ != ownership_title) {
         return;
     }
@@ -3297,7 +3566,8 @@ void Analyzer::error(SourceLocation location, std::string title, std::string det
                                  title == "Cannot move out of record field" || title == "Cannot move out of list element" ||
                                  title == "Overlapping borrow" || title == "Cannot borrow a temporary" ||
                                  title == "Cannot give a ref" || title == "Cannot move out of a ref" ||
-                                 title == "Cannot move while borrowed";
+                                 title == "Cannot move while borrowed" ||
+                                 title == "Cannot resize list during iteration";
     if (ownership_pass_ != ownership_title) {
         return;
     }

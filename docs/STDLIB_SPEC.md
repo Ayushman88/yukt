@@ -1,6 +1,6 @@
 # YUKT standard library API contract
 
-Status: **now-gated modules implemented** (`std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`). 0.13 modules remain specified only. See `docs/STDLIB_IMPLEMENTATION_REPORT.md`.
+Status: **now-gated modules implemented** (`std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`). 0.13 modules remain specified only. **0.16.1** `list.append` / `remove` / `pop` are implemented. See `docs/STDLIB_IMPLEMENTATION_REPORT.md` and `docs/LANGUAGE_SPEC.md` § 0.16.1.
 
 This file is the source of truth for **stdlib APIs**. `docs/LANGUAGE_SPEC.md` remains the source of truth for syntax. If this document needs a new type, keyword, or operator, that change belongs in the language spec first.
 
@@ -27,10 +27,10 @@ Implementation of a section starts only when that section is tagged **now**.
 
 - **No new syntax** in the library. Calls look like `alias.name(...)`. No `list.len`, no `s[i]` on strings, no type annotations, no generics.
 - **Types in 0.12:** integer (`i64`), float (`f64`), boolean, string, list of one element type. No map, set, struct, error, or char type.
-- **Lists do not grow.** Length is fixed at allocation (`[1, 2, 3]` or `zeros(n)`). Index assignment replaces a slot. There is no `append`, `pop`, or `resize`.
+- **Lists grow only through specified calls.** `list.append` / `list.remove` / `list.pop` are 0.16.1 ([`docs/LANGUAGE_SPEC.md`](LANGUAGE_SPEC.md) § 0.16.1). Index assignment still replaces a slot and does not change `count`. There is no `resize`, `push`, `cap`, or `reserve`.
 - **Strings are immutable byte strings.** `+` concatenates and allocates. There is no string index syntax. Indices in `std/str` are **byte offsets**, 0-based. Encoding is the compiler’s C string: NUL-terminated bytes. UTF-8 decoding is not part of this contract.
 - **Allocator:** size-class caches in `docs/RUNTIME.md`. Not thread-safe. No intra-function free in 0.12. Heap lists and strings are released when `yukt_main` returns. Reuse after `yukt_runtime_release` is bounded (four slots per class, 8,948,352 bytes retained). Collections must use this model.
-- **Forbidden promises:** garbage collection, implicit dynamic resizing, and safe concurrent allocation. A library function that allocates must not run inside a compiler-parallelized `repeat` (same rule as `zeros` / concat today).
+- **Forbidden promises:** garbage collection, silent resize without `list.append` / `remove` / `pop`, and safe concurrent allocation. A library function that allocates must not run inside a compiler-parallelized `repeat` (same rule as `zeros` / concat today). `list.append` is an explicit resize, not an implicit one.
 - **Numeric lists:** out-of-range `items[i]` is **undefined**. Boolean, string, and nested-list indexes **trap**. Stdlib functions that index numeric lists inherit undefined-on-OOB unless the row says **trap**.
 - **Signed integer overflow** is undefined. Float association/rounding may change with parallel chunking (`docs/LANGUAGE_SPEC.md`).
 - **`count` and `zeros` stay compiler builtins.** Library wrappers may call them. A user `create count` still shadows the builtin in that file.
@@ -54,7 +54,7 @@ Until 0.13 specifies an error type in the language spec:
 | Path | Alias | Gate | Role |
 | --- | --- | --- | --- |
 | `std/str` | `str` | now | Byte-string helpers |
-| `std/list` | `list` | now | Fixed-length list helpers |
+| `std/list` | `list` | now | List helpers, including 0.16.1 `append` / `remove` / `pop` |
 | `std/sort` | `sort` | now | In-place sort and binary search |
 | `std/math` | `math` | now | Scalar math |
 | `std/stat` | `stat` | now | Reductions on numeric lists |
@@ -106,19 +106,22 @@ No `to_upper` / Unicode case folding in this contract (byte strings, not charact
 
 Implementation: **YUKT** for integer and float lists that only read/write existing slots; **runtime** when a new list of a non-integer element type must be allocated (`zeros` only builds `list[integer]`).
 
-`src` and `dest` are lists. Lengths come from `count`. These functions do not grow lists.
+`src` and `dest` are lists. Lengths come from `count`. `len` / `copy` / `fill` / `reverse` / `slice` do not change `count` except that `copy` / `slice` produce a new list.
 
 | Call | Gives | Mutates | Alloc | Failure | Behavior |
 | --- | --- | --- | --- | --- | --- |
-| `list.len(items)` | integer | no | no | — | Same as `count(items)`. |
-| `list.copy(src)` | list | no | yes | — | New list, same length and element type, elementwise copy. Numeric OOB does not apply (full length). |
+| `list.len(items)` | integer | no | no | — | Same as `count(items)`. Not capacity. |
+| `list.copy(src)` | list | no | yes | — | New list, same length and element type, elementwise copy. Numeric OOB does not apply (full length). The copy may later grow. |
 | `list.fill(dest, value)` | void | dest | no | type mismatch is a compile error | Every slot becomes `value`. `value` must match the element type. Lists of records are a type mismatch; record fill is not implemented. Assign with `items[i] = value`. |
 | `list.reverse(dest)` | void | dest | no | — | Reverse in place. |
-| `list.slice(src, start, end)` | list | no | yes | **trap** if `start < 0`, `end < start`, or `end > count(src)` | New list of length `end - start` (end exclusive), elementwise copy of that range. |
+| `list.slice(src, start, end)` | list | no | yes | **trap** if `start < 0`, `end < start`, or `end > count(src)` | New list of length `end - start` (end exclusive), elementwise copy of that range. The slice may later grow. |
+| `list.append(dest, value)` | void | dest | maybe | OOM / `list too large` **trap**; dest stays valid with old `count` | 0.16.1. New last slot. Heap `value` is moved. See `LANGUAGE_SPEC` § 0.16.1. |
+| `list.remove(dest, index)` | element | dest | no | **trap** if `index < 0` or `index >= count(dest)` | 0.16.1. Returns the removed element (ownership transfer). Remaining elements shift left, order preserved. |
+| `list.pop(dest)` | element | dest | no | **trap** if empty (`Cannot pop from an empty list`) | 0.16.1. Remove last. Ownership transfer. |
 
-There is **no** `list.append`, `list.pop`, `list.resize`, or `list.push`. A program that needs more slots allocates a larger list (`zeros`, a literal, or `list.copy` into a bigger dest it already has) and copies. The library will not hide that.
+There is **no** `list.resize`, `list.push`, `list.cap`, or `list.reserve`. `items[i]` is not `list.get` / `list.set`.
 
-`list.get` / `list.set` are not provided; use `items[i]` and `items[i] = v`.
+`list.get` / `list.set` are not provided; use `items[i]` and `items[i] = v`. `items[i]` out-of-bounds is still the 0.14.1 index rule, not the `remove` / `pop` trap rule.
 
 ## `std/array` — 0.13
 

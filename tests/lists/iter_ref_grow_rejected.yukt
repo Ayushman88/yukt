@@ -1,0 +1,10 @@
+use std/list
+
+create grow(dest: ref list):
+    list.append(dest, 0)
+
+create main:
+    xs = [1, 2, 3]
+    repeat i in 0..(count(xs) - 1):
+        grow(xs)
+    say xs

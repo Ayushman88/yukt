@@ -1,0 +1,7 @@
+use std/list
+
+create main:
+    items = []
+    list.append(items, 1)
+    say list.pop(items)
+    say list.remove(items, 0)

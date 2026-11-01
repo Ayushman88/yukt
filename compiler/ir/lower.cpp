@@ -133,13 +133,15 @@ bool call_name_allocates(const std::string& qualifier, const std::string& callee
         return true;
     }
     if (callee == "ok" || callee == "fail" || callee == "std$list$copy" || callee == "std$list$slice" ||
-        callee == "std$str$concat" || callee == "std$str$slice" || callee == "std$str$repeat" ||
-        callee == "std$str$join" || callee == "std$str$split" || callee == "std$map$new" ||
-        callee == "std$set$new" || callee == "std$json$parse_unchecked" || callee == "std$file$read_unchecked") {
+        callee == "std$list$append" || callee == "std$str$concat" || callee == "std$str$slice" ||
+        callee == "std$str$repeat" || callee == "std$str$join" || callee == "std$str$split" ||
+        callee == "std$map$new" || callee == "std$set$new" || callee == "std$json$parse_unchecked" ||
+        callee == "std$file$read_unchecked") {
         return true;
     }
     const std::string qualified = qualifier.empty() ? callee : qualifier + "." + callee;
-    return qualified == "list.copy" || qualified == "list.slice" || qualified == "str.concat" ||
+    return qualified == "list.copy" || qualified == "list.slice" || qualified == "list.append" ||
+           qualified == "str.concat" ||
            qualified == "str.slice" || qualified == "str.repeat" || qualified == "str.join" ||
            qualified == "str.split" || qualified == "map.new" || qualified == "set.new" ||
            qualified == "json.parse" || qualified == "file.read";
@@ -1373,7 +1375,10 @@ void Lowerer::lower_give(const GiveStmt& stmt) {
 }
 
 void Lowerer::lower_expr_stmt(const ExprStmt& stmt) {
-    lower_expression(stmt.expr.get());
+    const IrValue value = lower_expression(stmt.expr.get());
+    if (dynamic_cast<const CallExpr*>(stmt.expr.get()) != nullptr && owns_heap(value.type)) {
+        emit_drop(value);
+    }
 }
 
 void Lowerer::lower_if(const IfStmt& stmt, const std::vector<const Stmt*>& rest) {
@@ -1732,6 +1737,24 @@ void Lowerer::lower_counted_repeat(const RepeatStmt& stmt, IrValue start, IrValu
     emit_store(n_name, niter);
     emit_store(k_name, const_i64(0));
     emit_store(stmt.iterator, start);
+    std::vector<std::pair<std::string, std::string>> gen_guards;
+    if (const auto found = semantic_.repeat_iter_lists.find(&stmt); found != semantic_.repeat_iter_lists.end()) {
+        for (const auto& name : found->second) {
+            if (type_of_name(name).kind != IrTypeKind::List) {
+                continue;
+            }
+            const std::string slot = "$igen$" + stmt.iterator + "$" + name;
+            ensure_local(slot, ir_i64());
+            IrInst gen;
+            gen.op = IrOp::Call;
+            gen.name = "yukt_list_generation";
+            gen.args.push_back(emit_load(name));
+            gen.dest = make_temp(ir_i64());
+            emit(gen);
+            emit_store(slot, gen.dest);
+            gen_guards.emplace_back(name, slot);
+        }
+    }
     finish_jump(cond_name);
 
     switch_to(cond_name);
@@ -1744,7 +1767,7 @@ void Lowerer::lower_counted_repeat(const RepeatStmt& stmt, IrValue start, IrValu
     ++in_loop_;
     const std::unordered_set<std::string> snapshot = owned_;
     std::function<void()> previous_footer = seq_footer_;
-    seq_footer_ = [this, iterator = stmt.iterator, k_name, cond_name, snapshot]() {
+    seq_footer_ = [this, iterator = stmt.iterator, k_name, cond_name, snapshot, gen_guards]() {
         if (current().terminated) {
             return;
         }
@@ -1758,6 +1781,15 @@ void Lowerer::lower_counted_repeat(const RepeatStmt& stmt, IrValue start, IrValu
         emit_named_drops(drops);
         for (const auto& name : drops) {
             owned_.erase(name);
+        }
+        for (const auto& [list_name, slot] : gen_guards) {
+            IrInst check;
+            check.op = IrOp::Call;
+            check.name = "yukt_list_check_generation";
+            check.args.push_back(emit_load(list_name));
+            check.args.push_back(emit_load(slot));
+            check.dest = make_temp(ir_void());
+            emit(check);
         }
         const IrValue i = emit_load(iterator);
         emit_store(iterator, emit_bin(IrBinOp::Add, i, const_i64(1), ir_i64()));
@@ -2194,6 +2226,20 @@ IrValue Lowerer::lower_call(const CallExpr& expr) {
         inst.name = ir_name;
         inst.args.push_back(dest);
         inst.args.push_back(proto_src);
+        inst.dest = make_temp(type_of(&expr));
+        emit(inst);
+        return inst.dest;
+    }
+
+    if (ir_name == "std$list$append" && expr.arguments.size() >= 2) {
+        const IrValue dest = lower_expression(expr.arguments[0].get());
+        const IrValue value = lower_expression(expr.arguments[1].get());
+        consume_heap_expr(expr.arguments[1].get());
+        IrInst inst;
+        inst.op = IrOp::Call;
+        inst.name = ir_name;
+        inst.args.push_back(dest);
+        inst.args.push_back(value);
         inst.dest = make_temp(type_of(&expr));
         emit(inst);
         return inst.dest;

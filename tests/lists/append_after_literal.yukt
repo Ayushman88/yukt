@@ -1,0 +1,6 @@
+use std/list
+
+create main:
+    items = [1, 2]
+    list.append(items, 3)
+    say items

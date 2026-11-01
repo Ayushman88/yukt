@@ -1,0 +1,6 @@
+use std/list
+
+create main:
+    outer = [[1], [2]]
+    list.append(outer[0], 3)
+    say outer

@@ -51,6 +51,8 @@ One recursive mutex, `yukt_heap_mu`, covers the allocation tracker, size-class b
 
 `YuktList.kind == 5` stores record values packed at `YuktList.stride` bytes per element. Payload allocation still uses the size-class cache and 16-byte alignment. Index get/set copies `stride` bytes and traps on an out-of-range index. This does not change allocator caps, slot counts, or parallelization rules. Record values themselves are not heap objects.
 
+Field order is `length`, `kind`, `data`, `stride`, `capacity`, `generation`. `capacity` and `generation` are not user-visible. Drop walks `length`, not `capacity`. Growth allocates a new payload first; on failure the old payload stays installed and `count` does not change. Tests inject that failure with `yukt_debug_fail_next_payload_alloc`. `list.append` / `remove` / `pop` increment `generation` only after a successful structural change. An in-flight index `repeat` snapshots it and traps `list changed during iteration` on mismatch. LLVM must not treat the payload pointer as invariant across a possible resize.
+
 ## Standard-library primitives (0.12.1)
 
 `std/str`, `std/list`, `std/sort`, `std/math`, and empty-list traps in `std/stat` call C helpers in this runtime. They use the same tracker and size-class caches. They do not free during `yukt_main`. Generated programs link `-lm` for libm.
@@ -58,7 +60,8 @@ One recursive mutex, `yukt_heap_mu`, covers the allocation tracker, size-class b
 | Prefix | Role |
 | --- | --- |
 | `yukt_str_*` | Byte length, index, slice, find, split/join, repeat |
-| `yukt_list_copy` / `fill_*` / `reverse` / `slice` | Polymorphic fixed-length list ops |
+| `yukt_list_copy` / `fill_*` / `reverse` / `slice` | Polymorphic list ops |
+| `yukt_list_append_*` / `remove_*` / `pop_*` | 0.16.1 grow / shrink. Header stays; payload may move. |
 | `yukt_list_sort_*` / `sorted` / `search` | Unstable numeric sort and binary search |
 | `yukt_math_*` | Integer helpers and libm wrappers |
 | `yukt_stat_min_*` / `max_*` / `mean_f` | Empty-list traps; sums stay in YUKT |

@@ -402,6 +402,26 @@ void LlvmEmitter::declare_runtime() {
     runtime_["yukt_list_reverse"] = module_.getOrInsertFunction("yukt_list_reverse", void_ty, ptr);
     runtime_["yukt_list_check_slice"] = module_.getOrInsertFunction("yukt_list_check_slice", void_ty, ptr, i64, i64);
     runtime_["yukt_list_slice"] = module_.getOrInsertFunction("yukt_list_slice", ptr, ptr, i64, i64);
+    runtime_["yukt_list_append_i64"] = module_.getOrInsertFunction("yukt_list_append_i64", void_ty, ptr, i64);
+    runtime_["yukt_list_append_f64"] = module_.getOrInsertFunction("yukt_list_append_f64", void_ty, ptr, f64);
+    runtime_["yukt_list_append_bool"] = module_.getOrInsertFunction("yukt_list_append_bool", void_ty, ptr, i8);
+    runtime_["yukt_list_append_cstr"] = module_.getOrInsertFunction("yukt_list_append_cstr", void_ty, ptr, ptr);
+    runtime_["yukt_list_append_list"] = module_.getOrInsertFunction("yukt_list_append_list", void_ty, ptr, ptr);
+    runtime_["yukt_list_append_rec"] = module_.getOrInsertFunction("yukt_list_append_rec", void_ty, ptr, ptr, i64);
+    runtime_["yukt_list_remove_i64"] = module_.getOrInsertFunction("yukt_list_remove_i64", i64, ptr, i64);
+    runtime_["yukt_list_remove_f64"] = module_.getOrInsertFunction("yukt_list_remove_f64", f64, ptr, i64);
+    runtime_["yukt_list_remove_bool"] = module_.getOrInsertFunction("yukt_list_remove_bool", i8, ptr, i64);
+    runtime_["yukt_list_remove_cstr"] = module_.getOrInsertFunction("yukt_list_remove_cstr", ptr, ptr, i64);
+    runtime_["yukt_list_remove_list"] = module_.getOrInsertFunction("yukt_list_remove_list", ptr, ptr, i64);
+    runtime_["yukt_list_remove_rec"] = module_.getOrInsertFunction("yukt_list_remove_rec", void_ty, ptr, i64, ptr, i64);
+    runtime_["yukt_list_pop_i64"] = module_.getOrInsertFunction("yukt_list_pop_i64", i64, ptr);
+    runtime_["yukt_list_pop_f64"] = module_.getOrInsertFunction("yukt_list_pop_f64", f64, ptr);
+    runtime_["yukt_list_pop_bool"] = module_.getOrInsertFunction("yukt_list_pop_bool", i8, ptr);
+    runtime_["yukt_list_pop_cstr"] = module_.getOrInsertFunction("yukt_list_pop_cstr", ptr, ptr);
+    runtime_["yukt_list_pop_list"] = module_.getOrInsertFunction("yukt_list_pop_list", ptr, ptr);
+    runtime_["yukt_list_pop_rec"] = module_.getOrInsertFunction("yukt_list_pop_rec", void_ty, ptr, ptr, i64);
+    runtime_["yukt_list_generation"] = module_.getOrInsertFunction("yukt_list_generation", i64, ptr);
+    runtime_["yukt_list_check_generation"] = module_.getOrInsertFunction("yukt_list_check_generation", void_ty, ptr, i64);
     runtime_["yukt_list_sort_asc"] = module_.getOrInsertFunction("yukt_list_sort_asc", void_ty, ptr);
     runtime_["yukt_list_sort_desc"] = module_.getOrInsertFunction("yukt_list_sort_desc", void_ty, ptr);
     runtime_["yukt_list_sorted"] = module_.getOrInsertFunction("yukt_list_sorted", ptr, ptr);
@@ -703,6 +723,14 @@ llvm::Value* LlvmEmitter::emit_inst(const IrInst& inst) {
             if (inst.name == "yukt_list_check_slice") {
                 builder_.CreateCall(runtime("yukt_list_check_slice"),
                                     {materialize(inst.args[0]), materialize(inst.args[1]), materialize(inst.args[2])});
+                return nullptr;
+            }
+            if (inst.name == "yukt_list_generation") {
+                return builder_.CreateCall(runtime("yukt_list_generation"), {materialize(inst.args[0])});
+            }
+            if (inst.name == "yukt_list_check_generation") {
+                builder_.CreateCall(runtime("yukt_list_check_generation"),
+                                    {materialize(inst.args[0]), materialize(inst.args[1])});
                 return nullptr;
             }
             if (is_stdlib_runtime_ir(inst.name)) {
@@ -1145,6 +1173,78 @@ llvm::Value* LlvmEmitter::emit_stdlib_call(const IrInst& inst) {
     if (name == "std$list$slice") {
         return call_runtime("yukt_list_slice", {args.at(0), args.at(1), args.at(2)});
     }
+    if (name == "std$list$append") {
+        const IrType value_type = inst.args.size() > 1 ? inst.args[1].type : ir_i64();
+        llvm::Value* dest = args.at(0);
+        llvm::Value* value = args.size() > 1 ? args.at(1) : llvm::ConstantInt::get(llvm::Type::getInt64Ty(context_), 0);
+        if (value_type.kind == IrTypeKind::F64) {
+            return call_runtime("yukt_list_append_f64", {dest, value});
+        }
+        if (value_type.kind == IrTypeKind::Bool) {
+            return call_runtime("yukt_list_append_bool",
+                                {dest, builder_.CreateZExt(value, llvm::Type::getInt8Ty(context_))});
+        }
+        if (value_type.kind == IrTypeKind::String) {
+            return call_runtime("yukt_list_append_cstr", {dest, materialize_owned(inst.args[1])});
+        }
+        if (value_type.kind == IrTypeKind::List) {
+            return call_runtime("yukt_list_append_list", {dest, value});
+        }
+        if (value_type.kind == IrTypeKind::Record) {
+            llvm::Type* rec_ty = type_of(value_type);
+            llvm::Value* tmp = builder_.CreateAlloca(rec_ty);
+            builder_.CreateStore(value, tmp);
+            llvm::Value* stride = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context_),
+                                                         static_cast<uint64_t>(record_byte_size(value_type.record_id)));
+            return call_runtime("yukt_list_append_rec", {dest, tmp, stride});
+        }
+        return call_runtime("yukt_list_append_i64", {dest, value});
+    }
+    auto emit_remove_like = [&](bool is_pop) -> llvm::Value* {
+        llvm::Value* dest = args.at(0);
+        llvm::Value* index = !is_pop && args.size() > 1 ? args.at(1) : nullptr;
+        IrType elem = inst.dest.type;
+        if (elem.kind == IrTypeKind::Void && dest != nullptr) {
+            elem = inst.args[0].type.element != nullptr ? *inst.args[0].type.element : ir_i64();
+        }
+        if (elem.kind == IrTypeKind::F64) {
+            return is_pop ? call_runtime("yukt_list_pop_f64", {dest})
+                          : call_runtime("yukt_list_remove_f64", {dest, index});
+        }
+        if (elem.kind == IrTypeKind::Bool) {
+            llvm::Value* raw = is_pop ? call_runtime("yukt_list_pop_bool", {dest})
+                                      : call_runtime("yukt_list_remove_bool", {dest, index});
+            return builder_.CreateTrunc(raw, llvm::Type::getInt1Ty(context_));
+        }
+        if (elem.kind == IrTypeKind::String) {
+            return is_pop ? call_runtime("yukt_list_pop_cstr", {dest})
+                          : call_runtime("yukt_list_remove_cstr", {dest, index});
+        }
+        if (elem.kind == IrTypeKind::List) {
+            return is_pop ? call_runtime("yukt_list_pop_list", {dest})
+                          : call_runtime("yukt_list_remove_list", {dest, index});
+        }
+        if (elem.kind == IrTypeKind::Record) {
+            llvm::Type* rec_ty = type_of(elem);
+            llvm::Value* tmp = builder_.CreateAlloca(rec_ty);
+            llvm::Value* stride = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context_),
+                                                         static_cast<uint64_t>(record_byte_size(elem.record_id)));
+            if (is_pop) {
+                builder_.CreateCall(runtime("yukt_list_pop_rec"), {dest, tmp, stride});
+            } else {
+                builder_.CreateCall(runtime("yukt_list_remove_rec"), {dest, index, tmp, stride});
+            }
+            return builder_.CreateLoad(rec_ty, tmp);
+        }
+        return is_pop ? call_runtime("yukt_list_pop_i64", {dest})
+                      : call_runtime("yukt_list_remove_i64", {dest, index});
+    };
+    if (name == "std$list$remove") {
+        return emit_remove_like(false);
+    }
+    if (name == "std$list$pop") {
+        return emit_remove_like(true);
+    }
     if (name == "std$sort$asc") {
         return call_runtime("yukt_list_sort_asc", {args.at(0)});
     }
@@ -1317,7 +1417,8 @@ llvm::FunctionCallee LlvmEmitter::runtime(const std::string& name) const {
 llvm::StructType* LlvmEmitter::list_struct_type() {
     return llvm::StructType::get(context_,
                                  {llvm::Type::getInt64Ty(context_), llvm::Type::getInt64Ty(context_),
-                                  llvm::PointerType::getUnqual(context_), llvm::Type::getInt64Ty(context_)});
+                                  llvm::PointerType::getUnqual(context_), llvm::Type::getInt64Ty(context_),
+                                  llvm::Type::getInt64Ty(context_), llvm::Type::getInt64Ty(context_)});
 }
 
 llvm::Type* LlvmEmitter::type_of(const IrType& type) {
@@ -1569,7 +1670,6 @@ void LlvmEmitter::emit_print_list(llvm::Value* list, const IrType& type) {
 llvm::Value* LlvmEmitter::list_data_pointer(llvm::Value* list) {
     llvm::Value* field = builder_.CreateStructGEP(list_struct_type(), list, 2);
     auto* loaded = builder_.CreateLoad(llvm::PointerType::getUnqual(context_), field);
-    loaded->setMetadata(llvm::LLVMContext::MD_invariant_load, llvm::MDNode::get(context_, {}));
     loaded->setMetadata(llvm::LLVMContext::MD_noundef, llvm::MDNode::get(context_, {}));
     builder_.CreateAlignmentAssumption(module_.getDataLayout(), loaded, 16);
     return loaded;

@@ -1,0 +1,12 @@
+use std/list
+
+create push(dest: ref list, v):
+    list.append(dest, v)
+
+create take(xs):
+    give count(xs)
+
+create main:
+    items = [1]
+    push(items, take(items))
+    say items

@@ -203,6 +203,17 @@ add_test(NAME yukt_ownership_double_release COMMAND yukt_ownership_runtime_tests
 set_tests_properties(yukt_ownership_double_release PROPERTIES
     PASS_REGULAR_EXPRESSION "YUKT runtime error: double release or untracked pointer")
 
+add_executable(yukt_grow_oom_keeps_list tests/runtime/grow_oom_keeps_list.c)
+target_link_libraries(yukt_grow_oom_keeps_list PRIVATE yukt_runtime)
+add_test(NAME yukt_grow_oom_keeps_list COMMAND yukt_grow_oom_keeps_list)
+
+add_executable(yukt_generation_guard_tests tests/runtime/generation_guard_tests.c)
+target_link_libraries(yukt_generation_guard_tests PRIVATE yukt_runtime)
+add_test(NAME yukt_generation_guard_tests COMMAND yukt_generation_guard_tests)
+add_test(NAME yukt_generation_guard_trap COMMAND yukt_generation_guard_tests generation-guard)
+set_tests_properties(yukt_generation_guard_trap PROPERTIES
+    PASS_REGULAR_EXPRESSION "YUKT runtime error: list changed during iteration")
+
 add_test(NAME hello_tokens COMMAND yukt --tokens ${CMAKE_SOURCE_DIR}/examples/hello.yukt)
 add_test(NAME hello_ast COMMAND yukt --ast ${CMAKE_SOURCE_DIR}/examples/hello.yukt)
 add_test(NAME hello_types COMMAND yukt --types ${CMAKE_SOURCE_DIR}/examples/hello.yukt)

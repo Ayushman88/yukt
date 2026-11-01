@@ -18,6 +18,8 @@ typedef struct YuktList {
     int64_t kind;
     void* data;
     int64_t stride;
+    int64_t capacity;
+    int64_t generation;
 } YuktList;
 
 void yukt_say_i64(int64_t value);
@@ -98,6 +100,26 @@ void yukt_list_set_f64(YuktList* list, int64_t index, double value);
 void yukt_list_set_bool(YuktList* list, int64_t index, int8_t value);
 void yukt_list_set_cstr(YuktList* list, int64_t index, const char* value);
 void yukt_list_set_list(YuktList* list, int64_t index, YuktList* value);
+void yukt_list_append_i64(YuktList* list, int64_t value);
+void yukt_list_append_f64(YuktList* list, double value);
+void yukt_list_append_bool(YuktList* list, int8_t value);
+void yukt_list_append_cstr(YuktList* list, const char* value);
+void yukt_list_append_list(YuktList* list, YuktList* value);
+void yukt_list_append_rec(YuktList* list, const void* src, int64_t stride);
+int64_t yukt_list_remove_i64(YuktList* list, int64_t index);
+double yukt_list_remove_f64(YuktList* list, int64_t index);
+int8_t yukt_list_remove_bool(YuktList* list, int64_t index);
+const char* yukt_list_remove_cstr(YuktList* list, int64_t index);
+YuktList* yukt_list_remove_list(YuktList* list, int64_t index);
+void yukt_list_remove_rec(YuktList* list, int64_t index, void* dest, int64_t stride);
+int64_t yukt_list_pop_i64(YuktList* list);
+double yukt_list_pop_f64(YuktList* list);
+int8_t yukt_list_pop_bool(YuktList* list);
+const char* yukt_list_pop_cstr(YuktList* list);
+YuktList* yukt_list_pop_list(YuktList* list);
+void yukt_list_pop_rec(YuktList* list, void* dest, int64_t stride);
+int64_t yukt_list_generation(const YuktList* list);
+void yukt_list_check_generation(const YuktList* list, int64_t expected);
 
 typedef void (*yukt_par_fn)(int64_t begin, int64_t end, void* context);
 void yukt_parallel_for(int64_t start, int64_t end, yukt_par_fn fn, void* context, int64_t work_per_iter);
@@ -114,6 +136,11 @@ char* yukt_str_from_lit(const char* s);
 char* yukt_str_clone(const char* s);
 /* Number of currently tracked allocations (for ownership tests). */
 int64_t yukt_debug_live_allocs(void);
+/* Next list payload allocation returns NULL instead of taking cache or malloc. */
+void yukt_debug_fail_next_payload_alloc(void);
+/* Optional die interceptor for tests. The hook is cleared before it is called.
+ * If the hook returns, the process still exits 1. */
+void yukt_debug_set_die_hook(void (*fn)(const char* message));
 
 /* 0.13.4 ABI helper: sum of a two-integer record `{ x, y }`. */
 int64_t yukt_point_sum(const int64_t* point);

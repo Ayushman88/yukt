@@ -1,0 +1,7 @@
+use std/list
+
+create main:
+    names = ["a", "b"]
+    s = list.pop(names)
+    say s
+    say names

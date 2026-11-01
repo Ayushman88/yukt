@@ -1,0 +1,9 @@
+use std/list
+
+create push(dest: ref list, v):
+    list.append(dest, v)
+
+create main:
+    items = [1]
+    push(items, 2)
+    say items

@@ -1,0 +1,10 @@
+use std/list
+
+create main:
+    nums = [10, 20, 30]
+    a = list.remove(nums, 0)
+    say a
+    say nums
+    b = list.remove(nums, count(nums) - 1)
+    say b
+    say nums

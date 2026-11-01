@@ -1,0 +1,7 @@
+use std/list
+
+create main:
+    xs = []
+    s = "hi"
+    list.append(xs, s)
+    say s

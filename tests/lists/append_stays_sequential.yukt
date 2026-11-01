@@ -1,0 +1,10 @@
+use std/list
+
+create main:
+    items = zeros(0)
+    total = 0
+    repeat i in 1..200:
+        list.append(items, i)
+        total = total + i
+    say count(items)
+    say total

@@ -1,0 +1,9 @@
+use std/list
+
+create main:
+    items = []
+    repeat i in 1..20:
+        list.append(items, i)
+    say count(items)
+    say items[0]
+    say items[19]

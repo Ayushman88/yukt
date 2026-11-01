@@ -14,9 +14,25 @@
 #include <dispatch/dispatch.h>
 #endif
 
+static void (*yukt_die_hook)(const char* message) = NULL;
+static int yukt_fail_next_payload_alloc = 0;
+
 static void die(const char* message) {
     fprintf(stderr, "YUKT runtime error: %s\n", message);
+    if (yukt_die_hook != NULL) {
+        void (*hook)(const char*) = yukt_die_hook;
+        yukt_die_hook = NULL;
+        hook(message);
+    }
     exit(1);
+}
+
+void yukt_debug_fail_next_payload_alloc(void) {
+    yukt_fail_next_payload_alloc = 1;
+}
+
+void yukt_debug_set_die_hook(void (*fn)(const char* message)) {
+    yukt_die_hook = fn;
 }
 
 enum { YUKT_ALLOC_LIST = 1, YUKT_ALLOC_STR = 2, YUKT_ALLOC_OBJ = 3, YUKT_ALLOC_TASK = 4 };
@@ -422,12 +438,16 @@ static void* yukt_alloc_aligned_zero(size_t bytes) {
     if (bytes == 0) {
         return NULL;
     }
+    if (yukt_fail_next_payload_alloc) {
+        yukt_fail_next_payload_alloc = 0;
+        return NULL;
+    }
     const size_t padded = yukt_alloc_size(yukt_pad16(bytes));
     void* data = yukt_cache_take(yukt_list_bins, padded);
     if (data == NULL) {
         data = aligned_alloc(16, padded);
         if (data == NULL) {
-            die("out of memory");
+            return NULL;
         }
     }
     memset(data, 0, padded);
@@ -445,6 +465,8 @@ YuktList* yukt_list_new(int64_t length, int64_t kind) {
     list->length = length;
     list->kind = kind;
     list->stride = (int64_t)element_size(kind);
+    list->capacity = length;
+    list->generation = 0;
     size_t payload = 0;
     if (length > 0) {
         size_t nbytes = 0;
@@ -453,6 +475,10 @@ YuktList* yukt_list_new(int64_t length, int64_t kind) {
         }
         payload = yukt_alloc_size(yukt_pad16(nbytes));
         list->data = yukt_alloc_aligned_zero(payload);
+        if (payload > 0 && list->data == NULL) {
+            free(list);
+            die("out of memory");
+        }
     }
     yukt_track(YUKT_ALLOC_LIST, list, payload);
     return list;
@@ -472,6 +498,8 @@ YuktList* yukt_list_new_rec(int64_t length, int64_t stride) {
     list->length = length;
     list->kind = 5;
     list->stride = stride;
+    list->capacity = length;
+    list->generation = 0;
     size_t payload = 0;
     if (length > 0) {
         size_t nbytes = 0;
@@ -480,6 +508,10 @@ YuktList* yukt_list_new_rec(int64_t length, int64_t stride) {
         }
         payload = yukt_alloc_size(yukt_pad16(nbytes));
         list->data = yukt_alloc_aligned_zero(payload);
+        if (payload > 0 && list->data == NULL) {
+            free(list);
+            die("out of memory");
+        }
     }
     yukt_track(YUKT_ALLOC_LIST, list, payload);
     return list;
@@ -556,6 +588,253 @@ YuktList* yukt_list_zeros(int64_t length) {
 
 int64_t yukt_list_len(const YuktList* list) {
     return list == NULL ? 0 : list->length;
+}
+
+static void yukt_track_set_bytes(void* ptr, size_t bytes) {
+    yukt_heap_lock();
+    for (YuktAlloc* node = yukt_allocs; node != NULL; node = node->next) {
+        if (node->ptr == ptr) {
+            node->bytes = bytes;
+            break;
+        }
+    }
+    yukt_heap_unlock();
+}
+
+static size_t yukt_list_payload_bytes(const YuktList* list) {
+    if (list == NULL || list->capacity <= 0) {
+        return 0;
+    }
+    size_t nbytes = 0;
+    if (yukt_size_mul((size_t)list->capacity, element_size_of(list), &nbytes) != 0) {
+        return 0;
+    }
+    return yukt_alloc_size(yukt_pad16(nbytes));
+}
+
+static void yukt_list_bump_gen(YuktList* list) {
+    if (list != NULL) {
+        list->generation += 1;
+    }
+}
+
+static void yukt_list_ensure(YuktList* list, int64_t extra) {
+    if (list == NULL) {
+        die("list index out of range");
+    }
+    if (extra < 0) {
+        die("list too large");
+    }
+    if (list->length > INT64_MAX - extra) {
+        die("list too large");
+    }
+    const int64_t need = list->length + extra;
+    if (need <= list->capacity) {
+        return;
+    }
+    int64_t new_cap = list->capacity <= 0 ? 8 : list->capacity;
+    while (new_cap < need) {
+        if (new_cap > INT64_MAX / 2) {
+            new_cap = need;
+            break;
+        }
+        new_cap *= 2;
+    }
+    size_t nbytes = 0;
+    if (yukt_size_mul((size_t)new_cap, element_size_of(list), &nbytes) != 0) {
+        die("list too large");
+    }
+    const size_t payload = yukt_alloc_size(yukt_pad16(nbytes));
+    void* data = NULL;
+    if (payload > 0) {
+        data = yukt_alloc_aligned_zero(payload);
+    }
+    if (payload > 0 && data == NULL) {
+        die("out of memory");
+    }
+    const size_t old_bytes = yukt_list_payload_bytes(list);
+    if (list->data != NULL && list->length > 0 && data != NULL) {
+        size_t live = 0;
+        if (yukt_size_mul((size_t)list->length, element_size_of(list), &live) != 0) {
+            die("list too large");
+        }
+        memcpy(data, list->data, live);
+    }
+    void* old_data = list->data;
+    list->data = data;
+    list->capacity = new_cap;
+    yukt_track_set_bytes(list, payload);
+    if (old_data != NULL) {
+        if (!yukt_cache_put(yukt_list_bins, old_data, old_bytes)) {
+            free(old_data);
+        }
+    }
+}
+
+static void yukt_list_require_index(const YuktList* list, int64_t index) {
+    if (list == NULL || index < 0 || index >= list->length) {
+        die("list index out of range");
+    }
+}
+
+static void yukt_list_compact_tail(YuktList* list, int64_t index) {
+    const size_t esz = element_size_of(list);
+    const int64_t last = list->length - 1;
+    if (index < last && list->data != NULL) {
+        memmove((char*)list->data + (size_t)index * esz, (char*)list->data + (size_t)(index + 1) * esz,
+                (size_t)(last - index) * esz);
+    }
+    if (list->data != NULL && last >= 0) {
+        memset((char*)list->data + (size_t)last * esz, 0, esz);
+    }
+    list->length = last;
+}
+
+void yukt_list_append_i64(YuktList* list, int64_t value) {
+    yukt_list_ensure(list, 1);
+    yukt_list_bump_gen(list);
+    ((int64_t*)list->data)[list->length] = value;
+    list->length += 1;
+}
+
+void yukt_list_append_f64(YuktList* list, double value) {
+    yukt_list_ensure(list, 1);
+    yukt_list_bump_gen(list);
+    ((double*)list->data)[list->length] = value;
+    list->length += 1;
+}
+
+void yukt_list_append_bool(YuktList* list, int8_t value) {
+    yukt_list_ensure(list, 1);
+    yukt_list_bump_gen(list);
+    ((int8_t*)list->data)[list->length] = value;
+    list->length += 1;
+}
+
+void yukt_list_append_cstr(YuktList* list, const char* value) {
+    yukt_list_ensure(list, 1);
+    yukt_list_bump_gen(list);
+    ((const char**)list->data)[list->length] = value;
+    list->length += 1;
+}
+
+void yukt_list_append_list(YuktList* list, YuktList* value) {
+    if (list != NULL && list == value) {
+        die("cannot append a list to itself");
+    }
+    yukt_list_ensure(list, 1);
+    yukt_list_bump_gen(list);
+    ((YuktList**)list->data)[list->length] = value;
+    list->length += 1;
+}
+
+void yukt_list_append_rec(YuktList* list, const void* src, int64_t stride) {
+    if (list == NULL || list->kind != 5 || src == NULL || stride != list->stride) {
+        die("record list layout mismatch");
+    }
+    yukt_list_ensure(list, 1);
+    yukt_list_bump_gen(list);
+    memcpy((char*)list->data + (size_t)list->length * (size_t)stride, src, (size_t)stride);
+    list->length += 1;
+}
+
+int64_t yukt_list_remove_i64(YuktList* list, int64_t index) {
+    yukt_list_require_index(list, index);
+    yukt_list_bump_gen(list);
+    const int64_t value = ((int64_t*)list->data)[index];
+    yukt_list_compact_tail(list, index);
+    return value;
+}
+
+double yukt_list_remove_f64(YuktList* list, int64_t index) {
+    yukt_list_require_index(list, index);
+    yukt_list_bump_gen(list);
+    const double value = ((double*)list->data)[index];
+    yukt_list_compact_tail(list, index);
+    return value;
+}
+
+int8_t yukt_list_remove_bool(YuktList* list, int64_t index) {
+    yukt_list_require_index(list, index);
+    yukt_list_bump_gen(list);
+    const int8_t value = ((int8_t*)list->data)[index];
+    yukt_list_compact_tail(list, index);
+    return value;
+}
+
+const char* yukt_list_remove_cstr(YuktList* list, int64_t index) {
+    yukt_list_require_index(list, index);
+    yukt_list_bump_gen(list);
+    const char* value = ((const char**)list->data)[index];
+    ((const char**)list->data)[index] = NULL;
+    yukt_list_compact_tail(list, index);
+    return value;
+}
+
+YuktList* yukt_list_remove_list(YuktList* list, int64_t index) {
+    yukt_list_require_index(list, index);
+    yukt_list_bump_gen(list);
+    YuktList* value = ((YuktList**)list->data)[index];
+    ((YuktList**)list->data)[index] = NULL;
+    yukt_list_compact_tail(list, index);
+    return value;
+}
+
+void yukt_list_remove_rec(YuktList* list, int64_t index, void* dest, int64_t stride) {
+    yukt_list_require_index(list, index);
+    if (list->kind != 5 || dest == NULL || stride != list->stride || list->data == NULL) {
+        die("record list layout mismatch");
+    }
+    yukt_list_bump_gen(list);
+    memcpy(dest, (const char*)list->data + (size_t)index * (size_t)stride, (size_t)stride);
+    memset((char*)list->data + (size_t)index * (size_t)stride, 0, (size_t)stride);
+    yukt_list_compact_tail(list, index);
+}
+
+static void yukt_list_require_pop(const YuktList* list) {
+    if (list == NULL || list->length <= 0) {
+        die("Cannot pop from an empty list");
+    }
+}
+
+int64_t yukt_list_pop_i64(YuktList* list) {
+    yukt_list_require_pop(list);
+    return yukt_list_remove_i64(list, list->length - 1);
+}
+
+double yukt_list_pop_f64(YuktList* list) {
+    yukt_list_require_pop(list);
+    return yukt_list_remove_f64(list, list->length - 1);
+}
+
+int8_t yukt_list_pop_bool(YuktList* list) {
+    yukt_list_require_pop(list);
+    return yukt_list_remove_bool(list, list->length - 1);
+}
+
+const char* yukt_list_pop_cstr(YuktList* list) {
+    yukt_list_require_pop(list);
+    return yukt_list_remove_cstr(list, list->length - 1);
+}
+
+YuktList* yukt_list_pop_list(YuktList* list) {
+    yukt_list_require_pop(list);
+    return yukt_list_remove_list(list, list->length - 1);
+}
+
+void yukt_list_pop_rec(YuktList* list, void* dest, int64_t stride) {
+    yukt_list_require_pop(list);
+    yukt_list_remove_rec(list, list->length - 1, dest, stride);
+}
+
+int64_t yukt_list_generation(const YuktList* list) {
+    return list == NULL ? 0 : list->generation;
+}
+
+void yukt_list_check_generation(const YuktList* list, int64_t expected) {
+    if (list == NULL || list->generation != expected) {
+        die("list changed during iteration");
+    }
 }
 
 int64_t yukt_list_get_i64(const YuktList* list, int64_t index) {

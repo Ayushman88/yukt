@@ -120,6 +120,11 @@ int main() {
     }
 
     {
+        const auto result = check_file("tests/tasks/no_ref_append_across_start.yukt");
+        REQUIRE(has_title(result, "Cannot start a ref"));
+    }
+
+    {
         const auto result = check_source(
             "create take(t: ref task[integer]):\n"
             "    give wait t\n"

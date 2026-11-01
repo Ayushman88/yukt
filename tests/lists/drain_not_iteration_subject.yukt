@@ -1,0 +1,8 @@
+use std/list
+
+create main:
+    items = [4, 5]
+    n = count(items)
+    repeat i in 1..n:
+        say list.pop(items)
+    say count(items)

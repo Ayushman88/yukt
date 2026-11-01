@@ -1,0 +1,9 @@
+use std/list
+
+create main:
+    xs = []
+    list.append(xs, 1)
+    say list.pop(xs)
+    repeat i in 0..(count(xs) - 1):
+        say xs[i]
+    say count(xs)

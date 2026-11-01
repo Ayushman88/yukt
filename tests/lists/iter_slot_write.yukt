@@ -1,0 +1,5 @@
+create main:
+    xs = [1, 2, 3]
+    repeat i in 0..(count(xs) - 1):
+        xs[i] = xs[i] + 1
+    say xs

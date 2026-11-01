@@ -1,0 +1,13 @@
+use std/list
+
+create main:
+    flags = []
+    list.append(flags, true)
+    list.append(flags, false)
+    say flags
+    floats = []
+    list.append(floats, 1.5)
+    list.append(floats, 2.5)
+    say floats
+    unused = list.remove(flags, 0)
+    say flags

@@ -63,6 +63,7 @@ struct SemanticInfo {
     std::unordered_map<const StartExpr*, std::string> start_ir_names;
     std::unordered_map<const CallExpr*, int> record_constructors;
     std::unordered_set<std::string> foreign_functions;
+    std::unordered_map<const RepeatStmt*, std::vector<std::string>> repeat_iter_lists;
 };
 
 SemanticInfo analyze_semantics(const Program& program, DiagnosticEngine& diagnostics);

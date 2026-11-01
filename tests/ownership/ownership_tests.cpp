@@ -676,5 +676,42 @@ int main() {
         REQUIRE(!result.diagnostics->has_errors());
     }
 
+    {
+        const auto result = check_file("tests/ownership/append_moves_string.yukt");
+        REQUIRE(has_title(result, "Use after move"));
+    }
+    {
+        const auto result = check_file("tests/ownership/index_still_not_steal.yukt");
+        REQUIRE(has_title(result, "Cannot move out of list element"));
+    }
+    {
+        const auto result = check_file("tests/ownership/self_append_rejected.yukt");
+        REQUIRE(has_title(result, "Use after move") || has_title(result, "Cannot move out of a ref"));
+    }
+    {
+        const auto result = check_file("tests/ownership/assign_is_move_not_alias.yukt");
+        REQUIRE(has_title(result, "Use after move"));
+    }
+    {
+        const auto result = check_file("tests/ownership/move_while_ref_append.yukt");
+        REQUIRE(has_title(result, "Cannot move while borrowed") || has_title(result, "Use after move"));
+    }
+    {
+        const auto result = check_file("tests/ownership/pop_steals_string.yukt");
+        REQUIRE(!result.diagnostics->has_errors());
+    }
+    {
+        const auto result = check_file("tests/ownership/append_profile.yukt");
+        REQUIRE(!result.diagnostics->has_errors());
+    }
+    {
+        const auto result = check_file("tests/ownership/append_nested_list.yukt");
+        REQUIRE(!result.diagnostics->has_errors());
+    }
+    {
+        const auto result = check_file("tests/ownership/ref_append.yukt");
+        REQUIRE(!result.diagnostics->has_errors());
+    }
+
     return yukt::test::summary("ownership");
 }

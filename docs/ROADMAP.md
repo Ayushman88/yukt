@@ -164,35 +164,97 @@ Goal: make YUKT suitable for serious systems programming.
 
 Apple Silicon has no CUDA. Do not claim GPU execution on a Mac.
 
-## 0.15 — Concurrency and systems maturity
+## 0.15 — Stabilization
 
-**Status: proposed, not implemented.** See `docs/YUKT_015_DESIGN.md`. No 0.15 syntax is in `docs/LANGUAGE_SPEC.md`.
+**Status: in progress.** Measurement gate accepted. Matmul investigation closed. See `docs/YUKT_015_DESIGN.md` and `docs/BENCHMARK_METHOD_015.md`.
 
-Goal: make YUKT useful for systems programming and backend work. Prove performance, safety, and usability before adding keywords.
+0.15 does **not** add language features. It finishes the 0.14.1 foundation so later work is honest.
 
-- **First gate** — compatibility and benchmark suite vs C, C++, Rust, and Go (both hosts; do not overwrite `benchmarks/results-0.11.json`)
-- **0.15.1** — mutexes and safe shared state
-- **0.15.2** — typed channels between tasks
-- **0.15.3** — deadlock / task-dependency diagnostics
-- **0.15.4** — TCP, UDP, HTTP foundations
-- **0.15.5** — async I/O and runtime design
-- **0.15.6** — allocator improvements, benches, profiling
+- Runtime correctness and CTest green on macOS arm64 and Linux x86-64
+- Benchmark comparison classes as a harness contract: `sequential`, `auto_parallel`, `explicit_parallel` (do not rank across classes)
+- Sequential matmul codegen parity with C / C++ / Rust is established (`results-0.15.exp1-seq-matmul.macos-arm64.json`, `publication: false`)
+- Documentation that matches the compiler
+- **Performance freeze:** no kernel tuning, frontend n/IV experiments, or tiled GEMM unless a real regression appears
 
-These slices are planning only. Do not implement 0.15.1+ until the surface is specified.
+Mutex, channels, networking, and async **moved to 0.17**. Do not implement them from the old 0.15 slice list.
 
-## Later — First usable release
+## 0.16–0.18 program
 
-- Documented language
-- Native binaries for supported targets
-- Tested standard library
-- Published benchmarks vs C, C++, Rust, and Go: compute, allocation, tasks, compile time, and binary size
+**Status: authorized as one sprint, three phases.** Milestone identities stay. See `AGENTS.md`.
+
+Do not implement a whole version in one task. Spec → plan → code → tests, one objective at a time. Do not start the next **dependent** subsystem until the current one passes. Independent work may overlap. Integration stays staged.
+
+Finish line: a developer comfortably builds a CLI, JSON API client, HTTP server, and concurrent file processor — not a longer keyword list.
+
+**Next objective:** specify, then implement, standard input and environment variables. Do not start 0.17 until the 0.16 surfaces it depends on pass.
+
+## 0.16 — Practical language (phase 1)
+
+**Status: 0.16.1 growing lists implemented** (macOS arm64 `ctest` 43/43, including OOM injection and generation-guard tests). Linux x86-64 CI has not been run for this slice. See `docs/YUKT_016_DESIGN.md` and `docs/LANGUAGE_SPEC.md` § 0.16.1. D1–D11 frozen.
+
+Goal: everyday programs stop fighting fixed-size lists and missing I/O.
+
+- Dynamic collections: `list.append` / `list.remove` / `list.pop` (**implemented**)
+- Standard input and environment variables (specify next)
+- Richer string operations (specify after I/O, or in parallel only if independent)
+- Ownership, memory-safety, and runtime tests for each new surface
+
+HTTP syntax in design sketches is illustrative only and belongs to 0.17.
+
+## 0.17 — Concurrency and networking (phase 2)
+
+**Status: proposed.** Specify before implementing. Starts after 0.16 acceptance tests that 0.17 depends on (growing lists, at least). GPU stays off this path.
+
+- Safe coordination for `start` / `wait` (channels or message passing; mutexes)
+- HTTP client and HTTP server
+- Socket support
+- Concurrency and networking stress tests
+
+Proof: a small HTTP server a developer can write without inventing the API in application code.
+
+## 0.18 — Developer experience (phase 3)
+
+**Status: proposed.** Specify before implementing.
+
+- Interactive REPL
+- Package manager, dependency and version management
+- Formatter and language server
+- Project creation, build, and dependency workflows
+- Clean install / build / error-path validation on both hosts
+
+## 0.19 — Portability
+
+**Status: proposed.** Host-native macOS arm64 and Linux x86-64 already exist.
+
+- Keep both current hosts green
+- Windows target
+- Cross-compilation architecture
+- Target-specific runtime abstraction
+
+## 1.0 — First usable release
+
+**Status: proposed.** A developer can install YUKT, create a project, install dependencies, build a real application, test it, and distribute it without working around missing infrastructure.
+
+Progress is whether someone can comfortably build these, not how many kernels YUKT wins:
+
+| Project | What it proves |
+| --- | --- |
+| CLI utility | Core language and filesystem |
+| JSON API client | Networking and JSON |
+| HTTP server | Real application development |
+| Concurrent file processor | Collections and concurrency |
+| Small database | Memory, files, records, and enough performance to be usable |
+
+Published five-language numbers remain a **regression and honesty** tool. They are not the product.
 
 ## Measurement
 
-Publish numbers, not slogans. Keep the 0.11 baseline. Add a new `benchmarks/results-0.15.json` when the 0.15 suite runs.
+Publish numbers, not slogans. Keep the 0.11 baseline. Frozen files stay immutable (`benchmarks/results-0.11.json`, `docs/BENCHMARKS.md`, `benchmarks/results-0.15.macos-arm64.json`). New experiments are new files. Do not mix `sequential`, `auto_parallel`, and `explicit_parallel` in one ranking.
 
 ## Non-goals for the near term
 
 - A Python or bytecode interpreter as a substitute for the compiler
 - Syntax expansion that is not specified first
 - Fake LLVM output or placeholder "compiled successfully" messages
+- More benchmark-kernel wins as a milestone
+- CUDA / GPU on the path to 1.0 (Apple Silicon has no CUDA)

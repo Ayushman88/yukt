@@ -1,0 +1,5 @@
+use std/list
+
+create main:
+    nums = [1, 2, 3]
+    say list.remove(nums, -1)

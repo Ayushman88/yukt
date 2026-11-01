@@ -60,6 +60,14 @@ void require_trap(const std::string& relative) {
     REQUIRE_MSG(result.program_output.find("YUKT runtime error:") != std::string::npos, result.program_output);
 }
 
+void require_trap_message(const std::string& relative, const std::string& message) {
+    const auto result = run_file(relative);
+    REQUIRE_MSG(result.ok, "trap program must compile: " + relative + "\n" + result.program_output);
+    REQUIRE_MSG(result.exit_code != 0, "expected non-zero exit for " + relative);
+    REQUIRE_MSG(result.program_output.find("YUKT runtime error:") != std::string::npos, result.program_output);
+    REQUIRE_MSG(result.program_output.find(message) != std::string::npos, result.program_output);
+}
+
 }  // namespace
 
 int main() {
@@ -287,6 +295,26 @@ int main() {
         REQUIRE(reused != nullptr);
         REQUIRE(yukt_list_get_i64(reused, 0) == 0);
         yukt_runtime_release();
+        YuktList* grown = yukt_list_new(0, 0);
+        REQUIRE(grown != nullptr);
+        REQUIRE(grown->length == 0);
+        REQUIRE(grown->capacity == 0);
+        for (int64_t i = 0; i < 20; ++i) {
+            yukt_list_append_i64(grown, i + 1);
+        }
+        REQUIRE(grown->length == 20);
+        REQUIRE(grown->capacity >= 20);
+        REQUIRE(yukt_list_get_i64(grown, 0) == 1);
+        REQUIRE(yukt_list_get_i64(grown, 19) == 20);
+        REQUIRE(yukt_list_remove_i64(grown, 1) == 2);
+        REQUIRE(grown->length == 19);
+        REQUIRE(yukt_list_get_i64(grown, 1) == 3);
+        REQUIRE(yukt_list_pop_i64(grown) == 20);
+        REQUIRE(grown->length == 18);
+        const int64_t gen = yukt_list_generation(grown);
+        yukt_list_append_i64(grown, 99);
+        REQUIRE(yukt_list_generation(grown) != gen);
+        yukt_runtime_release();
     }
 
     {
@@ -324,6 +352,60 @@ int main() {
                 "hi\n"
                 "{\"n\":9,\"s\":\"hi\"}\n"
                 "invalid_json\n");
+    require_run("tests/lists/append_from_empty.yukt", "2\n10\n[10, 20]\n");
+    require_run("tests/lists/append_after_zeros.yukt", "[0, 0, 7]\n3\n");
+    require_run("tests/lists/append_after_literal.yukt", "[1, 2, 3]\n");
+    require_run("tests/lists/remove_middle.yukt", "20\n[10, 30]\n");
+    require_run("tests/lists/remove_ends.yukt", "10\n[20, 30]\n30\n[20]\n");
+    require_run("tests/lists/pop_order.yukt", "b\n[a]\na\n0\n");
+    require_run("tests/lists/drain_counted.yukt", "3\n2\n1\n0\n");
+    require_run("tests/lists/count_not_capacity.yukt", "20\n1\n20\n");
+    require_run("tests/lists/remove_preserves_order.yukt", "20\n[10, 30, 40]\n");
+    require_run("tests/lists/iter_empty.yukt", "1\n0\n");
+    require_run("tests/lists/iter_slot_write.yukt", "[2, 3, 4]\n");
+    require_run("tests/lists/drain_not_iteration_subject.yukt", "5\n4\n0\n");
+    require_run("tests/lists/empty_infer_append.yukt", "[10]\n");
+    require_run("tests/lists/append_types.yukt", "[true, false]\n[1.5, 2.5]\n[false]\n");
+    require_run("tests/ownership/pop_steals_string.yukt", "b\n[a]\n");
+    require_run("tests/ownership/append_profile.yukt", "ann\n3\n0\n");
+    require_run("tests/ownership/append_nested_list.yukt", "[[1, 2]]\n2\n");
+    require_run("tests/ownership/remove_does_not_drop_neighbors.yukt", "b\n[a, c]\n");
+    require_run("tests/ownership/realloc_does_not_drop.yukt", "9\na\ni\n");
+    require_run("tests/ownership/ref_append.yukt", "[1, 2]\n");
+    require_run("tests/lists/append_stays_sequential.yukt", "200\n20100\n");
+    require_trap_message("tests/lists/pop_empty_trap.yukt", "Cannot pop from an empty list");
+    require_trap_message("tests/lists/remove_oob_trap.yukt", "list index out of range");
+    require_trap_message("tests/lists/remove_oob_empty.yukt", "list index out of range");
+
+    {
+        const auto rejected = load_file("tests/lists/iter_append_rejected.yukt");
+        REQUIRE(has_title(rejected, "Cannot resize list during iteration"));
+        const auto pop_rejected = load_file("tests/lists/iter_pop_rejected.yukt");
+        REQUIRE(has_title(pop_rejected, "Cannot resize list during iteration"));
+        const auto grow_rejected = load_file("tests/lists/iter_ref_grow_rejected.yukt");
+        REQUIRE(has_title(grow_rejected, "Cannot resize list during iteration"));
+        const auto alias_rejected = load_file("tests/lists/iter_header_alias_ref.yukt");
+        REQUIRE(has_title(alias_rejected, "Cannot resize list during iteration"));
+        const auto mixed = load_file("tests/lists/empty_mixed_append.yukt");
+        REQUIRE(has_title(mixed, "Type mismatch"));
+        const auto zeros_string = load_file("tests/lists/append_zeros_string.yukt");
+        REQUIRE(has_title(zeros_string, "Type mismatch"));
+        const auto temp = load_file("tests/lists/append_temp.yukt");
+        REQUIRE(has_title(temp, "Cannot borrow a temporary"));
+    }
+
+    {
+        auto frontend = yukt::analyze_file(source_path("tests/lists/append_stays_sequential.yukt"));
+        yukt::analyze_types(frontend);
+        yukt::CompileRequest request;
+        request.action = yukt::CompileAction::Explain;
+        request.input_path = source_path("tests/lists/append_stays_sequential.yukt");
+        const auto result = yukt::compile_program(frontend, request, *frontend.diagnostics);
+        REQUIRE_MSG(result.ok, result.explanation);
+        REQUIRE(result.explanation.find("planned: sequential") != std::string::npos);
+        REQUIRE(result.llvm_ir.find("yukt_parallel_for") == std::string::npos);
+    }
+
     require_run("tests/suite013/all.yukt",
                 "2\n"
                 "7\n"

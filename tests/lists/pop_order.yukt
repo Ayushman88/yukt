@@ -1,0 +1,8 @@
+use std/list
+
+create main:
+    names = ["a", "b"]
+    say list.pop(names)
+    say names
+    say list.pop(names)
+    say count(names)
