@@ -1,10 +1,10 @@
 # YUKT 0.18 design — Developer experience
 
-Status: **specified, not implemented** (draft for human review 2026-11-01). This file is the 0.18 rationale and command law once accepted. It does not authorize compiler, runtime, or installer work until an implementation plan is accepted.
+Status: **0.18.1 implemented** after macOS arm64 and Ubuntu x86-64 CI ([41332352061](https://github.com/Ayushman88/yukt/actions/runs/41332352061), 2026-11-01). 0.18.2 path/git dependencies remain specified, not implemented. 0.18.3, publish, formatter, LSP, and REPL stay out.
 
 0.18 adds **no new language syntax**. No new reserved words. No compiler backend redesign. No new concurrency or networking. Mutex stays specified and deferred (0.17). Windows, CUDA / GPU, and 0.19 stay out.
 
-**Read first:** `docs/LANGUAGE_SPEC.md` (0.16–0.17 implemented slices); `docs/STDLIB_SPEC.md`; `docs/ROADMAP.md` (0.18 proposed); existing CLI: `yukt build <file.yukt>`, `yukt run <file.yukt> [args]`, `yukt --version`.
+**Read first:** `docs/LANGUAGE_SPEC.md` (0.16–0.17 language; 0.18.1 tooling); `docs/STDLIB_SPEC.md`; `docs/ROADMAP.md`. File CLI: `yukt build <file.yukt>`, `yukt run <file.yukt> [args]`. Project CLI: `yukt new`, no-file `build` / `run` / `test`.
 
 ---
 
@@ -237,6 +237,6 @@ On a machine that only ran the install script (no CMake):
 
 ---
 
-## Out of this document’s implementation authority
+## Out of this document’s remaining implementation authority
 
-Coding, CMake installers, and CLI subcommands wait for an accepted 0.18.1 implementation plan. This file is specified, not implemented.
+0.18.2 path/git dependencies, lockfile, 0.18.3 thin index, `yukt publish`, formatter, LSP, and REPL wait for their own accepted plans. Do not implement them from this file.

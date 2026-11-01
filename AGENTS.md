@@ -10,17 +10,17 @@ YUKT is a real programming language. The compiler is handwritten C++20. Do not i
 
 0.15 adds **no** language features. Finish runtime correctness, documentation, and benchmark **classification**. **Performance freeze:** no kernel tuning unless a real regression appears. Sequential matmul codegen parity is established; do not continue the matmul investigation.
 
-**0.16–0.18 is one development sprint** with three internally validated phases. The milestone names stay. Do not implement a whole version in one task. One engineering objective at a time, with an acceptance gate. Independent work may proceed in parallel; **do not start the next dependent subsystem until the current one passes its tests.** Specified is not implemented. A design sketch is not supported syntax. **0.16.1 growing lists, 0.16.2 stdin / argv / environment, and 0.16.3 richer strings are implemented.** **0.17.1 process I/O rules, channels, POSIX TCP, and HTTP/1.1 are implemented.** Mutex remains specified, deferred.
+**0.16–0.18 is one development sprint** with three internally validated phases. The milestone names stay. Do not implement a whole version in one task. One engineering objective at a time, with an acceptance gate. Independent work may proceed in parallel; **do not start the next dependent subsystem until the current one passes its tests.** Specified is not implemented. A design sketch is not supported syntax. **0.16.1 growing lists, 0.16.2 stdin / argv / environment, and 0.16.3 richer strings are implemented.** **0.17.1 process I/O rules, channels, POSIX TCP, and HTTP/1.1 are implemented.** **0.18.1 project workflow is implemented.** Mutex remains specified, deferred.
 
 | Phase | Milestone | Work | Gate |
 | --- | --- | --- | --- |
 | 1 | **0.16** Practical language | Growing lists (0.16.1), then stdin / env, then richer strings | Spec → plan → implement → tests. Ownership and memory-safety tests required |
 | 2 | **0.17** Systems | Channels, process I/O rules, sockets, HTTP (mutex specified, deferred) | 0.17.1 implemented (D-IO, channels, TCP, HTTP/1.1). Mutex deferred |
-| 3 | **0.18** Developer experience | REPL, packages, formatter, language server, project create/build/deps | Spec first. Clean install, build, and error paths |
+| 3 | **0.18** Developer experience | Project install/new/build/test (0.18.1), then path/git deps, then index | 0.18.1 implemented. 0.18.2 specified, not implemented |
 
 **Finish line:** a developer can comfortably build a CLI, a JSON API client, an HTTP server, and a concurrent file processor. More keywords are not the product. 0.19 (Windows / cross-compile) and GPU stay outside this sprint. GPU stays off the path to 1.0.
 
-**Next authorized objective:** not 0.18 until 0.18 is specified. Mutex is specified and deferred (not 0.17.1). GPU stays off.
+**Next authorized objective:** not 0.18.2 until an implementation plan is accepted. Mutex is specified and deferred (not 0.17.1). GPU stays off.
 
 Rules that still hold for every objective:
 
@@ -30,11 +30,11 @@ Rules that still hold for every objective:
 4. Every feature needs tests under `tests/`. Freeze the feature only after those tests pass on macOS arm64 and Linux x86-64 CI.
 5. Do not invent syntax. Do not implement unspecified features.
 
-**0.16.1 growing lists** are specified in `docs/LANGUAGE_SPEC.md` and `docs/YUKT_016_DESIGN.md` (D1–D11 frozen) and implemented (`list.append` / `list.remove` / `list.pop`). **0.16.2 stdin / argv / environment** are specified and implemented (`std/io`, `std/env`). **0.16.3 richer strings** are specified and implemented (`str.trim` / `trim_left` / `trim_right` / `replace` / `lower` / `upper` / `to_int` / `to_float`). **0.17.1 process I/O rules** (origin-thread stdin, env lock, say lock) are implemented. **0.17.1 channels** (`std/sync` send/recv) are implemented. **0.17.1 POSIX TCP** (`std/net`) is implemented. **0.17.1 HTTP/1.1** (`std/http`) is implemented. Mutex is specified and deferred (not 0.17.1). REPL / packages / LSP are **0.18**.
+**0.16.1 growing lists** are specified in `docs/LANGUAGE_SPEC.md` and `docs/YUKT_016_DESIGN.md` (D1–D11 frozen) and implemented (`list.append` / `list.remove` / `list.pop`). **0.16.2 stdin / argv / environment** are specified and implemented (`std/io`, `std/env`). **0.16.3 richer strings** are specified and implemented (`str.trim` / `trim_left` / `trim_right` / `replace` / `lower` / `upper` / `to_int` / `to_float`). **0.17.1 process I/O rules** (origin-thread stdin, env lock, say lock) are implemented. **0.17.1 channels** (`std/sync` send/recv) are implemented. **0.17.1 POSIX TCP** (`std/net`) is implemented. **0.17.1 HTTP/1.1** (`std/http`) is implemented. **0.18.1 project workflow** (`yukt new`, `yukt.toml`, project `build` / `run` / `test`, tarball install) is implemented. Mutex is specified and deferred (not 0.17.1). 0.18.2 path/git deps, formatter, LSP, and REPL are **not** 0.18.1.
 
-Implemented: lexer, parser, AST, diagnostics (notes, GNU line, TTY color, per-file locations), scopes, type inference, YUKT IR, LLVM lowering, host object emission, `yukt build`, `yukt run`, `yukt --explain`, LLVM O3, list indexing, `count` / `zeros`, work-based automatic parallelization, simple +/* parallel reductions, adaptive runtime parallelization, host-CPU SIMD via LLVM vectorize, counted-loop lowering, range-parallel runtime, aligned list payloads, size-class payload reuse, host-native CI (macOS arm64, Linux x86-64), the 0.08–0.10 performance sprints, the 0.12 module system (`use` / `share` / `as` / `.` qualification, whole-program DAG, one native executable), the 0.12.1 now-gated standard library (`std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`), 0.13.1 records, 0.13.2 ownership, 0.13.3 mutable `ref` parameters, 0.13.4 `foreign` C, 0.13.5 `result[T]` / `ok` / `fail`, 0.13.6 `std/map`, `std/set`, `std/file`, `std/json`, 0.14.1 `start` / `wait` / `task[T]` on the host pool, 0.16.1 growing lists, 0.16.2 `std/io` / `std/env`, 0.16.3 richer strings, 0.17.1 process I/O rules (origin-thread stdin, env lock, say lock), 0.17.1 channels (`std/sync` send/recv), 0.17.1 POSIX TCP (`std/net`), and 0.17.1 HTTP/1.1 (`std/http`).
+Implemented: lexer, parser, AST, diagnostics (notes, GNU line, TTY color, per-file locations), scopes, type inference, YUKT IR, LLVM lowering, host object emission, `yukt build`, `yukt run`, `yukt --explain`, LLVM O3, list indexing, `count` / `zeros`, work-based automatic parallelization, simple +/* parallel reductions, adaptive runtime parallelization, host-CPU SIMD via LLVM vectorize, counted-loop lowering, range-parallel runtime, aligned list payloads, size-class payload reuse, host-native CI (macOS arm64, Linux x86-64), the 0.08–0.10 performance sprints, the 0.12 module system (`use` / `share` / `as` / `.` qualification, whole-program DAG, one native executable), the 0.12.1 now-gated standard library (`std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`), 0.13.1 records, 0.13.2 ownership, 0.13.3 mutable `ref` parameters, 0.13.4 `foreign` C, 0.13.5 `result[T]` / `ok` / `fail`, 0.13.6 `std/map`, `std/set`, `std/file`, `std/json`, 0.14.1 `start` / `wait` / `task[T]` on the host pool, 0.16.1 growing lists, 0.16.2 `std/io` / `std/env`, 0.16.3 richer strings, 0.17.1 process I/O rules (origin-thread stdin, env lock, say lock), 0.17.1 channels (`std/sync` send/recv), 0.17.1 POSIX TCP (`std/net`), 0.17.1 HTTP/1.1 (`std/http`), and 0.18.1 project workflow (`yukt new`, `yukt.toml`, project `build` / `run` / `test`, prefix tarball).
 
-Not implemented: `std/array`, mutex (specified, deferred), package management, REPL, formatter, language server, cross-compilation to non-host triples, or CUDA / GPU. Do not overwrite `benchmarks/results-0.11.json`. 0.13 design: `docs/YUKT_013_DESIGN.md`. 0.14 design: `docs/YUKT_014_DESIGN.md`. 0.15 design: `docs/YUKT_015_DESIGN.md`. 0.16 design: `docs/YUKT_016_DESIGN.md`. 0.17 design: `docs/YUKT_017_DESIGN.md`.
+Not implemented: `std/array`, mutex (specified, deferred), 0.18.2 path/git dependencies, package publishing, REPL, formatter, language server, cross-compilation to non-host triples, or CUDA / GPU. Do not overwrite `benchmarks/results-0.11.json`. 0.13 design: `docs/YUKT_013_DESIGN.md`. 0.14 design: `docs/YUKT_014_DESIGN.md`. 0.15 design: `docs/YUKT_015_DESIGN.md`. 0.16 design: `docs/YUKT_016_DESIGN.md`. 0.17 design: `docs/YUKT_017_DESIGN.md`. 0.18 design: `docs/YUKT_018_DESIGN.md`.
 
 Native execution is real when `yukt build` writes a host binary and `file` reports an executable for that architecture. Do not call a program "native" if it was interpreted.
 
@@ -112,6 +112,8 @@ Supported syntax is listed in `docs/LANGUAGE_SPEC.md`:
 - `std/http` HTTP/1.1 (0.17.1 implemented)
 - `#` comments
 
+0.18.1 tooling (not syntax): `yukt new`, `yukt.toml`, no-file `yukt build` / `run` / `test`. File-form `yukt build <file.yukt>` remains.
+
 Do not add keywords, operators, or statements without updating the spec, tests, and this file.
 
 ## Inspection commands
@@ -124,6 +126,7 @@ build/yukt --emit-ir examples/hello.yukt
 build/yukt --emit-llvm examples/hello.yukt
 build/yukt --explain examples/hello.yukt
 build/yukt run examples/hello.yukt
+build/yukt new hello --type cli
 ```
 
 If `--ast` fails, fix the parser. If `--types` fails, fix semantic analysis. If `--emit-ir` is wrong, fix lowering. If `--emit-llvm` or `run` is wrong, fix the backend or runtime. Do not compensate in later passes.
@@ -140,9 +143,9 @@ If `--ast` fails, fix the parser. If `--types` fails, fix semantic analysis. If 
 
 - Growing-list **code** until the 0.16.1 implementation plan exists and is followed (spec is frozen)
 - Richer strings until they are in `docs/LANGUAGE_SPEC.md` and have their own plan
-- 0.18 until 0.18 is specified
+- 0.18.2 path/git dependencies until an implementation plan is accepted
 - Mutex implementation until a later slice; 0.17 specifies the API as deferred (not 0.17.1)
-- Package management, REPL, formatter, language server until 0.18 is specified
+- Package publishing, REPL, formatter, language server until those slices are specified and planned
 - `std/array` (distinct type; not an alias of `list`)
 - Windows target and cross-compilation to non-host triples (0.19; outside this sprint)
 - CUDA / GPU (off the path to 1.0; Apple Silicon has no CUDA)

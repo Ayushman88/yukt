@@ -186,7 +186,7 @@ Do not implement a whole version in one task. Spec → plan → code → tests, 
 
 Finish line: a developer comfortably builds a CLI, JSON API client, HTTP server, and concurrent file processor — not a longer keyword list.
 
-**Next objective:** not 0.18 until 0.18 is specified. Mutex is specified and deferred (not 0.17.1). GPU stays off this path.
+**Next objective:** not 0.18.2 until an implementation plan is accepted. Mutex is specified and deferred (not 0.17.1). GPU stays off this path.
 
 ## 0.16 — Practical language (phase 1)
 
@@ -203,7 +203,7 @@ HTTP syntax in design sketches is illustrative only and belongs to 0.17.
 
 ## 0.17 — Concurrency and networking (phase 2)
 
-**Status: 0.17.1 implemented** (process I/O rules, channels, POSIX TCP, HTTP/1.1). Language law: `docs/LANGUAGE_SPEC.md` § 0.17 and `docs/STDLIB_SPEC.md` (`std/sync`, `std/net`, `std/http`). Rationale: `docs/YUKT_017_DESIGN.md` (accepted 2026-11-01). Mutex is specified and deferred (not 0.17.1). 0.18 is still proposed. GPU stays off this path.
+**Status: 0.17.1 implemented** (process I/O rules, channels, POSIX TCP, HTTP/1.1). Language law: `docs/LANGUAGE_SPEC.md` § 0.17 and `docs/STDLIB_SPEC.md` (`std/sync`, `std/net`, `std/http`). Rationale: `docs/YUKT_017_DESIGN.md` (accepted 2026-11-01). Mutex is specified and deferred (not 0.17.1). GPU stays off this path.
 
 - Process I/O versus `start` (origin-thread stdin, env lock, say lock) (**implemented**, 0.17.1 D-IO)
 - Channels (`sync.channel` / `receiver` / `send` / `recv` / `close`) (**implemented**, 0.17.1)
@@ -216,13 +216,13 @@ Proof: a small HTTP server a developer can write without inventing the API in ap
 
 ## 0.18 — Developer experience (phase 3)
 
-**Status: proposed.** Specify before implementing.
+**Status: 0.18.1 implemented** (install tarball, `yukt new`, `yukt.toml`, project `build` / `run` / `test`). Design: `docs/YUKT_018_DESIGN.md`. Both-host CI: [41332352061](https://github.com/Ayushman88/yukt/actions/runs/41332352061). 0.18.2 path/git dependencies remain specified, not implemented.
 
-- Interactive REPL
-- Package manager, dependency and version management
-- Formatter and language server
-- Project creation, build, and dependency workflows
-- Clean install / build / error-path validation on both hosts
+- Official tarball install plus `yukt new --type cli|server` (**implemented**, 0.18.1)
+- Manifest, project `yukt build` / `run` / `test`, CLI and HTTP templates (**implemented**, 0.18.1)
+- Path/git dependencies and lockfile (**specified**, 0.18.2, not implemented)
+- Thin public index (**specified**, 0.18.3, not implemented)
+- Interactive REPL, formatter, language server, `yukt publish` (later; not 0.18.1)
 
 ## 0.19 — Portability
 

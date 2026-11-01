@@ -2069,7 +2069,17 @@ Unused `result` is still a compile error. Traps abort the process. They do not b
 
 ### What this is not
 
-Windows targets, CUDA / GPU, TLS, UDP, Unix sockets, `async` / `await`, first-class functions, closures, `std/array`, reopening D1–D11, 0.18 tooling (REPL, packages, formatter, LSP), bounded channels, select, timeouts, cancel, `try_recv`, recursive mutex, `sync.shared`, HTTP/2, chunked encoding, keepalive, `https`, `http.post` / header-custom `get`, `env.unset`, `cwd` / `chdir`, integer-to-string (use `net.addr`).
+Windows targets, CUDA / GPU, TLS, UDP, Unix sockets, `async` / `await`, first-class functions, closures, `std/array`, reopening D1–D11, 0.18.2 path/git dependencies, 0.18.3 index, `yukt publish`, formatter, LSP, REPL, bounded channels, select, timeouts, cancel, `try_recv`, recursive mutex, `sync.shared`, HTTP/2, chunked encoding, keepalive, `https`, `http.post` / header-custom `get`, `env.unset`, `cwd` / `chdir`, integer-to-string (use `net.addr`).
+
+## Tooling (0.18.1)
+
+0.18.1 adds **no language syntax**. Command law lives in `docs/YUKT_018_DESIGN.md`.
+
+- `yukt new <name> --type cli|server` creates `<name>/` with `yukt.toml`, `src/main.yukt`, and `tests/`.
+- `yukt.toml` in 0.18.1 allows only `name`, `version`, `type`, and `entry`. `[dependencies]` is an error.
+- `yukt build` / `yukt run` / `yukt test` with no file use the nearest ancestor `yukt.toml`. An explicit `.yukt` file still wins.
+- `yukt test` runs `tests/**/*.yukt` (sorted) and, when a sibling `.out` exists, requires exact stdout.
+- Single-file `yukt build file.yukt` and `yukt run file.yukt` remain valid.
 
 ### Regression gate (0.17.1, after implementation)
 
