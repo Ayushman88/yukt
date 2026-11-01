@@ -22,27 +22,31 @@ static int64_t nest_c(int64_t n) {
     return yukt_bench_wait(job) + 1;
 }
 
+typedef struct {
+    int64_t n;
+    int64_t* out;
+} NestJob;
+
 static int64_t nest_b(int64_t n);
 
 static void* nest_thread(void* arg) {
-    int64_t* slot = (int64_t*)malloc(sizeof(int64_t));
-    *slot = nest_b((int64_t)(intptr_t)arg);
-    return slot;
+    NestJob* job = (NestJob*)arg;
+    *job->out = nest_b(job->n);
+    return NULL;
 }
 
 static int64_t nest_b(int64_t n) {
     if (n < 1) {
         return yukt_bench_leaf();
     }
+    int64_t inner = 0;
+    NestJob job = {n - 1, &inner};
     pthread_t child;
-    if (pthread_create(&child, NULL, nest_thread, (void*)(intptr_t)(n - 1)) != 0) {
+    if (pthread_create(&child, NULL, nest_thread, &job) != 0) {
         abort();
     }
-    void* inner = NULL;
-    pthread_join(child, &inner);
-    const int64_t value = *(int64_t*)inner + 1;
-    free(inner);
-    return value;
+    pthread_join(child, NULL);
+    return inner + 1;
 }
 
 static int64_t kernel_class_a(void) {

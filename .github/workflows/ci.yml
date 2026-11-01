@@ -50,4 +50,16 @@ jobs:
           BENCH_RUNS: "3"
           YUKT_BENCH_PUBLICATION: "false"
           YUKT_BENCH_SUITE: "0.15"
-        run: python3 benches/run.py --suite=0.15 --publication=false
+        run: |
+          CLANG="$(command -v clang)"
+          export YUKT_CLANG="$CLANG"
+          if [ -x "$(dirname "$CLANG")/clang++" ]; then
+            export CXX="$(dirname "$CLANG")/clang++"
+          else
+            export CXX="$(command -v clang++)"
+          fi
+          echo "YUKT_CLANG=$YUKT_CLANG"
+          echo "CXX=$CXX"
+          "$YUKT_CLANG" --version | head -1
+          "$CXX" --version | head -1
+          python3 benches/run.py --suite=0.15 --publication=false

@@ -27,7 +27,7 @@ LIMITATIONS = [
     "The heap is one recursive mutex; allocating task bodies serialize.",
     "GitHub Actions times are not publication-quality.",
     "Automatic repeat parallelization is not the start/wait API.",
-    "YUKT auto-par fill/reduce is not the same as explicit C/C++/Rust thread-per-chunk fill.",
+    "YUKT parallel fill may auto-par; the reduction is sequential (if-guarded) and is not ranked with seq or explicit-thread rows.",
     "0.11 numbers are a different compiler version and must not be subtracted as a 0.15 speedup.",
     "No GPU / CUDA numbers.",
 ]
@@ -212,22 +212,36 @@ def main() -> int:
             print(f"{name} output mismatch")
             for lang, text in stdout.items():
                 print(f"{lang}: {text!r}")
+        comparisons: dict[str, object] | None = None
         if name == "parallel":
             seq = {
                 lang: values
                 for lang, values in samples.items()
                 if lang != "yukt" and not lang.endswith("_par")
             }
-            par = {
+            auto_par = {"yukt": samples["yukt"]} if "yukt" in samples else {}
+            explicit = {
                 lang: values
                 for lang, values in samples.items()
-                if lang == "yukt" or lang.endswith("_par")
+                if lang.endswith("_par")
             }
-            claim = (
-                winner_for(f"{name} seq", seq, match)
-                + " | "
-                + winner_for(f"{name} auto-par/explicit-thread (not comparable to seq)", par, match)
-            )
+            seq_line = winner_for(f"{name} seq", seq, match)
+            auto_line = winner_for(f"{name} auto-par", auto_par, match)
+            exp_line = winner_for(f"{name} explicit-thread", explicit, match)
+            claim = f"{seq_line} | {auto_line} | {exp_line}"
+            comparisons = {
+                "seq": {"winner_line": seq_line, "languages": list(seq)},
+                "auto_par": {
+                    "winner_line": auto_line,
+                    "languages": list(auto_par),
+                    "note": "YUKT automatic repeat parallelization of the fill; reduction is sequential.",
+                },
+                "explicit_thread": {
+                    "winner_line": exp_line,
+                    "languages": list(explicit),
+                    "note": "Thread-per-chunk fill + sequential reduce. Not YUKT auto-par and not Class A.",
+                },
+            }
         else:
             claim = winner_for(name, samples, match)
         row: dict[str, object] = {
@@ -237,6 +251,8 @@ def main() -> int:
             "class": "compute",
             "winner_line": claim,
         }
+        if comparisons is not None:
+            row["comparisons"] = comparisons
         for lang, values in samples.items():
             row[lang] = bench011.ns_record(values)
         kernels_out.append(row)
@@ -339,6 +355,7 @@ def main() -> int:
         "os": platform.system(),
         "arch": platform.machine(),
         "cpu": bench011.host_cpu(),
+        "kernel": bench011.first_line("uname -srm"),
         "ncpu": ncpu(),
         "runs": runs,
         "yukt_version": bench011.first_line(str(yukt) + " --version"),

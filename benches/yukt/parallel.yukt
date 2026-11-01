@@ -5,5 +5,6 @@ create main:
         items[i] = i * 3 + 1
     total = 0
     repeat i in 0..n - 1:
-        total = total + items[i]
+        if i >= 0:
+            total = total + items[i]
     say total

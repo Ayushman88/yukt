@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -22,9 +23,15 @@ func nestA(n int64) int64 {
 	if n < 1 {
 		return leaf()
 	}
-	ch := make(chan int64, 1)
-	go func() { ch <- nestA(n - 1) }()
-	return <-ch + 1
+	var inner int64
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		inner = nestA(n - 1)
+		wg.Done()
+	}()
+	wg.Wait()
+	return inner + 1
 }
 
 func nestC(n int64) int64 {
