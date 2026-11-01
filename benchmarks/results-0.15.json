@@ -1,0 +1,10 @@
+{
+  "version": "0.15",
+  "hosts": {
+    "macos-arm64": {
+      "file": "results-0.15.macos-arm64.json",
+      "publication": true
+    }
+  },
+  "method": "docs/BENCHMARK_METHOD_015.md"
+}
