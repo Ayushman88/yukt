@@ -92,6 +92,32 @@ Type task_type(Type payload) {
     return type;
 }
 
+Type send_type(Type element) {
+    Type type;
+    type.kind = TypeKind::Send;
+    type.element = std::make_shared<Type>(std::move(element));
+    return type;
+}
+
+Type recv_type(Type element) {
+    Type type;
+    type.kind = TypeKind::Recv;
+    type.element = std::make_shared<Type>(std::move(element));
+    return type;
+}
+
+Type conn_type() {
+    Type type;
+    type.kind = TypeKind::Conn;
+    return type;
+}
+
+Type listener_type() {
+    Type type;
+    type.kind = TypeKind::Listener;
+    return type;
+}
+
 Type TypeContext::fresh_variable() {
     Type type;
     type.kind = TypeKind::Variable;
@@ -129,6 +155,11 @@ Type TypeContext::prune(Type type) const {
         out.element = std::make_shared<Type>(prune(*type.element));
         return out;
     }
+    if ((type.kind == TypeKind::Send || type.kind == TypeKind::Recv) && type.element != nullptr) {
+        Type out = type;
+        out.element = std::make_shared<Type>(prune(*type.element));
+        return out;
+    }
     return type;
 }
 
@@ -156,7 +187,7 @@ bool TypeContext::unify(Type left, Type right) {
     }
 
     if (left.kind == TypeKind::List || left.kind == TypeKind::Result || left.kind == TypeKind::Map ||
-        left.kind == TypeKind::Task) {
+        left.kind == TypeKind::Task || left.kind == TypeKind::Send || left.kind == TypeKind::Recv) {
         if (left.element == nullptr || right.element == nullptr) {
             return false;
         }
@@ -176,7 +207,7 @@ bool TypeContext::is_resolved(Type type) const {
         return false;
     }
     if ((type.kind == TypeKind::List || type.kind == TypeKind::Result || type.kind == TypeKind::Map ||
-         type.kind == TypeKind::Task) &&
+         type.kind == TypeKind::Task || type.kind == TypeKind::Send || type.kind == TypeKind::Recv) &&
         type.element != nullptr) {
         return is_resolved(*type.element);
     }
@@ -193,7 +224,7 @@ bool TypeContext::same(Type left, Type right) const {
         return left.variable == right.variable;
     }
     if (left.kind == TypeKind::List || left.kind == TypeKind::Result || left.kind == TypeKind::Map ||
-        left.kind == TypeKind::Task) {
+        left.kind == TypeKind::Task || left.kind == TypeKind::Send || left.kind == TypeKind::Recv) {
         if (left.element == nullptr || right.element == nullptr) {
             return left.element == right.element;
         }
@@ -236,6 +267,14 @@ std::string TypeContext::to_string(Type type) const {
             return "json";
         case TypeKind::Task:
             return "task[" + (type.element != nullptr ? to_string(*type.element) : "?") + "]";
+        case TypeKind::Send:
+            return "send[" + (type.element != nullptr ? to_string(*type.element) : "?") + "]";
+        case TypeKind::Recv:
+            return "recv[" + (type.element != nullptr ? to_string(*type.element) : "?") + "]";
+        case TypeKind::Conn:
+            return "conn";
+        case TypeKind::Listener:
+            return "listener";
     }
     return "unknown";
 }
@@ -246,7 +285,7 @@ bool TypeContext::occurs(int variable, const Type& type) const {
         return pruned.variable == variable;
     }
     if ((pruned.kind == TypeKind::List || pruned.kind == TypeKind::Result || pruned.kind == TypeKind::Map ||
-         pruned.kind == TypeKind::Task) &&
+         pruned.kind == TypeKind::Task || pruned.kind == TypeKind::Send || pruned.kind == TypeKind::Recv) &&
         pruned.element != nullptr) {
         return occurs(variable, *pruned.element);
     }

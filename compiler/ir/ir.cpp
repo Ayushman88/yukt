@@ -11,7 +11,8 @@ bool operator==(const IrType& left, const IrType& right) {
     if (left.kind == IrTypeKind::Record) {
         return left.record_id == right.record_id;
     }
-    if (left.kind != IrTypeKind::List && left.kind != IrTypeKind::Map && left.kind != IrTypeKind::Task) {
+    if (left.kind != IrTypeKind::List && left.kind != IrTypeKind::Map && left.kind != IrTypeKind::Task &&
+        left.kind != IrTypeKind::Send && left.kind != IrTypeKind::Recv) {
         return true;
     }
     if (left.element == nullptr || right.element == nullptr) {
@@ -94,6 +95,32 @@ IrType ir_task(IrType payload) {
     return type;
 }
 
+IrType ir_send(IrType element) {
+    IrType type;
+    type.kind = IrTypeKind::Send;
+    type.element = std::make_shared<IrType>(std::move(element));
+    return type;
+}
+
+IrType ir_recv(IrType element) {
+    IrType type;
+    type.kind = IrTypeKind::Recv;
+    type.element = std::make_shared<IrType>(std::move(element));
+    return type;
+}
+
+IrType ir_conn() {
+    IrType type;
+    type.kind = IrTypeKind::Conn;
+    return type;
+}
+
+IrType ir_listener() {
+    IrType type;
+    type.kind = IrTypeKind::Listener;
+    return type;
+}
+
 IrType ir_type_from(const Type& type) {
     switch (type.kind) {
         case TypeKind::Integer:
@@ -118,6 +145,14 @@ IrType ir_type_from(const Type& type) {
             return ir_json();
         case TypeKind::Task:
             return ir_task(type.element != nullptr ? ir_type_from(*type.element) : ir_void());
+        case TypeKind::Send:
+            return ir_send(type.element != nullptr ? ir_type_from(*type.element) : ir_void());
+        case TypeKind::Recv:
+            return ir_recv(type.element != nullptr ? ir_type_from(*type.element) : ir_void());
+        case TypeKind::Conn:
+            return ir_conn();
+        case TypeKind::Listener:
+            return ir_listener();
         case TypeKind::Void:
         case TypeKind::Variable:
             return ir_void();
@@ -149,6 +184,14 @@ std::string ir_type_name(const IrType& type) {
             return "json";
         case IrTypeKind::Task:
             return "task[" + (type.element != nullptr ? ir_type_name(*type.element) : "?") + "]";
+        case IrTypeKind::Send:
+            return "send[" + (type.element != nullptr ? ir_type_name(*type.element) : "?") + "]";
+        case IrTypeKind::Recv:
+            return "recv[" + (type.element != nullptr ? ir_type_name(*type.element) : "?") + "]";
+        case IrTypeKind::Conn:
+            return "conn";
+        case IrTypeKind::Listener:
+            return "listener";
     }
     return "void";
 }
@@ -171,6 +214,10 @@ int list_elem_kind(const IrType& type) {
         case IrTypeKind::Set:
         case IrTypeKind::Json:
         case IrTypeKind::Task:
+        case IrTypeKind::Send:
+        case IrTypeKind::Recv:
+        case IrTypeKind::Conn:
+        case IrTypeKind::Listener:
         case IrTypeKind::Void:
             return -1;
     }

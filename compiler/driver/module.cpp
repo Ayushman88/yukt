@@ -237,7 +237,10 @@ bool is_stdlib_runtime_ir(const std::string& ir_name) {
            ir_name == "std$json$encode" || ir_name == "std$io$program" || ir_name == "std$io$args" ||
            ir_name == "std$io$read_line_unchecked" || ir_name == "std$io$read_line_status" ||
            ir_name == "std$io$read_all_unchecked" || ir_name == "std$io$read_all_status" ||
-           ir_name == "std$env$get_unchecked" || ir_name == "std$env$has" || ir_name == "std$env$set";
+           ir_name == "std$env$get_unchecked" || ir_name == "std$env$has" || ir_name == "std$env$set" ||
+           ir_name == "std$sync$channel" || ir_name == "std$sync$receiver" || ir_name == "std$sync$send" ||
+           ir_name == "std$sync$recv_status" || ir_name == "std$sync$recv_unchecked" ||
+           ir_name == "std$sync$close";
 }
 
 std::string mangle_function(const std::string& prefix, const std::string& name, bool entry_main, bool single_file) {

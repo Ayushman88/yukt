@@ -62,6 +62,16 @@ int main() {
     }
 
     {
+        yukt::TypeContext types;
+        REQUIRE(types.to_string(yukt::send_type(yukt::integer_type())) == "send[integer]");
+        REQUIRE(types.to_string(yukt::recv_type(yukt::string_type())) == "recv[string]");
+        REQUIRE(types.to_string(yukt::conn_type()) == "conn");
+        REQUIRE(types.to_string(yukt::listener_type()) == "listener");
+        REQUIRE(types.unify(yukt::send_type(yukt::integer_type()), yukt::send_type(yukt::integer_type())));
+        REQUIRE(!types.unify(yukt::send_type(yukt::integer_type()), yukt::recv_type(yukt::integer_type())));
+    }
+
+    {
         const auto result = check_source(
             "create work(n):\n"
             "    give n\n"
@@ -140,6 +150,25 @@ int main() {
         const auto result = check_source(
             "record task:\n"
             "    n: integer\n"
+            "create main:\n"
+            "    say 1\n");
+        REQUIRE(has_title(result, "Invalid record"));
+    }
+
+    {
+        const auto result = check_source(
+            "record send:\n"
+            "    n: integer\n"
+            "\n"
+            "create main:\n"
+            "    say 1\n");
+        REQUIRE(has_title(result, "Invalid record"));
+    }
+    {
+        const auto result = check_source(
+            "record mutex:\n"
+            "    n: integer\n"
+            "\n"
             "create main:\n"
             "    say 1\n");
         REQUIRE(has_title(result, "Invalid record"));

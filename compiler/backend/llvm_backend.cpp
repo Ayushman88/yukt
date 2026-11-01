@@ -142,6 +142,10 @@ llvm::Type* llvm_type(llvm::LLVMContext& context, const IrType& type) {
         case IrTypeKind::Set:
         case IrTypeKind::Json:
         case IrTypeKind::Task:
+        case IrTypeKind::Send:
+        case IrTypeKind::Recv:
+        case IrTypeKind::Conn:
+        case IrTypeKind::Listener:
             return llvm::PointerType::getUnqual(context);
         case IrTypeKind::Record:
             return llvm::PointerType::getUnqual(context);
@@ -190,6 +194,7 @@ private:
     llvm::Value* to_stored_field(llvm::Value* value, const IrType& type);
     llvm::Value* from_stored_field(llvm::Value* value, const IrType& type);
     llvm::Value* emit_record_eq(llvm::Value* left, llvm::Value* right, int record_id);
+    llvm::Value* emit_record_chan_drop(int record_id);
     bool type_has_record(const IrType& type) const;
     std::int64_t record_byte_size(int id) const;
     llvm::Value* cstr_ptr(const std::string& text);
@@ -214,6 +219,7 @@ private:
     int next_thunk_ = 0;
     std::unordered_map<int, llvm::StructType*> record_types_;
     std::unordered_map<int, std::vector<unsigned>> record_llvm_indices_;
+    std::unordered_map<int, llvm::Function*> record_chan_drops_;
 };
 
 LlvmEmitter::LlvmEmitter(const IrModule& ir)
@@ -505,6 +511,15 @@ void LlvmEmitter::declare_runtime() {
     runtime_["yukt_env_get_unchecked"] = module_.getOrInsertFunction("yukt_env_get_unchecked", ptr, ptr);
     runtime_["yukt_env_has"] = module_.getOrInsertFunction("yukt_env_has", i8, ptr);
     runtime_["yukt_env_set"] = module_.getOrInsertFunction("yukt_env_set", void_ty, ptr, ptr);
+    runtime_["yukt_sync_channel"] = module_.getOrInsertFunction("yukt_sync_channel", ptr);
+    runtime_["yukt_sync_receiver"] = module_.getOrInsertFunction("yukt_sync_receiver", ptr, ptr);
+    runtime_["yukt_sync_send"] =
+        module_.getOrInsertFunction("yukt_sync_send", void_ty, ptr, ptr, i64, ptr);
+    runtime_["yukt_sync_recv_status"] = module_.getOrInsertFunction("yukt_sync_recv_status", i64, ptr);
+    runtime_["yukt_sync_recv_unchecked"] =
+        module_.getOrInsertFunction("yukt_sync_recv_unchecked", void_ty, ptr, i64);
+    runtime_["yukt_sync_close"] = module_.getOrInsertFunction("yukt_sync_close", void_ty, ptr);
+    runtime_["yukt_sync_drop_ptr"] = module_.getOrInsertFunction("yukt_sync_drop_ptr", void_ty, ptr);
     if (auto* zeros = module_.getFunction("yukt_list_zeros")) {
         zeros->addRetAttr(llvm::Attribute::NoAlias);
     }
@@ -1506,6 +1521,56 @@ llvm::Value* LlvmEmitter::emit_stdlib_call(const IrInst& inst) {
     if (name == "std$env$set") {
         return call_runtime("yukt_env_set", {args.at(0), args.at(1)});
     }
+    if (name == "std$sync$channel") {
+        return call_runtime("yukt_sync_channel", {});
+    }
+    if (name == "std$sync$receiver") {
+        return call_runtime("yukt_sync_receiver", {args.at(0)});
+    }
+    if (name == "std$sync$send") {
+        llvm::Value* tx = args.at(0);
+        IrType elem = inst.args.size() > 1 ? inst.args[1].type : ir_i64();
+        llvm::Value* value = args.at(1);
+        llvm::Type* ty = type_of(elem);
+        llvm::Value* tmp = builder_.CreateAlloca(ty);
+        if (elem.kind == IrTypeKind::String) {
+            builder_.CreateStore(materialize_owned(inst.args[1]), tmp);
+        } else {
+            builder_.CreateStore(value, tmp);
+        }
+        llvm::Value* nbytes =
+            llvm::ConstantInt::get(llvm::Type::getInt64Ty(context_),
+                                   module_.getDataLayout().getTypeAllocSize(ty));
+        llvm::Value* drop = llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(context_));
+        if (elem.kind == IrTypeKind::String || elem.kind == IrTypeKind::List ||
+            elem.kind == IrTypeKind::Map || elem.kind == IrTypeKind::Set ||
+            elem.kind == IrTypeKind::Json || elem.kind == IrTypeKind::Task ||
+            elem.kind == IrTypeKind::Send || elem.kind == IrTypeKind::Recv ||
+            elem.kind == IrTypeKind::Conn || elem.kind == IrTypeKind::Listener) {
+            drop = llvm::ConstantExpr::getBitCast(
+                llvm::cast<llvm::Constant>(runtime("yukt_sync_drop_ptr").getCallee()),
+                llvm::PointerType::getUnqual(context_));
+        }
+        if (elem.kind == IrTypeKind::Record) {
+            drop = emit_record_chan_drop(elem.record_id);
+        }
+        return call_runtime("yukt_sync_send", {tx, tmp, nbytes, drop});
+    }
+    if (name == "std$sync$recv_status") {
+        return call_runtime("yukt_sync_recv_status", {args.at(0)});
+    }
+    if (name == "std$sync$recv_unchecked") {
+        llvm::Type* ty = type_of(inst.dest.type);
+        llvm::Value* tmp = builder_.CreateAlloca(ty);
+        llvm::Value* nbytes =
+            llvm::ConstantInt::get(llvm::Type::getInt64Ty(context_),
+                                   module_.getDataLayout().getTypeAllocSize(ty));
+        builder_.CreateCall(runtime("yukt_sync_recv_unchecked"), {tmp, nbytes});
+        return builder_.CreateLoad(ty, tmp);
+    }
+    if (name == "std$sync$close") {
+        return call_runtime("yukt_sync_close", {args.at(0)});
+    }
     return llvm::PoisonValue::get(type_of(inst.dest.type));
 }
 
@@ -1634,6 +1699,49 @@ llvm::Value* LlvmEmitter::emit_record_eq(llvm::Value* left, llvm::Value* right, 
     return acc;
 }
 
+llvm::Value* LlvmEmitter::emit_record_chan_drop(int record_id) {
+    const auto cached = record_chan_drops_.find(record_id);
+    if (cached != record_chan_drops_.end()) {
+        return cached->second;
+    }
+
+    auto* ptr = llvm::PointerType::getUnqual(context_);
+    auto* void_ty = llvm::Type::getVoidTy(context_);
+    auto* fn_ty = llvm::FunctionType::get(void_ty, {ptr}, false);
+    const std::string name = "yukt$sync$drop$rec$" + std::to_string(record_id);
+    auto* fn = llvm::Function::Create(fn_ty, llvm::Function::InternalLinkage, name, module_);
+    fn->addFnAttr(llvm::Attribute::MustProgress);
+    fn->setDoesNotThrow();
+    record_chan_drops_[record_id] = fn;
+
+    auto* entry = llvm::BasicBlock::Create(context_, "entry", fn);
+    llvm::IRBuilder<> drop(entry);
+    llvm::Type* rec_ty = record_type(record_id);
+    llvm::Value* rec = drop.CreateLoad(rec_ty, fn->getArg(0));
+    const IrRecord* record = find_record(record_id);
+    if (record != nullptr) {
+        for (int i = 0; i < static_cast<int>(record->fields.size()); ++i) {
+            const IrType& field = record->fields[static_cast<std::size_t>(i)].type;
+            llvm::Value* field_val = drop.CreateExtractValue(rec, {record_llvm_index(record_id, i)});
+            if (field.kind == IrTypeKind::String || field.kind == IrTypeKind::List ||
+                field.kind == IrTypeKind::Map || field.kind == IrTypeKind::Set ||
+                field.kind == IrTypeKind::Json || field.kind == IrTypeKind::Task ||
+                field.kind == IrTypeKind::Send || field.kind == IrTypeKind::Recv ||
+                field.kind == IrTypeKind::Conn || field.kind == IrTypeKind::Listener) {
+                drop.CreateCall(runtime("yukt_release"), {from_stored_field(field_val, field)});
+            } else if (field.kind == IrTypeKind::Record) {
+                llvm::Value* nested = emit_record_chan_drop(field.record_id);
+                llvm::Value* tmp = drop.CreateAlloca(type_of(field));
+                drop.CreateStore(field_val, tmp);
+                drop.CreateCall(llvm::FunctionCallee(llvm::FunctionType::get(void_ty, {ptr}, false), nested),
+                                {tmp});
+            }
+        }
+    }
+    drop.CreateRetVoid();
+    return fn;
+}
+
 llvm::Value* LlvmEmitter::cstr_ptr(const std::string& text) {
     llvm::GlobalVariable* text_global = builder_.CreateGlobalString(text);
     llvm::Value* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context_), 0);
@@ -1694,6 +1802,10 @@ void LlvmEmitter::emit_print_value(llvm::Value* value, const IrType& type) {
         case IrTypeKind::Set:
         case IrTypeKind::Json:
         case IrTypeKind::Task:
+        case IrTypeKind::Send:
+        case IrTypeKind::Recv:
+        case IrTypeKind::Conn:
+        case IrTypeKind::Listener:
         case IrTypeKind::Void:
             return;
     }

@@ -1,0 +1,26 @@
+# Two-ended channels. Bodies of runtime names are not executed.
+
+share create channel():
+    give 0
+
+share create receiver(tx):
+    give 0
+
+share create send(tx, value):
+    n = 0
+
+share create recv_status(rx):
+    give 0
+
+share create recv_unchecked(rx):
+    give 0
+
+share create recv(rx):
+    s = recv_status(rx)
+    if s == 0:
+        give ok(recv_unchecked(rx))
+    otherwise:
+        give fail("closed")
+
+share create close(end):
+    n = 0

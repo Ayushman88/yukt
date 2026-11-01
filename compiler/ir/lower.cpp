@@ -125,7 +125,9 @@ bool has_user_call(const Expr* expr, bool ignore_tasks = false) {
 
 bool ir_is_heap_pointer(const IrType& type) {
     return type.kind == IrTypeKind::List || type.kind == IrTypeKind::String || type.kind == IrTypeKind::Map ||
-           type.kind == IrTypeKind::Set || type.kind == IrTypeKind::Json || type.kind == IrTypeKind::Task;
+           type.kind == IrTypeKind::Set || type.kind == IrTypeKind::Json || type.kind == IrTypeKind::Task ||
+           type.kind == IrTypeKind::Send || type.kind == IrTypeKind::Recv || type.kind == IrTypeKind::Conn ||
+           type.kind == IrTypeKind::Listener;
 }
 
 bool call_name_allocates(const std::string& qualifier, const std::string& callee) {
@@ -140,7 +142,8 @@ bool call_name_allocates(const std::string& qualifier, const std::string& callee
         callee == "std$map$new" || callee == "std$set$new" || callee == "std$json$parse_unchecked" ||
         callee == "std$file$read_unchecked" || callee == "std$io$program" || callee == "std$io$args" ||
         callee == "std$io$read_line_unchecked" || callee == "std$io$read_all_unchecked" ||
-        callee == "std$env$get_unchecked") {
+        callee == "std$env$get_unchecked" || callee == "std$sync$channel" || callee == "std$sync$receiver" ||
+        callee == "std$sync$send") {
         return true;
     }
     const std::string qualified = qualifier.empty() ? callee : qualifier + "." + callee;
@@ -152,7 +155,8 @@ bool call_name_allocates(const std::string& qualifier, const std::string& callee
            qualified == "str.upper" || qualified == "map.new" || qualified == "set.new" ||
            qualified == "json.parse" || qualified == "file.read" || qualified == "io.program" ||
            qualified == "io.args" || qualified == "io.read_line" || qualified == "io.read_all" ||
-           qualified == "env.get" || qualified == "env.get_or";
+           qualified == "env.get" || qualified == "env.get_or" || qualified == "sync.channel" ||
+           qualified == "sync.receiver" || qualified == "sync.send" || qualified == "sync.recv";
 }
 
 void collect_reads(const Expr* expr, std::set<std::string>& names) {
@@ -990,7 +994,8 @@ void Lowerer::lower_function(const FunctionDecl& function) {
     seq_footer_ = {};
     for (std::size_t i = 0; i < function_->params.size(); ++i) {
         const bool is_ref = i < function_->param_is_ref.size() && function_->param_is_ref[i];
-        if (!is_ref && owns_heap(function_->params[i].second)) {
+        const bool recv_borrow = ir_name == "std$sync$recv" && i == 0;
+        if (!is_ref && !recv_borrow && owns_heap(function_->params[i].second)) {
             owned_.insert(function_->params[i].first);
         }
     }
@@ -2253,6 +2258,20 @@ IrValue Lowerer::lower_call(const CallExpr& expr) {
         return inst.dest;
     }
 
+    if (ir_name == "std$sync$send" && expr.arguments.size() >= 2) {
+        const IrValue dest = lower_expression(expr.arguments[0].get());
+        const IrValue value = lower_expression(expr.arguments[1].get());
+        consume_heap_expr(expr.arguments[1].get());
+        IrInst inst;
+        inst.op = IrOp::Call;
+        inst.name = ir_name;
+        inst.args.push_back(dest);
+        inst.args.push_back(value);
+        inst.dest = make_temp(type_of(&expr));
+        emit(inst);
+        return inst.dest;
+    }
+
     if (ir_name == "std$list$slice" && expr.arguments.size() >= 3) {
         const IrValue src = lower_expression(expr.arguments[0].get());
         const IrValue start = lower_expression(expr.arguments[1].get());
@@ -2604,7 +2623,8 @@ void Lowerer::note_user_call_moves(const CallExpr& expr) {
     for (std::size_t i = 0; i < expr.arguments.size(); ++i) {
         const bool is_ref =
             refs_found != semantic_.parameter_refs.end() && i < refs_found->second.size() && refs_found->second[i];
-        if (is_ref) {
+        const bool recv_borrow = found->second == "std$sync$recv" && i == 0;
+        if (is_ref || recv_borrow) {
             continue;
         }
         if (const auto* id = dynamic_cast<const IdentifierExpr*>(expr.arguments[i].get())) {

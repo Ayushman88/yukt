@@ -22,6 +22,10 @@ enum class TypeKind {
     Set,
     Json,
     Task,
+    Send,
+    Recv,
+    Conn,
+    Listener,
 };
 
 struct Type {
@@ -45,6 +49,10 @@ Type map_type(Type value);
 Type set_type();
 Type json_type();
 Type task_type(Type payload);
+Type send_type(Type element);
+Type recv_type(Type element);
+Type conn_type();
+Type listener_type();
 
 class TypeContext {
 public:

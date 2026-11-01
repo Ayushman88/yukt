@@ -196,6 +196,7 @@ private:
     std::unordered_map<const Expr*, Type> expr_types_;
     FunctionSymbol* current_function_ = nullptr;
     std::unordered_map<std::string, OwnName> own_;
+    std::unordered_map<std::string, bool> receiver_taken_;
     std::unordered_set<std::string> loop_protected_;
     // False during type inference; true on the second walk, after parameter types
     // have been unified, so heap parameters can enter the ownership map as Owned.
@@ -410,9 +411,10 @@ void Analyzer::collect_functions() {
 }
 
 bool is_builtin_type_name(const std::string& name) {
-    return name == "integer" || name == "float" || name == "boolean" || name == "string" || name == "list" ||
-           name == "error" || name == "result" || name == "map" || name == "set" || name == "json" ||
-           name == "task";
+    return name == "integer" || name == "float" || name == "boolean" || name == "string" ||
+           name == "list" || name == "error" || name == "result" || name == "map" ||
+           name == "set" || name == "json" || name == "task" || name == "send" ||
+           name == "recv" || name == "mutex" || name == "conn" || name == "listener";
 }
 
 void Analyzer::collect_records() {
@@ -570,7 +572,7 @@ void Analyzer::bind_result_layouts(Type& type) {
     type = types_.prune(type);
     if (type.element != nullptr &&
         (type.kind == TypeKind::List || type.kind == TypeKind::Result || type.kind == TypeKind::Map ||
-         type.kind == TypeKind::Task)) {
+         type.kind == TypeKind::Task || type.kind == TypeKind::Send || type.kind == TypeKind::Recv)) {
         bind_result_layouts(*type.element);
         if (type.kind == TypeKind::List) {
             type = list_type(*type.element);
@@ -578,6 +580,10 @@ void Analyzer::bind_result_layouts(Type& type) {
             type = map_type(*type.element);
         } else if (type.kind == TypeKind::Task) {
             type = task_type(*type.element);
+        } else if (type.kind == TypeKind::Send) {
+            type = send_type(*type.element);
+        } else if (type.kind == TypeKind::Recv) {
+            type = recv_type(*type.element);
         }
     }
     if (type.kind == TypeKind::Error) {
@@ -739,6 +745,18 @@ Type Analyzer::resolve_type_name(const TypeName& name, int module_index, bool in
             // One element variable per list field, unified across constructors.
             return list_type(types_.fresh_variable());
         }
+        if (name.name == "send") {
+            return send_type(types_.fresh_variable());
+        }
+        if (name.name == "recv") {
+            return recv_type(types_.fresh_variable());
+        }
+        if (name.name == "conn") {
+            return conn_type();
+        }
+        if (name.name == "listener") {
+            return listener_type();
+        }
         RecordInfo* record = lookup_record(module_index, name.name);
         if (record == nullptr) {
             error(name.name_location, "Unknown name",
@@ -811,6 +829,10 @@ bool Analyzer::field_abi(Type type, std::int64_t& size, std::int64_t& align) {
         case TypeKind::Set:
         case TypeKind::Json:
         case TypeKind::Task:
+        case TypeKind::Send:
+        case TypeKind::Recv:
+        case TypeKind::Conn:
+        case TypeKind::Listener:
             size = 8;
             align = 8;
             return true;
@@ -941,7 +963,7 @@ void Analyzer::compute_record_layouts() {
 bool Analyzer::type_contains_private_record(Type type, int module_index) {
     type = types_.prune(type);
     if ((type.kind == TypeKind::List || type.kind == TypeKind::Result || type.kind == TypeKind::Map ||
-         type.kind == TypeKind::Task) &&
+         type.kind == TypeKind::Task || type.kind == TypeKind::Send || type.kind == TypeKind::Recv) &&
         type.element != nullptr) {
         return type_contains_private_record(*type.element, module_index);
     }
@@ -1224,6 +1246,7 @@ void Analyzer::analyze_function(FunctionSymbol& function) {
     function.callees.clear();
     scopes_.clear();
     own_.clear();
+    receiver_taken_.clear();
     loop_protected_.clear();
     result_flow_.clear();
     unhandled_results_.clear();
@@ -1580,7 +1603,9 @@ void Analyzer::analyze_say(const SayStmt& stmt) {
                      "Call a function that gives a value, or print a literal.");
     const Type resolved = types_.prune(type);
     if (resolved.kind == TypeKind::Result || resolved.kind == TypeKind::Error || resolved.kind == TypeKind::Map ||
-        resolved.kind == TypeKind::Set || resolved.kind == TypeKind::Json || resolved.kind == TypeKind::Task) {
+        resolved.kind == TypeKind::Set || resolved.kind == TypeKind::Json || resolved.kind == TypeKind::Task ||
+        resolved.kind == TypeKind::Send || resolved.kind == TypeKind::Recv || resolved.kind == TypeKind::Conn ||
+        resolved.kind == TypeKind::Listener) {
         error(stmt.span.start, "Type mismatch",
               "`say` cannot print " + types_.to_string(resolved) + ".",
               resolved.kind == TypeKind::Result ? "Handle the result with `if r.ok:` first."
@@ -3170,6 +3195,118 @@ Type Analyzer::analyze_stdlib_call(FunctionSymbol& function, const CallExpr& exp
                     "`" + display + "` expects an environment value.", "Pass a string.");
         return finish(void_type());
     }
+    if (ir == "std$sync$channel") {
+        require_arity(0);
+        return finish(send_type(types_.fresh_variable()));
+    }
+    if (ir == "std$sync$receiver") {
+        if (!require_arity(1)) {
+            return finish(recv_type(types_.fresh_variable()));
+        }
+        Type elem = types_.fresh_variable();
+        expect_type(analyze_arg(0), send_type(elem), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a send end.", "Pass the value from `sync.channel()`.");
+        const std::string place = borrow_place_name(expr.arguments[0].get());
+        if (place.empty() || lookup_local(place) == nullptr) {
+            error(arg_location(0), "Cannot borrow a temporary",
+                  "A channel end must be a local, a parameter, or a record field.",
+                  "Pass a name, for example `sync.receiver(tx)`.");
+        } else {
+            own_check_read(place, arg_location(0));
+            if (receiver_taken_[place]) {
+                error(arg_location(0), "receiver already taken",
+                      "The recv end of `" + place + "` was already taken.",
+                      "Call `sync.receiver` once per send end.");
+            } else if (!is_ref_parameter(place)) {
+                receiver_taken_[place] = true;
+            }
+        }
+        return finish(recv_type(elem));
+    }
+    if (ir == "std$sync$send") {
+        if (!require_arity(2)) {
+            return finish(void_type());
+        }
+        Type elem = types_.fresh_variable();
+        expect_type(analyze_arg(0), send_type(elem), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a send end.", "Pass a `send` value.");
+        const std::string place = borrow_place_name(expr.arguments[0].get());
+        if (place.empty() || lookup_local(place) == nullptr) {
+            error(arg_location(0), "Cannot borrow a temporary",
+                  "A channel end must be a local, a parameter, or a record field.",
+                  "Pass a name, for example `sync.send(tx, value)`.");
+        } else {
+            own_check_read(place, arg_location(0));
+        }
+        const Type value = analyze_arg(1);
+        expect_type(value, elem, arg_location(1), "Type mismatch",
+                    "`" + display + "` requires a value that matches the channel element type.",
+                    "Pass a value of the same type as other sends and recvs on this channel.");
+        if (type_owns_heap(types_, elem, &records_)) {
+            consume_heap_expr(expr.arguments[1].get());
+        }
+        return finish(void_type());
+    }
+    if (ir == "std$sync$recv_status") {
+        if (!require_arity(1)) {
+            return finish(integer_type());
+        }
+        Type elem = types_.fresh_variable();
+        expect_type(analyze_arg(0), recv_type(elem), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a recv end.", "Pass a `recv` value.");
+        const std::string place = borrow_place_name(expr.arguments[0].get());
+        if (!place.empty() && lookup_local(place) != nullptr) {
+            own_check_read(place, arg_location(0));
+        }
+        return finish(integer_type());
+    }
+    if (ir == "std$sync$recv_unchecked") {
+        if (!require_arity(1)) {
+            return finish(types_.fresh_variable());
+        }
+        Type elem = types_.fresh_variable();
+        expect_type(analyze_arg(0), recv_type(elem), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a recv end.", "Pass a `recv` value.");
+        const std::string place = borrow_place_name(expr.arguments[0].get());
+        if (!place.empty() && lookup_local(place) != nullptr) {
+            own_check_read(place, arg_location(0));
+        }
+        return finish(elem);
+    }
+    if (ir == "std$sync$close") {
+        if (!require_arity(1)) {
+            return finish(void_type());
+        }
+        Type elem = types_.fresh_variable();
+        const Type end = analyze_arg(0);
+        Type pruned = types_.prune(end);
+        if (pruned.kind == TypeKind::Variable) {
+            error(arg_location(0), "Type mismatch",
+                  "`" + display + "` expects a send or recv end.",
+                  "Pass a channel end.");
+        } else if (pruned.kind == TypeKind::Send) {
+            if (pruned.element != nullptr) {
+                types_.unify(elem, *pruned.element);
+            }
+        } else if (pruned.kind == TypeKind::Recv) {
+            if (pruned.element != nullptr) {
+                types_.unify(elem, *pruned.element);
+            }
+        } else {
+            error(arg_location(0), "Type mismatch",
+                  "`" + display + "` expects a send or recv end.",
+                  "Pass a channel end.");
+        }
+        const std::string place = borrow_place_name(expr.arguments[0].get());
+        if (place.empty() || lookup_local(place) == nullptr) {
+            error(arg_location(0), "Cannot borrow a temporary",
+                  "A channel end must be a local, a parameter, or a record field.",
+                  "Pass a name, for example `sync.close(tx)`.");
+        } else {
+            own_check_read(place, arg_location(0));
+        }
+        return finish(void_type());
+    }
 
     for (const auto& argument : expr.arguments) {
         analyze_expression(argument.get());
@@ -3417,6 +3554,23 @@ void Analyzer::own_call_args(const CallExpr& expr, FunctionSymbol* callee) {
     std::unordered_set<std::string> borrowed;
     const std::size_t count = expr.arguments.size();
     for (std::size_t i = 0; i < count; ++i) {
+        const bool recv_end =
+            callee != nullptr && callee->ir_name == "std$sync$recv" && i == 0;
+        if (recv_end) {
+            if (expr.arguments[i] == nullptr) {
+                continue;
+            }
+            const std::string place = borrow_place_name(expr.arguments[i].get());
+            if (place.empty() || lookup_local(place) == nullptr) {
+                error(expr.arguments[i]->span.start, "Cannot borrow a temporary",
+                      "A channel end must be a local, a parameter, or a record field.",
+                      "Pass a name, for example `sync.recv(rx)`.");
+            } else {
+                own_check_read(place, expr.arguments[i]->span.start);
+                borrowed.insert(place);
+            }
+            continue;
+        }
         const bool is_ref = callee != nullptr && i < callee->param_is_ref.size() && callee->param_is_ref[i];
         if (is_ref) {
             Type arg_type;
@@ -3828,6 +3982,14 @@ void print_types(const SemanticInfo& info, std::ostream& out) {
                 return "json";
             case TypeKind::Task:
                 return "task";
+            case TypeKind::Send:
+                return "send";
+            case TypeKind::Recv:
+                return "recv";
+            case TypeKind::Conn:
+                return "conn";
+            case TypeKind::Listener:
+                return "listener";
         }
         return "?";
     };

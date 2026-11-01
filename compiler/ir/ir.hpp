@@ -24,6 +24,10 @@ enum class IrTypeKind {
     Set,
     Json,
     Task,
+    Send,
+    Recv,
+    Conn,
+    Listener,
 };
 
 struct IrType {
@@ -63,6 +67,10 @@ IrType ir_map(IrType value);
 IrType ir_set();
 IrType ir_json();
 IrType ir_task(IrType payload);
+IrType ir_send(IrType element);
+IrType ir_recv(IrType element);
+IrType ir_conn();
+IrType ir_listener();
 IrType ir_type_from(const Type& type);
 std::string ir_type_name(const IrType& type);
 int list_elem_kind(const IrType& type);
