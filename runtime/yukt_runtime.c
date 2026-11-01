@@ -1474,6 +1474,71 @@ static pthread_cond_t yukt_task_life_cv = PTHREAD_COND_INITIALIZER;
 static int yukt_task_busy = 0;
 static int yukt_task_ops = 0;
 
+/* Recent consumed handles, for double-wait after the wrapper is freed.
+ * Bounded: one slot is overwritten when the ring is full. A void* handle
+ * cannot carry a generation, so a malloc-recycled address is a new task
+ * and must drop any stale tomb (yukt_task_forget_consumed). */
+enum { YUKT_TASK_TOMB_CAP = 256 };
+
+static void* yukt_task_tombs[YUKT_TASK_TOMB_CAP];
+static unsigned yukt_task_tomb_head;
+static unsigned yukt_task_tomb_count;
+
+static unsigned yukt_task_tomb_index(unsigned n) {
+    return (yukt_task_tomb_head + YUKT_TASK_TOMB_CAP - yukt_task_tomb_count + n) % YUKT_TASK_TOMB_CAP;
+}
+
+static void yukt_task_tomb_clear_slot(void* ptr) {
+    for (unsigned n = 0; n < yukt_task_tomb_count; ++n) {
+        const unsigned i = yukt_task_tomb_index(n);
+        if (yukt_task_tombs[i] == ptr) {
+            yukt_task_tombs[i] = NULL;
+            return;
+        }
+    }
+}
+
+static void yukt_task_mark_consumed(void* ptr) {
+    if (ptr == NULL) {
+        return;
+    }
+    pthread_mutex_lock(&yukt_task_life_mu);
+    yukt_task_tomb_clear_slot(ptr);
+    yukt_task_tombs[yukt_task_tomb_head] = ptr;
+    yukt_task_tomb_head = (yukt_task_tomb_head + 1) % YUKT_TASK_TOMB_CAP;
+    if (yukt_task_tomb_count < YUKT_TASK_TOMB_CAP) {
+        yukt_task_tomb_count++;
+    }
+    pthread_mutex_unlock(&yukt_task_life_mu);
+}
+
+static int yukt_task_already_consumed(void* ptr) {
+    int found = 0;
+    pthread_mutex_lock(&yukt_task_life_mu);
+    for (unsigned n = 0; n < yukt_task_tomb_count; ++n) {
+        if (yukt_task_tombs[yukt_task_tomb_index(n)] == ptr) {
+            found = 1;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&yukt_task_life_mu);
+    return found;
+}
+
+static void yukt_task_forget_consumed(void* ptr) {
+    pthread_mutex_lock(&yukt_task_life_mu);
+    yukt_task_tomb_clear_slot(ptr);
+    pthread_mutex_unlock(&yukt_task_life_mu);
+}
+
+static void yukt_task_clear_consumed(void) {
+    pthread_mutex_lock(&yukt_task_life_mu);
+    memset(yukt_task_tombs, 0, sizeof(yukt_task_tombs));
+    yukt_task_tomb_head = 0;
+    yukt_task_tomb_count = 0;
+    pthread_mutex_unlock(&yukt_task_life_mu);
+}
+
 #if !defined(__APPLE__)
 typedef struct YuktTaskNode {
     YuktTask* task;
@@ -1530,12 +1595,39 @@ static void yukt_task_run_body(YuktTask* task) {
     yukt_task_note_body_done();
 }
 
+static int yukt_task_is_tracked(void* ptr) {
+    int found = 0;
+    yukt_heap_lock();
+    for (YuktAlloc* node = yukt_allocs; node != NULL; node = node->next) {
+        if (node->ptr == ptr) {
+            found = 1;
+            break;
+        }
+    }
+    yukt_heap_unlock();
+    return found;
+}
+
+/* Wait until the worker has dropped its ref so the wrapper is untracked.
+ * After consume the waiter no longer owns the object; this only compares the
+ * pointer against the tracker and waits on life_cv. */
+static void yukt_task_wait_untracked(void* ptr) {
+    pthread_mutex_lock(&yukt_task_life_mu);
+    while (yukt_task_is_tracked(ptr)) {
+        pthread_cond_wait(&yukt_task_life_cv, &yukt_task_life_mu);
+    }
+    pthread_mutex_unlock(&yukt_task_life_mu);
+}
+
 static void yukt_task_drop(YuktTask* task) {
     if (task == NULL) {
         return;
     }
     if (atomic_fetch_sub(&task->refs, 1) == 1) {
         yukt_release(task);
+        pthread_mutex_lock(&yukt_task_life_mu);
+        pthread_cond_broadcast(&yukt_task_life_cv);
+        pthread_mutex_unlock(&yukt_task_life_mu);
     }
 }
 
@@ -1653,6 +1745,7 @@ void* yukt_task_start(yukt_task_fn fn, void* args, size_t result_bytes, size_t r
         free(task);
         die("out of memory");
     }
+    yukt_task_forget_consumed(task);
     yukt_track(YUKT_ALLOC_TASK, task, total);
     yukt_task_note_start();
 #if defined(__APPLE__)
@@ -1675,18 +1768,20 @@ static void yukt_task_consume(YuktTask* task, void* result_out) {
     if (result_out != NULL && task->result != NULL && task->result_bytes > 0) {
         memcpy(result_out, task->result, task->result_bytes);
     }
+    yukt_task_mark_consumed(task);
     yukt_task_drop(task);
 }
 
 void yukt_task_wait(void* task_ptr, void* result_out) {
-    YuktTask* task = (YuktTask*)task_ptr;
-    if (task == NULL) {
+    if (task_ptr == NULL || yukt_task_already_consumed(task_ptr)) {
         die("double wait or untracked task");
     }
+    YuktTask* task = (YuktTask*)task_ptr;
     int expected = YUKT_TASK_QUEUED;
     if (atomic_compare_exchange_strong(&task->state, &expected, YUKT_TASK_RUNNING)) {
         yukt_task_run_body(task);
         yukt_task_consume(task, result_out);
+        yukt_task_wait_untracked(task);
         return;
     }
     pthread_mutex_lock(&task->mu);
@@ -1699,6 +1794,7 @@ void yukt_task_wait(void* task_ptr, void* result_out) {
         die("double wait or untracked task");
     }
     yukt_task_consume(task, result_out);
+    yukt_task_wait_untracked(task);
 }
 
 void yukt_task_shutdown(void) {
@@ -1707,6 +1803,7 @@ void yukt_task_shutdown(void) {
         pthread_cond_wait(&yukt_task_life_cv, &yukt_task_life_mu);
     }
     pthread_mutex_unlock(&yukt_task_life_mu);
+    yukt_task_clear_consumed();
 #if !defined(__APPLE__)
     pthread_mutex_lock(&yukt_task_qmu);
     yukt_task_stop = 1;
