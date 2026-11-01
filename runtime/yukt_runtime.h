@@ -224,6 +224,30 @@ char* yukt_env_get_unchecked(const char* name);
 int8_t yukt_env_has(const char* name);
 void yukt_env_set(const char* name, const char* value);
 
+void* yukt_sync_channel(void);
+void* yukt_sync_receiver(void* tx);
+void yukt_sync_send(void* tx, const void* payload, int64_t nbytes, void (*drop)(void*));
+int64_t yukt_sync_recv_status(void* rx);
+void yukt_sync_recv_unchecked(void* out, int64_t nbytes);
+void yukt_sync_close(void* end);
+void yukt_sync_drop_ptr(void* payload);
+
+enum {
+    YUKT_ALLOC_LIST = 1,
+    YUKT_ALLOC_STR = 2,
+    YUKT_ALLOC_OBJ = 3,
+    YUKT_ALLOC_TASK = 4,
+    YUKT_ALLOC_SEND = 5,
+    YUKT_ALLOC_RECV = 6,
+    YUKT_ALLOC_CONN = 7,
+    YUKT_ALLOC_LISTENER = 8
+};
+
+void die(const char* message);
+void yukt_track(int kind, void* ptr, size_t bytes);
+int yukt_alloc_kind(void* ptr);
+void yukt_sync_destroy_end(void* ptr);
+
 #ifdef __cplusplus
 }
 #endif

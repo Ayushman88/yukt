@@ -1,0 +1,7 @@
+use std/sync
+
+create main:
+    tx = sync.channel()
+    rx = sync.receiver(tx)
+    rx2 = sync.receiver(tx)
+    say 1

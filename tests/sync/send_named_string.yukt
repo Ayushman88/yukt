@@ -1,0 +1,11 @@
+use std/sync
+
+create main:
+    tx = sync.channel()
+    rx = sync.receiver(tx)
+    s = "hi"
+    sync.send(tx, s)
+    sync.close(tx)
+    r = sync.recv(rx)
+    if r.ok:
+        say r.value

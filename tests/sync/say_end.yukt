@@ -1,0 +1,6 @@
+use std/sync
+
+create main:
+    tx = sync.channel()
+    sync.send(tx, 1)
+    say tx

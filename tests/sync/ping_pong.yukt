@@ -1,0 +1,22 @@
+use std/sync
+
+create bounce(rx, tx):
+    repeat i in 1..1000:
+        r = sync.recv(rx)
+        if r.ok:
+            sync.send(tx, r.value)
+    sync.close(tx)
+
+create main:
+    to_w = sync.channel()
+    back = sync.channel()
+    rx_w = sync.receiver(to_w)
+    rx_m = sync.receiver(back)
+    t = start bounce(rx_w, back)
+    repeat i in 1..1000:
+        sync.send(to_w, i)
+        r = sync.recv(rx_m)
+        if r.ok:
+            say r.value
+    sync.close(to_w)
+    wait t

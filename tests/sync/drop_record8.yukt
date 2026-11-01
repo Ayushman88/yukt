@@ -1,0 +1,12 @@
+use std/sync
+
+record Box:
+    n: integer
+
+create main:
+    tx = sync.channel()
+    rx = sync.receiver(tx)
+    sync.send(tx, Box(1))
+    sync.close(rx)
+    sync.close(tx)
+    say 1

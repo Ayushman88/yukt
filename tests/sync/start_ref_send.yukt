@@ -1,0 +1,9 @@
+use std/sync
+
+create work(c: ref send):
+    sync.send(c, 1)
+
+create main:
+    tx = sync.channel()
+    t = start work(tx)
+    wait t

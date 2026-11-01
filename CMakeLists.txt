@@ -81,7 +81,7 @@ yukt_set_warnings(yukt_compiler)
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
-add_library(yukt_runtime STATIC runtime/yukt_runtime.c runtime/yukt_013.c)
+add_library(yukt_runtime STATIC runtime/yukt_runtime.c runtime/yukt_013.c runtime/yukt_sync.c)
 target_include_directories(yukt_runtime PUBLIC ${CMAKE_SOURCE_DIR}/runtime)
 target_link_libraries(yukt_runtime PUBLIC m Threads::Threads)
 
@@ -212,6 +212,24 @@ yukt_set_warnings(yukt_io_tests)
 add_test(NAME yukt_io_tests COMMAND yukt_io_tests)
 add_dependencies(yukt_io_tests yukt)
 
+add_executable(yukt_sync_tests tests/sync/sync_tests.cpp)
+target_link_libraries(yukt_sync_tests PRIVATE yukt_backend yukt_runtime)
+target_include_directories(yukt_sync_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_compile_definitions(yukt_sync_tests PRIVATE
+    YUKT_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    YUKT_EXECUTABLE="$<TARGET_FILE:yukt>"
+    YUKT_RUNTIME_LIB="$<TARGET_FILE:yukt_runtime>"
+)
+if(NOT LLVM_ENABLE_RTTI)
+    target_compile_options(yukt_sync_tests PRIVATE -fno-rtti)
+endif()
+if(APPLE AND DEFINED LLVM_LIBRARY_DIR)
+    target_link_options(yukt_sync_tests PRIVATE "-Wl,-rpath,${LLVM_LIBRARY_DIR}")
+endif()
+yukt_set_warnings(yukt_sync_tests)
+add_test(NAME yukt_sync_tests COMMAND yukt_sync_tests)
+add_dependencies(yukt_sync_tests yukt)
+
 yukt_add_test(yukt_ownership_tests tests/ownership/ownership_tests.cpp)
 
 add_executable(yukt_ownership_runtime_tests tests/ownership/runtime_release_tests.c)
@@ -339,3 +357,16 @@ add_test(NAME yukt_dio_runtime_tests COMMAND yukt_dio_runtime_tests)
 add_test(NAME yukt_dio_worker_stdin COMMAND yukt_dio_runtime_tests worker-stdin)
 set_tests_properties(yukt_dio_worker_stdin PROPERTIES
     PASS_REGULAR_EXPRESSION "YUKT runtime error: stdin from worker")
+
+add_executable(yukt_sync_runtime_tests tests/sync/runtime_sync_tests.c)
+target_link_libraries(yukt_sync_runtime_tests PRIVATE yukt_runtime)
+add_test(NAME yukt_sync_runtime_tests COMMAND yukt_sync_runtime_tests)
+add_test(NAME yukt_sync_double_receiver COMMAND yukt_sync_runtime_tests double-receiver)
+set_tests_properties(yukt_sync_double_receiver PROPERTIES
+    PASS_REGULAR_EXPRESSION "YUKT runtime error: receiver already taken")
+add_test(NAME yukt_sync_send_closed COMMAND yukt_sync_runtime_tests send-closed)
+set_tests_properties(yukt_sync_send_closed PROPERTIES
+    PASS_REGULAR_EXPRESSION "YUKT runtime error: send on closed channel")
+add_test(NAME yukt_sync_send_recv_closed COMMAND yukt_sync_runtime_tests send-recv-closed)
+set_tests_properties(yukt_sync_send_recv_closed PROPERTIES
+    PASS_REGULAR_EXPRESSION "YUKT runtime error: send on closed channel")

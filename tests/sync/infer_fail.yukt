@@ -1,0 +1,5 @@
+use std/sync
+
+create main:
+    tx = sync.channel()
+    say 1

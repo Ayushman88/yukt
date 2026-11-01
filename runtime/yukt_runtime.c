@@ -25,7 +25,7 @@
 static void (*yukt_die_hook)(const char* message) = NULL;
 static int yukt_fail_next_payload_alloc = 0;
 
-static void die(const char* message) {
+void die(const char* message) {
     fprintf(stderr, "YUKT runtime error: %s\n", message);
     if (yukt_die_hook != NULL) {
         void (*hook)(const char*) = yukt_die_hook;
@@ -43,7 +43,6 @@ void yukt_debug_set_die_hook(void (*fn)(const char* message)) {
     yukt_die_hook = fn;
 }
 
-enum { YUKT_ALLOC_LIST = 1, YUKT_ALLOC_STR = 2, YUKT_ALLOC_OBJ = 3, YUKT_ALLOC_TASK = 4 };
 
 typedef struct YuktAlloc {
     struct YuktAlloc* next;
@@ -171,7 +170,7 @@ void yukt_reduce_f64(double* acc, double partial, int64_t op) {
 
 void yukt_013_free(void* ptr);
 
-static void yukt_track(int kind, void* ptr, size_t bytes) {
+void yukt_track(int kind, void* ptr, size_t bytes) {
     if (ptr == NULL) {
         return;
     }
@@ -214,6 +213,9 @@ void yukt_runtime_release(void) {
         } else if (node->kind == YUKT_ALLOC_TASK) {
             yukt_task_destroy_sync(node->ptr);
             free(node->ptr);
+        } else if (node->kind == YUKT_ALLOC_SEND || node->kind == YUKT_ALLOC_RECV) {
+            yukt_sync_destroy_end(node->ptr);
+            free(node->ptr);
         } else if (!yukt_cache_put(yukt_str_bins, node->ptr, node->bytes)) {
             free(node->ptr);
         }
@@ -230,6 +232,22 @@ int64_t yukt_debug_live_allocs(void) {
     }
     yukt_heap_unlock();
     return n;
+}
+
+int yukt_alloc_kind(void* ptr) {
+    if (ptr == NULL) {
+        return 0;
+    }
+    int kind = 0;
+    yukt_heap_lock();
+    for (YuktAlloc* node = yukt_allocs; node != NULL; node = node->next) {
+        if (node->ptr == ptr) {
+            kind = node->kind;
+            break;
+        }
+    }
+    yukt_heap_unlock();
+    return kind;
 }
 
 static YuktAlloc* yukt_untrack(void* ptr) {
@@ -289,6 +307,9 @@ void yukt_release(void* ptr) {
         yukt_013_free(node->ptr);
     } else if (node->kind == YUKT_ALLOC_TASK) {
         yukt_task_destroy_sync(node->ptr);
+        free(node->ptr);
+    } else if (node->kind == YUKT_ALLOC_SEND || node->kind == YUKT_ALLOC_RECV) {
+        yukt_sync_destroy_end(node->ptr);
         free(node->ptr);
     } else if (!yukt_cache_put(yukt_str_bins, node->ptr, node->bytes)) {
         free(node->ptr);
@@ -2375,6 +2396,36 @@ void yukt_task_wait(void* task_ptr, void* result_out) {
 }
 
 void yukt_task_shutdown(void) {
+    /* Wake blocked sync.recv waiters before joining the pool. Snapshot
+     * under the heap lock, then close without holding it: recv-close may
+     * yukt_release payloads (heap_mu), and destroy_end must not run while
+     * a waiter is still in cond_wait. */
+    yukt_heap_lock();
+    int n = 0;
+    for (YuktAlloc* node = yukt_allocs; node != NULL; node = node->next) {
+        if (node->kind == YUKT_ALLOC_SEND || node->kind == YUKT_ALLOC_RECV) {
+            n++;
+        }
+    }
+    void** ends = NULL;
+    if (n > 0) {
+        ends = (void**)malloc((size_t)n * sizeof(void*));
+        if (ends == NULL) {
+            yukt_heap_unlock();
+            die("out of memory");
+        }
+        int i = 0;
+        for (YuktAlloc* node = yukt_allocs; node != NULL; node = node->next) {
+            if (node->kind == YUKT_ALLOC_SEND || node->kind == YUKT_ALLOC_RECV) {
+                ends[i++] = node->ptr;
+            }
+        }
+    }
+    yukt_heap_unlock();
+    for (int i = 0; i < n; ++i) {
+        yukt_sync_close(ends[i]);
+    }
+    free(ends);
     pthread_mutex_lock(&yukt_task_life_mu);
     while (yukt_task_busy > 0 || yukt_task_ops > 0) {
         pthread_cond_wait(&yukt_task_life_cv, &yukt_task_life_mu);

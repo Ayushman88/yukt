@@ -1,0 +1,5 @@
+record send:
+    n: integer
+
+create main:
+    say 1

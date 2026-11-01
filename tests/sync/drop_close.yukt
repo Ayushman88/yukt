@@ -1,0 +1,20 @@
+use std/sync
+
+create take(rx):
+    r = sync.recv(rx)
+    if r.ok:
+        say r.value
+    otherwise:
+        say r.error.code
+
+create drop_tx(tx):
+    n = 0
+
+create main:
+    tx = sync.channel()
+    rx = sync.receiver(tx)
+    t = start take(rx)
+    if false:
+        sync.send(tx, 0)
+    drop_tx(tx)
+    wait t

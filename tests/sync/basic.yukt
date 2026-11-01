@@ -1,0 +1,14 @@
+use std/sync
+
+create worker(rx):
+    r = sync.recv(rx)
+    if r.ok:
+        say r.value
+
+create main:
+    tx = sync.channel()
+    rx = sync.receiver(tx)
+    t = start worker(rx)
+    sync.send(tx, 1)
+    sync.close(tx)
+    wait t
