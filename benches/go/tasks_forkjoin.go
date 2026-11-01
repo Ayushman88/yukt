@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -19,17 +20,19 @@ func work(n int64) int64 {
 }
 
 func classA() int64 {
-	chs := make([]chan int64, taskN)
+	outs := make([]int64, taskN)
+	var wg sync.WaitGroup
+	wg.Add(taskN)
 	for i := 0; i < taskN; i++ {
-		ch := make(chan int64, 1)
-		chs[i] = ch
-		go func(i int, ch chan int64) {
-			ch <- work(int64(i))
-		}(i, ch)
+		go func(i int) {
+			outs[i] = work(int64(i))
+			wg.Done()
+		}(i)
 	}
+	wg.Wait()
 	var sum int64
 	for i := taskN - 1; i >= 0; i-- {
-		sum += <-chs[i]
+		sum += outs[i]
 	}
 	return sum
 }

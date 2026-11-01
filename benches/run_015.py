@@ -20,11 +20,15 @@ COMPUTE = ["nested", "matmul", "fibonacci", "sort", "alloc", "parallel"]
 TASKS = ["tasks_forkjoin", "tasks_nested"]
 LIMITATIONS = [
     "Running-wait cycles can hang; 0.14.1 has no deadlock detector.",
+    "macOS YUKT Class A is libdispatch, not pthreads.",
     "Linux YUKT tasks use dedicated persistent pthread workers (<=32), not one pthread_create per start.",
     "Class A C uses a persistent pool (ncpu capped at 32). Class B is thread-per-task and is not a Class A peer.",
+    "Go Class A is the Go scheduler, not a pthread pool.",
     "The heap is one recursive mutex; allocating task bodies serialize.",
     "GitHub Actions times are not publication-quality.",
     "Automatic repeat parallelization is not the start/wait API.",
+    "YUKT auto-par fill/reduce is not the same as explicit C/C++/Rust thread-per-chunk fill.",
+    "0.11 numbers are a different compiler version and must not be subtracted as a 0.15 speedup.",
     "No GPU / CUDA numbers.",
 ]
 
@@ -208,7 +212,24 @@ def main() -> int:
             print(f"{name} output mismatch")
             for lang, text in stdout.items():
                 print(f"{lang}: {text!r}")
-        claim = winner_for(name, samples, match)
+        if name == "parallel":
+            seq = {
+                lang: values
+                for lang, values in samples.items()
+                if lang != "yukt" and not lang.endswith("_par")
+            }
+            par = {
+                lang: values
+                for lang, values in samples.items()
+                if lang == "yukt" or lang.endswith("_par")
+            }
+            claim = (
+                winner_for(f"{name} seq", seq, match)
+                + " | "
+                + winner_for(f"{name} auto-par/explicit-thread (not comparable to seq)", par, match)
+            )
+        else:
+            claim = winner_for(name, samples, match)
         row: dict[str, object] = {
             "name": name,
             "size": bench011.SIZES[name],

@@ -7,4 +7,4 @@ create nest(n):
     give wait start nest(n - 1) + 1
 
 create main:
-    say wait start nest(8)
+    say nest(8)

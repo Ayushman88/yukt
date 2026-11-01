@@ -75,13 +75,16 @@ def find_cxx() -> str:
     env = os.environ.get("CXX")
     if env:
         return env
+    sibling = Path(find_clang()).parent / "clang++"
+    if sibling.exists():
+        return str(sibling)
     brew_llvm = Path("/opt/homebrew/opt/llvm/bin/clang++")
     if brew_llvm.exists():
         return str(brew_llvm)
     local_llvm = Path("/usr/local/opt/llvm/bin/clang++")
     if local_llvm.exists():
         return str(local_llvm)
-    return shutil.which("c++") or "c++"
+    return shutil.which("clang++") or shutil.which("c++") or "c++"
 
 
 def host_cpu() -> str:
@@ -89,6 +92,13 @@ def host_cpu() -> str:
         brand = first_line("sysctl -n machdep.cpu.brand_string 2>/dev/null")
         if brand:
             return brand
+    if sys.platform == "linux":
+        try:
+            for line in Path("/proc/cpuinfo").read_text(encoding="utf-8").splitlines():
+                if line.lower().startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+        except OSError:
+            pass
     return platform.processor() or platform.machine()
 
 

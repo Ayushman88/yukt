@@ -20,24 +20,32 @@ static int64_t kernel_class_a(void) {
     return sum;
 }
 
+typedef struct {
+    int64_t n;
+    int64_t* out;
+} ThreadJob;
+
 static void* thread_job(void* arg) {
-    const int64_t n = (int64_t)(intptr_t)arg;
-    int64_t* slot = (int64_t*)malloc(sizeof(int64_t));
-    *slot = yukt_bench_work(n);
-    return slot;
+    ThreadJob* job = (ThreadJob*)arg;
+    *job->out = yukt_bench_work(job->n);
+    return NULL;
 }
 
 static int64_t kernel_class_b(void) {
     pthread_t threads[YUKT_BENCH_TASK_N];
+    int64_t outs[YUKT_BENCH_TASK_N];
+    ThreadJob jobs[YUKT_BENCH_TASK_N];
     for (int i = 0; i < YUKT_BENCH_TASK_N; ++i) {
-        pthread_create(&threads[i], NULL, thread_job, (void*)(intptr_t)i);
+        jobs[i].n = i;
+        jobs[i].out = &outs[i];
+        if (pthread_create(&threads[i], NULL, thread_job, &jobs[i]) != 0) {
+            abort();
+        }
     }
     int64_t sum = 0;
     for (int i = YUKT_BENCH_TASK_N - 1; i >= 0; --i) {
-        void* slot = NULL;
-        pthread_join(threads[i], &slot);
-        sum += *(int64_t*)slot;
-        free(slot);
+        pthread_join(threads[i], NULL);
+        sum += outs[i];
     }
     return sum;
 }
