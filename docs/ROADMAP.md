@@ -186,17 +186,17 @@ Do not implement a whole version in one task. Spec → plan → code → tests, 
 
 Finish line: a developer comfortably builds a CLI, JSON API client, HTTP server, and concurrent file processor — not a longer keyword list.
 
-**Next objective:** specify, then implement, richer strings. Do not start 0.17 until the 0.16 surfaces it depends on pass.
+**Next objective:** specify 0.17 concurrency and networking. Do not implement mutexes, channels, sockets, or HTTP until that spec is frozen.
 
 ## 0.16 — Practical language (phase 1)
 
-**Status: 0.16.1 growing lists implemented; 0.16.2 stdin / argv / environment implemented** (macOS arm64 `ctest` 44/44; Ubuntu x86-64 CI run [41272353579](https://github.com/Ayushman88/yukt/actions/runs/41272353579)). See `docs/YUKT_016_DESIGN.md` and `docs/LANGUAGE_SPEC.md` § 0.16.1 and § 0.16.2. D1–D11 frozen.
+**Status: 0.16.1–0.16.3 implemented** (macOS arm64 `ctest` 44/44; Ubuntu x86-64 CI run [41275168587](https://github.com/Ayushman88/yukt/actions/runs/41275168587) for 0.16.3). See `docs/YUKT_016_DESIGN.md` and `docs/LANGUAGE_SPEC.md` § 0.16.1, § 0.16.2, and § 0.16.3. D1–D11 frozen.
 
 Goal: everyday programs stop fighting fixed-size lists and missing I/O.
 
 - Dynamic collections: `list.append` / `list.remove` / `list.pop` (**implemented**)
 - Standard input and environment variables (**implemented**: `std/io`, `std/env`, `yukt run` argv forward)
-- Richer string operations (specify next)
+- Richer string operations (**implemented**: `trim` / `replace` / `lower` / `upper` / `to_int` / `to_float`)
 - Ownership, memory-safety, and runtime tests for each new surface
 
 HTTP syntax in design sketches is illustrative only and belongs to 0.17.
