@@ -226,12 +226,15 @@ bool is_stdlib_runtime_ir(const std::string& ir_name) {
     return ir_name == "std$map$new" || ir_name == "std$map$set" || ir_name == "std$map$has" ||
            ir_name == "std$map$get_unchecked" || ir_name == "std$map$len" || ir_name == "std$map$remove" ||
            ir_name == "std$set$new" || ir_name == "std$set$add" || ir_name == "std$set$has" ||
-           ir_name == "std$set$len" || ir_name == "std$set$remove" || ir_name == "std$file$exists" ||
+           ir_name == "std$set$len" || ir_name == "std$set$remove" ||            ir_name == "std$file$exists" ||
            ir_name == "std$file$read_unchecked" || ir_name == "std$file$write_unchecked" ||
            ir_name == "std$json$parse_unchecked" || ir_name == "std$json$is_valid" ||
            ir_name == "std$json$has_int" || ir_name == "std$json$has_string" ||
            ir_name == "std$json$get_int_unchecked" || ir_name == "std$json$get_string_unchecked" ||
-           ir_name == "std$json$encode";
+           ir_name == "std$json$encode" || ir_name == "std$io$program" || ir_name == "std$io$args" ||
+           ir_name == "std$io$read_line_unchecked" || ir_name == "std$io$read_line_status" ||
+           ir_name == "std$io$read_all_unchecked" || ir_name == "std$io$read_all_status" ||
+           ir_name == "std$env$get_unchecked" || ir_name == "std$env$has" || ir_name == "std$env$set";
 }
 
 std::string mangle_function(const std::string& prefix, const std::string& name, bool entry_main, bool single_file) {

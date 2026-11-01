@@ -1,0 +1,8 @@
+use std/env
+
+create main:
+    r = env.get("")
+    if r.ok:
+        say r.value
+    otherwise:
+        say r.error.code

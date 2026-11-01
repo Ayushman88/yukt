@@ -107,7 +107,8 @@ CompileOutput compile_program(FrontendResult& frontend, const CompileRequest& re
     }
 
     if (is_run) {
-        output.exit_code = run_executable(exe_path, output.program_output, error);
+        output.exit_code = run_executable(exe_path, output.program_output, error, request.extra_args,
+                                          request.stdin_text, request.extra_env);
         if (!error.empty()) {
             report(diagnostics, "Program failed to run", error, "The generated executable did not start.");
             return output;

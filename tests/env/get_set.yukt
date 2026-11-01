@@ -1,0 +1,11 @@
+use std/env
+
+create main:
+    env.set("YUKT_0162_SET", "hello")
+    r = env.get("YUKT_0162_SET")
+    if r.ok:
+        say r.value
+    otherwise:
+        say r.error.code
+    say env.has("YUKT_0162_SET")
+    say env.get_or("YUKT_0162_MISSING_OR", "fallback")

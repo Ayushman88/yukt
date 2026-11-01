@@ -194,6 +194,24 @@ endif()
 add_test(NAME yukt_stdlib_tests COMMAND yukt_stdlib_tests)
 add_dependencies(yukt_stdlib_tests yukt)
 
+add_executable(yukt_io_tests tests/io/io_tests.cpp)
+target_link_libraries(yukt_io_tests PRIVATE yukt_backend yukt_runtime)
+target_include_directories(yukt_io_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_compile_definitions(yukt_io_tests PRIVATE
+    YUKT_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    YUKT_EXECUTABLE="$<TARGET_FILE:yukt>"
+    YUKT_RUNTIME_LIB="$<TARGET_FILE:yukt_runtime>"
+)
+if(NOT LLVM_ENABLE_RTTI)
+    target_compile_options(yukt_io_tests PRIVATE -fno-rtti)
+endif()
+if(APPLE AND DEFINED LLVM_LIBRARY_DIR)
+    target_link_options(yukt_io_tests PRIVATE "-Wl,-rpath,${LLVM_LIBRARY_DIR}")
+endif()
+yukt_set_warnings(yukt_io_tests)
+add_test(NAME yukt_io_tests COMMAND yukt_io_tests)
+add_dependencies(yukt_io_tests yukt)
+
 yukt_add_test(yukt_ownership_tests tests/ownership/ownership_tests.cpp)
 
 add_executable(yukt_ownership_runtime_tests tests/ownership/runtime_release_tests.c)

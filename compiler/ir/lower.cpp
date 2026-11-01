@@ -136,7 +136,9 @@ bool call_name_allocates(const std::string& qualifier, const std::string& callee
         callee == "std$list$append" || callee == "std$str$concat" || callee == "std$str$slice" ||
         callee == "std$str$repeat" || callee == "std$str$join" || callee == "std$str$split" ||
         callee == "std$map$new" || callee == "std$set$new" || callee == "std$json$parse_unchecked" ||
-        callee == "std$file$read_unchecked") {
+        callee == "std$file$read_unchecked" || callee == "std$io$program" || callee == "std$io$args" ||
+        callee == "std$io$read_line_unchecked" || callee == "std$io$read_all_unchecked" ||
+        callee == "std$env$get_unchecked") {
         return true;
     }
     const std::string qualified = qualifier.empty() ? callee : qualifier + "." + callee;
@@ -144,7 +146,9 @@ bool call_name_allocates(const std::string& qualifier, const std::string& callee
            qualified == "str.concat" ||
            qualified == "str.slice" || qualified == "str.repeat" || qualified == "str.join" ||
            qualified == "str.split" || qualified == "map.new" || qualified == "set.new" ||
-           qualified == "json.parse" || qualified == "file.read";
+           qualified == "json.parse" || qualified == "file.read" || qualified == "io.program" ||
+           qualified == "io.args" || qualified == "io.read_line" || qualified == "io.read_all" ||
+           qualified == "env.get" || qualified == "env.get_or";
 }
 
 void collect_reads(const Expr* expr, std::set<std::string>& names) {

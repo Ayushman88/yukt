@@ -1,0 +1,36 @@
+# Process arguments and standard input. Bodies of runtime names are not executed.
+
+share create program():
+    give ""
+
+share create args():
+    give [""]
+
+share create read_line_unchecked():
+    give ""
+
+share create read_line_status():
+    give 0
+
+share create read_all_unchecked():
+    give ""
+
+share create read_all_status():
+    give 0
+
+share create read_line():
+    s = read_line_status()
+    if s == 0:
+        give ok(read_line_unchecked())
+    otherwise:
+        if s == 1:
+            give fail("eof")
+        otherwise:
+            give fail("io")
+
+share create read_all():
+    s = read_all_status()
+    if s == 0:
+        give ok(read_all_unchecked())
+    otherwise:
+        give fail("io")

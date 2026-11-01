@@ -1,0 +1,5 @@
+use std/io
+
+create main:
+    say io.program()
+    say count(io.args())

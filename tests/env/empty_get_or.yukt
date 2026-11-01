@@ -1,0 +1,4 @@
+use std/env
+
+create main:
+    say env.get_or("", "fallback")

@@ -2095,3 +2095,224 @@ void yukt_task_shutdown(void) {
     yukt_task_stop = 0;
 #endif
 }
+
+enum { YUKT_IO_LINE_CAP = 16 * 1024 * 1024 };
+
+static int yukt_io_argc = 0;
+static char** yukt_io_argv = NULL;
+
+static char* yukt_io_line_text = NULL;
+static int64_t yukt_io_line_status = 0;
+static int yukt_io_line_ready = 0;
+
+static char* yukt_io_all_text = NULL;
+static int64_t yukt_io_all_status = 0;
+static int yukt_io_all_ready = 0;
+
+void yukt_io_set_args(int argc, char** argv) {
+    yukt_io_argc = argc;
+    yukt_io_argv = argv;
+}
+
+char* yukt_io_program(void) {
+    if (yukt_io_argc <= 0 || yukt_io_argv == NULL || yukt_io_argv[0] == NULL) {
+        return yukt_str_from_lit("");
+    }
+    return yukt_str_from_lit(yukt_io_argv[0]);
+}
+
+YuktList* yukt_io_args(void) {
+    const int64_t n = yukt_io_argc > 0 ? (int64_t)yukt_io_argc - 1 : 0;
+    YuktList* list = yukt_list_new(n, 3);
+    for (int64_t i = 0; i < n; ++i) {
+        const char* arg = yukt_io_argv != NULL ? yukt_io_argv[i + 1] : NULL;
+        yukt_list_set_cstr(list, i, yukt_str_from_lit(arg));
+    }
+    return list;
+}
+
+char* yukt_io_read_line(int64_t* status) {
+    size_t cap = 128;
+    size_t len = 0;
+    char* buf = (char*)malloc(cap);
+    if (buf == NULL) {
+        die("out of memory");
+    }
+    while (1) {
+        const int ch = fgetc(stdin);
+        if (ch == EOF) {
+            if (ferror(stdin)) {
+                free(buf);
+                if (status != NULL) {
+                    *status = 2;
+                }
+                return yukt_str_from_lit("");
+            }
+            if (len == 0) {
+                free(buf);
+                if (status != NULL) {
+                    *status = 1;
+                }
+                return yukt_str_from_lit("");
+            }
+            if (status != NULL) {
+                *status = 0;
+            }
+            char* owned = yukt_str_from_bytes(buf, len);
+            free(buf);
+            return owned;
+        }
+        if (ch == '\n') {
+            if (len > 0 && buf[len - 1] == '\r') {
+                len -= 1;
+            }
+            if (status != NULL) {
+                *status = 0;
+            }
+            char* owned = yukt_str_from_bytes(buf, len);
+            free(buf);
+            return owned;
+        }
+        if (len >= (size_t)YUKT_IO_LINE_CAP) {
+            free(buf);
+            die("line too large");
+        }
+        if (len + 1 >= cap) {
+            size_t ncap = cap * 2;
+            if (ncap > (size_t)YUKT_IO_LINE_CAP + 1) {
+                ncap = (size_t)YUKT_IO_LINE_CAP + 1;
+            }
+            char* grown = (char*)realloc(buf, ncap);
+            if (grown == NULL) {
+                free(buf);
+                die("out of memory");
+            }
+            buf = grown;
+            cap = ncap;
+        }
+        buf[len] = (char)ch;
+        len += 1;
+    }
+}
+
+char* yukt_io_read_all(int64_t* status) {
+    size_t cap = 256;
+    size_t len = 0;
+    char* buf = (char*)malloc(cap);
+    if (buf == NULL) {
+        die("out of memory");
+    }
+    while (1) {
+        if (len + 1 >= cap) {
+            size_t ncap = cap * 2;
+            char* grown = (char*)realloc(buf, ncap);
+            if (grown == NULL) {
+                free(buf);
+                die("out of memory");
+            }
+            buf = grown;
+            cap = ncap;
+        }
+        const size_t n = fread(buf + len, 1, cap - len - 1, stdin);
+        len += n;
+        if (n > 0) {
+            continue;
+        }
+        if (ferror(stdin)) {
+            free(buf);
+            if (status != NULL) {
+                *status = 2;
+            }
+            return yukt_str_from_lit("");
+        }
+        if (status != NULL) {
+            *status = 0;
+        }
+        char* owned = yukt_str_from_bytes(buf, len);
+        free(buf);
+        return owned;
+    }
+}
+
+static void yukt_io_ensure_line(void) {
+    if (yukt_io_line_ready) {
+        return;
+    }
+    yukt_io_line_text = yukt_io_read_line(&yukt_io_line_status);
+    yukt_io_line_ready = 1;
+}
+
+int64_t yukt_io_read_line_status(void) {
+    yukt_io_ensure_line();
+    return yukt_io_line_status;
+}
+
+char* yukt_io_read_line_unchecked(void) {
+    yukt_io_ensure_line();
+    char* text = yukt_io_line_text;
+    yukt_io_line_text = NULL;
+    yukt_io_line_ready = 0;
+    if (text == NULL) {
+        return yukt_str_from_lit("");
+    }
+    return text;
+}
+
+static void yukt_io_ensure_all(void) {
+    if (yukt_io_all_ready) {
+        return;
+    }
+    yukt_io_all_text = yukt_io_read_all(&yukt_io_all_status);
+    yukt_io_all_ready = 1;
+}
+
+int64_t yukt_io_read_all_status(void) {
+    yukt_io_ensure_all();
+    return yukt_io_all_status;
+}
+
+char* yukt_io_read_all_unchecked(void) {
+    yukt_io_ensure_all();
+    char* text = yukt_io_all_text;
+    yukt_io_all_text = NULL;
+    yukt_io_all_ready = 0;
+    if (text == NULL) {
+        return yukt_str_from_lit("");
+    }
+    return text;
+}
+
+static void yukt_env_require_name(const char* name) {
+    if (name == NULL || name[0] == '\0') {
+        die("empty environment name");
+    }
+}
+
+char* yukt_env_get(const char* name) {
+    yukt_env_require_name(name);
+    const char* value = getenv(name);
+    if (value == NULL) {
+        return NULL;
+    }
+    return yukt_str_from_lit(value);
+}
+
+char* yukt_env_get_unchecked(const char* name) {
+    char* value = yukt_env_get(name);
+    if (value == NULL) {
+        return yukt_str_from_lit("");
+    }
+    return value;
+}
+
+int8_t yukt_env_has(const char* name) {
+    yukt_env_require_name(name);
+    return getenv(name) != NULL ? 1 : 0;
+}
+
+void yukt_env_set(const char* name, const char* value) {
+    yukt_env_require_name(name);
+    if (setenv(name, value != NULL ? value : "", 1) != 0) {
+        die("out of memory");
+    }
+}

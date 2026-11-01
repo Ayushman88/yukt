@@ -1,0 +1,7 @@
+use std/io
+
+create main:
+    items = io.args()
+    say count(items)
+    say items[0]
+    say items[1]

@@ -1,0 +1,10 @@
+use std/env
+
+create main:
+    r = env.get("YUKT_0162_PARENT")
+    if r.ok:
+        say r.value
+    otherwise:
+        say r.error.code
+    say env.has("YUKT_0162_PARENT")
+    say env.get_or("YUKT_0162_PARENT", "unused")

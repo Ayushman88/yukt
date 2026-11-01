@@ -3021,6 +3021,42 @@ Type Analyzer::analyze_stdlib_call(FunctionSymbol& function, const CallExpr& exp
                     "`" + display + "` expects json.", "Parse JSON first.");
         return finish(string_type());
     }
+    if (ir == "std$io$program") {
+        require_arity(0);
+        return finish(string_type());
+    }
+    if (ir == "std$io$args") {
+        require_arity(0);
+        return finish(list_type(string_type()));
+    }
+    if (ir == "std$io$read_line_unchecked" || ir == "std$io$read_all_unchecked") {
+        require_arity(0);
+        return finish(string_type());
+    }
+    if (ir == "std$io$read_line_status" || ir == "std$io$read_all_status") {
+        require_arity(0);
+        return finish(integer_type());
+    }
+    if (ir == "std$env$get_unchecked") {
+        require_arity(1);
+        expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects an environment name.", "Pass a string.");
+        return finish(string_type());
+    }
+    if (ir == "std$env$has") {
+        require_arity(1);
+        expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects an environment name.", "Pass a string.");
+        return finish(boolean_type());
+    }
+    if (ir == "std$env$set") {
+        require_arity(2);
+        expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects an environment name.", "Pass a string.");
+        expect_type(analyze_arg(1), string_type(), arg_location(1), "Type mismatch",
+                    "`" + display + "` expects an environment value.", "Pass a string.");
+        return finish(void_type());
+    }
 
     for (const auto& argument : expr.arguments) {
         analyze_expression(argument.get());

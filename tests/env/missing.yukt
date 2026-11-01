@@ -1,0 +1,8 @@
+use std/env
+
+create main:
+    r = env.get("YUKT_NO_SUCH_VAR_0162")
+    if r.ok:
+        say r.value
+    otherwise:
+        say r.error.code

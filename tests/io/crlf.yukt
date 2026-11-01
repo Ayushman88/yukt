@@ -1,0 +1,13 @@
+use std/io
+
+create main:
+    a = io.read_line()
+    b = io.read_line()
+    if a.ok:
+        say a.value
+    otherwise:
+        say a.error.code
+    if b.ok:
+        say b.value
+    otherwise:
+        say b.error.code

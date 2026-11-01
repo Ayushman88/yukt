@@ -1,0 +1,8 @@
+use std/io
+
+create main:
+    r = io.read_line()
+    if r.ok:
+        say r.value
+    otherwise:
+        say r.error.code

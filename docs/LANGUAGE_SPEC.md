@@ -1,9 +1,9 @@
 # YUKT Language Specification
 
-Version: 0.14.1 (released as `v0.14.1`) plus **0.16.1 growing lists (implemented; not released)**. `v0.13.1` exists locally and is not pushed. `v0.13.6` is `eb42a0a`. 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`. 0.15 is stabilization in `docs/YUKT_015_DESIGN.md` and adds no syntax.  
-Status: 0.12 language plus **records** ([0.13.1 — Records](#0131--records)), **ownership** ([0.13.2 — Ownership](#0132--ownership)), **references** ([0.13.3 — References](#0133--references)), **foreign C** ([0.13.4 — Foreign C](#0134--foreign-c)), **errors** ([0.13.5 — Errors](#0135--errors)), **stdlib expansion** ([0.13.6 — Stdlib](#0136--stdlib)), **CPU tasks** ([0.14.1 — CPU tasks](#0141--cpu-tasks)), and **growing lists** ([0.16.1 — Growing lists](#0161--growing-lists)). Numerical semantics for signed overflow and float rounding are unchanged.
+Version: 0.14.1 (released as `v0.14.1`) plus **0.16.1 growing lists (implemented; not released)** plus **0.16.2 stdin / argv / environment (specified, not implemented)**. `v0.13.1` exists locally and is not pushed. `v0.13.6` is `eb42a0a`. 0.12 remains tagged `v0.12.1`. 0.11 remains tagged `v0.11.0`. 0.15 is stabilization in `docs/YUKT_015_DESIGN.md` and adds no syntax.  
+Status: 0.12 language plus **records** ([0.13.1 — Records](#0131--records)), **ownership** ([0.13.2 — Ownership](#0132--ownership)), **references** ([0.13.3 — References](#0133--references)), **foreign C** ([0.13.4 — Foreign C](#0134--foreign-c)), **errors** ([0.13.5 — Errors](#0135--errors)), **stdlib expansion** ([0.13.6 — Stdlib](#0136--stdlib)), **CPU tasks** ([0.14.1 — CPU tasks](#0141--cpu-tasks)), **growing lists** ([0.16.1 — Growing lists](#0161--growing-lists)), and **standard input and environment** ([0.16.2 — Standard input and environment](#0162--standard-input-and-environment)) **specified, not implemented**. Numerical semantics for signed overflow and float rounding are unchanged.
 
-This document is the source of truth for YUKT syntax. **0.13.1 through 0.14.1 are implemented.** **0.16.1 growing lists are implemented** in the compiler, runtime, and `std/list`. For implemented slices, if the compiler and this file disagree, that is a bug. Design notes: `docs/YUKT_016_DESIGN.md`.
+This document is the source of truth for YUKT syntax. **0.13.1 through 0.14.1 are implemented.** **0.16.1 growing lists are implemented** in the compiler, runtime, and `std/list`. **0.16.2 is specified, not implemented.** For implemented slices, if the compiler and this file disagree, that is a bug. Design notes: `docs/YUKT_016_DESIGN.md`.
 
 ## Design
 
@@ -1385,4 +1385,51 @@ A `repeat` body that structurally mutates a list, or calls a function that may, 
 - `alias = items` remains a move.
 - Failed growth does not change `count` or drop elements.
 - Do not overwrite `benchmarks/results-0.11.json`.
+
+## 0.16.2 — Standard input and environment
+
+**Status: specified, not implemented.** No new reserved words. Programs write `use std/io` and `use std/env`.
+
+`say` remains the only stdout print. This section does not add `print` or format strings.
+
+### Process arguments
+
+| Call | Gives | Behavior |
+| --- | --- | --- |
+| `io.program()` | string | `argv[0]` as a tracked byte string. Empty if the host provided no `argv`. |
+| `io.args()` | `list[string]` | `argv[1..]` as a new owned list. Empty list if there are no user arguments. |
+
+The list from `io.args()` is a normal growing list. Later `list.append` on it does not change the process `argv`.
+
+### Standard input
+
+Bytes, host encoding, no transcoding. `\n` and `\r\n` line endings. A lone `\r` is not a line end.
+
+| Call | Gives | Failure |
+| --- | --- | --- |
+| `io.read_line()` | `result[string]` | `fail("eof")` at end of input. `fail("io")` on read error. |
+| `io.read_all()` | `result[string]` | `fail("io")` on read error. Empty input is `ok("")`, not eof. |
+
+`read_line` does not keep the line terminator. `read_all` keeps every byte, including newlines.
+
+A non-empty unterminated final chunk is `ok(bytes)` with no terminator to strip. `fail("eof")` only when that `read_line` call reads zero bytes. `fail("io")` remains for read errors.
+
+These calls borrow no list. They allocate a new string (and `read_all` may grow an internal buffer). A `repeat` body that calls them is not independent and must stay sequential.
+
+Stdin is process-global. Two `start` tasks that both `read_line` have no defined interleaving in 0.16. Do not document it as safe. Sharing stdin across tasks waits for 0.17.
+
+### Environment
+
+| Call | Gives | Failure |
+| --- | --- | --- |
+| `env.get(name)` | `result[string]` | `fail("not_found")` if unset. `fail("io")` if `name` is empty. |
+| `env.get_or(name, fallback)` | string | `fallback` if unset. Empty `name` **traps** (`empty environment name`). |
+| `env.set(name, value)` | void | Empty `name` traps. Overwrites. Does not change the parent process after exit. |
+| `env.has(name)` | boolean | False if unset. Empty `name` traps. |
+
+`setenv` visibility is this process and later `env.get` in this process, including `start` workers on the same host process.
+
+### What this is not
+
+No `read` keyword. No `input()`. No prompt builtin. No `env.unset`. No `cwd` / `chdir` (those need their own spec). No Windows environment block.
 

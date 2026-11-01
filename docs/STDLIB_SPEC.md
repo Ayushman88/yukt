@@ -1,6 +1,6 @@
 # YUKT standard library API contract
 
-Status: **now-gated modules implemented** (`std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`). 0.13 modules remain specified only. **0.16.1** `list.append` / `remove` / `pop` are implemented. See `docs/STDLIB_IMPLEMENTATION_REPORT.md` and `docs/LANGUAGE_SPEC.md` § 0.16.1.
+Status: **now-gated modules implemented** (`std/str`, `std/list`, `std/sort`, `std/math`, `std/stat`). 0.13 modules remain specified only. **0.16.1** `list.append` / `remove` / `pop` are implemented. **0.16.2** `std/io` and `std/env` are specified, not implemented. See `docs/STDLIB_IMPLEMENTATION_REPORT.md` and `docs/LANGUAGE_SPEC.md` § 0.16.1 and § 0.16.2.
 
 This file is the source of truth for **stdlib APIs**. `docs/LANGUAGE_SPEC.md` remains the source of truth for syntax. If this document needs a new type, keyword, or operator, that change belongs in the language spec first.
 
@@ -58,6 +58,8 @@ Until 0.13 specifies an error type in the language spec:
 | `std/sort` | `sort` | now | In-place sort and binary search |
 | `std/math` | `math` | now | Scalar math |
 | `std/stat` | `stat` | now | Reductions on numeric lists |
+| `std/io` | `io` | now | 0.16.2 process args and stdin |
+| `std/env` | `env` | now | 0.16.2 environment |
 | `std/array` | `array` | 0.13 | Distinct array type (stack or sized); 0.12 lists are not arrays |
 | `std/map` | `map` | 0.13 | Associative map |
 | `std/set` | `set` | 0.13 | Unique keys |
@@ -191,6 +193,21 @@ Implementation: **YUKT** `repeat` over `count(items)`. Sequential: these loops c
 There is no `stat.mean_i` (would require int-to-float conversion, which the language forbids). Convert in user code with an explicit float list, or wait for a later conversion spec.
 
 No variance/stddev in this contract (easy to add later; omit rather than underspecify delta degrees of freedom).
+
+## 0.16.2 — `std/io` and `std/env`
+
+**Status: specified, not implemented.** Language surface: [`docs/LANGUAGE_SPEC.md`](LANGUAGE_SPEC.md) § 0.16.2. No new reserved words. Programs write `use std/io` and `use std/env`. `say` remains the only stdout print.
+
+| Call | Gives | Alloc | Failure | Behavior |
+| --- | --- | --- | --- | --- |
+| `io.program()` | string | yes | — | `argv[0]` |
+| `io.args()` | list[string] | yes | — | `argv[1..]` |
+| `io.read_line()` | result[string] | yes | `eof` / `io` | One line, no terminator. A non-empty unterminated final chunk is `ok(bytes)` with no terminator to strip; `fail("eof")` only when that call reads zero bytes |
+| `io.read_all()` | result[string] | yes | `io` | Remaining stdin |
+| `env.get(name)` | result[string] | yes | `not_found` / `io` | `getenv` |
+| `env.get_or(name, fallback)` | string | maybe | trap if empty name | fallback if unset |
+| `env.set(name, value)` | void | no | trap if empty name | `setenv` |
+| `env.has(name)` | boolean | no | trap if empty name | `getenv != NULL` |
 
 ## `std/map` — 0.13
 

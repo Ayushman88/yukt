@@ -26,7 +26,7 @@ void print_usage(std::ostream& out) {
         << "  yukt --emit-llvm <file.yukt>  Print LLVM IR\n"
         << "  yukt --explain <file.yukt>    Explain loop execution decisions\n"
         << "  yukt build <file.yukt> [-o <exe>]  Emit a native executable\n"
-        << "  yukt run <file.yukt>          Compile and run a native executable\n"
+        << "  yukt run <file.yukt> [args]   Compile and run; extra args become program argv\n"
         << "  yukt <file.yukt>              Parse and type-check\n"
         << "  yukt --help                   Show this help\n"
         << "  yukt --version                Show the compiler version\n";
@@ -166,6 +166,8 @@ int main(int argc, char** argv) {
                 return EXIT_FAILURE;
             } else if (request.input_path.empty()) {
                 request.input_path = args[i];
+            } else if (request.action == yukt::CompileAction::Run) {
+                request.extra_args.push_back(args[i]);
             } else {
                 std::cerr << "Unexpected extra argument: " << args[i] << '\n';
                 return EXIT_FAILURE;

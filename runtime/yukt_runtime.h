@@ -189,6 +189,21 @@ int64_t yukt_json_get_int(void* json, const char* key);
 char* yukt_json_get_string(void* json, const char* key);
 char* yukt_json_encode(void* json);
 
+void yukt_io_set_args(int argc, char** argv);
+char* yukt_io_program(void);
+YuktList* yukt_io_args(void);
+char* yukt_io_read_line(int64_t* status);
+char* yukt_io_read_all(int64_t* status);
+int64_t yukt_io_read_line_status(void);
+char* yukt_io_read_line_unchecked(void);
+int64_t yukt_io_read_all_status(void);
+char* yukt_io_read_all_unchecked(void);
+
+char* yukt_env_get(const char* name);
+char* yukt_env_get_unchecked(const char* name);
+int8_t yukt_env_has(const char* name);
+void yukt_env_set(const char* name, const char* value);
+
 #ifdef __cplusplus
 }
 #endif

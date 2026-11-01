@@ -4,7 +4,10 @@
 #include "driver/driver.hpp"
 #include "ir/ir.hpp"
 
+#include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace yukt {
 
@@ -21,6 +24,9 @@ struct CompileRequest {
     CompileAction action = CompileAction::Check;
     std::string input_path;
     std::string output_path;
+    std::vector<std::string> extra_args;
+    std::optional<std::string> stdin_text;
+    std::vector<std::pair<std::string, std::string>> extra_env;
 };
 
 struct CompileOutput {

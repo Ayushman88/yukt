@@ -2,11 +2,13 @@
 #include "driver/module.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
 #include <optional>
+#include <spawn.h>
 #include <sstream>
 #include <string>
 #include <sys/wait.h>
@@ -16,6 +18,8 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+extern char** environ;
 
 #ifndef YUKT_LLVM_CLANG
 #define YUKT_LLVM_CLANG ""
@@ -339,6 +343,7 @@ bool LlvmEmitter::build(std::string& error) {
 void LlvmEmitter::declare_runtime() {
     auto* void_ty = llvm::Type::getVoidTy(context_);
     auto* i64 = llvm::Type::getInt64Ty(context_);
+    auto* i32 = llvm::Type::getInt32Ty(context_);
     auto* f64 = llvm::Type::getDoubleTy(context_);
     auto* i8 = llvm::Type::getInt8Ty(context_);
     auto* ptr = llvm::PointerType::getUnqual(context_);
@@ -473,6 +478,16 @@ void LlvmEmitter::declare_runtime() {
     runtime_["yukt_json_get_int"] = module_.getOrInsertFunction("yukt_json_get_int", i64, ptr, ptr);
     runtime_["yukt_json_get_string"] = module_.getOrInsertFunction("yukt_json_get_string", ptr, ptr, ptr);
     runtime_["yukt_json_encode"] = module_.getOrInsertFunction("yukt_json_encode", ptr, ptr);
+    runtime_["yukt_io_set_args"] = module_.getOrInsertFunction("yukt_io_set_args", void_ty, i32, ptr);
+    runtime_["yukt_io_program"] = module_.getOrInsertFunction("yukt_io_program", ptr);
+    runtime_["yukt_io_args"] = module_.getOrInsertFunction("yukt_io_args", ptr);
+    runtime_["yukt_io_read_line_unchecked"] = module_.getOrInsertFunction("yukt_io_read_line_unchecked", ptr);
+    runtime_["yukt_io_read_line_status"] = module_.getOrInsertFunction("yukt_io_read_line_status", i64);
+    runtime_["yukt_io_read_all_unchecked"] = module_.getOrInsertFunction("yukt_io_read_all_unchecked", ptr);
+    runtime_["yukt_io_read_all_status"] = module_.getOrInsertFunction("yukt_io_read_all_status", i64);
+    runtime_["yukt_env_get_unchecked"] = module_.getOrInsertFunction("yukt_env_get_unchecked", ptr, ptr);
+    runtime_["yukt_env_has"] = module_.getOrInsertFunction("yukt_env_has", i8, ptr);
+    runtime_["yukt_env_set"] = module_.getOrInsertFunction("yukt_env_set", void_ty, ptr, ptr);
     if (auto* zeros = module_.getFunction("yukt_list_zeros")) {
         zeros->addRetAttr(llvm::Attribute::NoAlias);
     }
@@ -535,10 +550,17 @@ void LlvmEmitter::emit_functions() {
     }
 
     auto* i32 = llvm::Type::getInt32Ty(context_);
-    auto* main_ty = llvm::FunctionType::get(i32, false);
+    auto* ptr = llvm::PointerType::getUnqual(context_);
+    auto* main_ty = llvm::FunctionType::get(i32, {i32, ptr}, false);
     auto* main_fn = llvm::Function::Create(main_ty, llvm::Function::ExternalLinkage, "main", module_);
     auto* block = llvm::BasicBlock::Create(context_, "entry", main_fn);
     builder_.SetInsertPoint(block);
+    auto arg = main_fn->arg_begin();
+    llvm::Value* argc = &*arg++;
+    llvm::Value* argv = &*arg;
+    argc->setName("argc");
+    argv->setName("argv");
+    builder_.CreateCall(runtime("yukt_io_set_args"), {argc, argv});
     auto found = functions_.find("main");
     if (found != functions_.end()) {
         llvm::Value* result = builder_.CreateCall(found->second->getFunctionType(), found->second);
@@ -1407,6 +1429,33 @@ llvm::Value* LlvmEmitter::emit_stdlib_call(const IrInst& inst) {
     if (name == "std$json$encode") {
         return call_runtime("yukt_json_encode", {args.at(0)});
     }
+    if (name == "std$io$program") {
+        return call_runtime("yukt_io_program", {});
+    }
+    if (name == "std$io$args") {
+        return call_runtime("yukt_io_args", {});
+    }
+    if (name == "std$io$read_line_unchecked") {
+        return call_runtime("yukt_io_read_line_unchecked", {});
+    }
+    if (name == "std$io$read_line_status") {
+        return call_runtime("yukt_io_read_line_status", {});
+    }
+    if (name == "std$io$read_all_unchecked") {
+        return call_runtime("yukt_io_read_all_unchecked", {});
+    }
+    if (name == "std$io$read_all_status") {
+        return call_runtime("yukt_io_read_all_status", {});
+    }
+    if (name == "std$env$get_unchecked") {
+        return call_runtime("yukt_env_get_unchecked", {args.at(0)});
+    }
+    if (name == "std$env$has") {
+        return call_runtime("yukt_env_has", {args.at(0)});
+    }
+    if (name == "std$env$set") {
+        return call_runtime("yukt_env_set", {args.at(0), args.at(1)});
+    }
     return llvm::PoisonValue::get(type_of(inst.dest.type));
 }
 
@@ -1723,20 +1772,122 @@ bool link_executable(const std::string& object_path, const std::string& output_p
     return true;
 }
 
-int run_executable(const std::string& executable_path, std::string& output, std::string& error) {
-    const std::string command = quote(executable_path) + " 2>&1";
-    FILE* pipe = popen(command.c_str(), "r");
-    if (pipe == nullptr) {
+int run_executable(const std::string& executable_path, std::string& output, std::string& error,
+                   const std::vector<std::string>& extra_args, const std::optional<std::string>& stdin_text,
+                   const std::vector<std::pair<std::string, std::string>>& extra_env) {
+    int stdout_pipe[2] = {-1, -1};
+    int stdin_pipe[2] = {-1, -1};
+    if (pipe(stdout_pipe) != 0) {
+        error = "could not create stdout pipe for `" + executable_path + "`";
+        return 1;
+    }
+    if (stdin_text.has_value() && pipe(stdin_pipe) != 0) {
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
+        error = "could not create stdin pipe for `" + executable_path + "`";
+        return 1;
+    }
+
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_adddup2(&actions, stdout_pipe[1], STDOUT_FILENO);
+    posix_spawn_file_actions_adddup2(&actions, stdout_pipe[1], STDERR_FILENO);
+    posix_spawn_file_actions_addclose(&actions, stdout_pipe[0]);
+    posix_spawn_file_actions_addclose(&actions, stdout_pipe[1]);
+    if (stdin_text.has_value()) {
+        posix_spawn_file_actions_adddup2(&actions, stdin_pipe[0], STDIN_FILENO);
+        posix_spawn_file_actions_addclose(&actions, stdin_pipe[0]);
+        posix_spawn_file_actions_addclose(&actions, stdin_pipe[1]);
+    }
+
+    std::vector<std::string> argv_store;
+    argv_store.push_back(executable_path);
+    argv_store.insert(argv_store.end(), extra_args.begin(), extra_args.end());
+    std::vector<char*> argv;
+    argv.reserve(argv_store.size() + 1);
+    for (auto& arg : argv_store) {
+        argv.push_back(arg.data());
+    }
+    argv.push_back(nullptr);
+
+    std::vector<std::string> env_store;
+    std::vector<char*> envp;
+    std::unordered_map<std::string, std::string> overrides;
+    for (const auto& entry : extra_env) {
+        overrides[entry.first] = entry.second;
+    }
+    if (environ != nullptr) {
+        for (char** current = environ; *current != nullptr; ++current) {
+            std::string item(*current);
+            const auto eq = item.find('=');
+            const std::string key = eq == std::string::npos ? item : item.substr(0, eq);
+            auto found = overrides.find(key);
+            if (found != overrides.end()) {
+                env_store.push_back(key + "=" + found->second);
+                overrides.erase(found);
+            } else {
+                env_store.push_back(std::move(item));
+            }
+        }
+    }
+    for (const auto& entry : overrides) {
+        env_store.push_back(entry.first + "=" + entry.second);
+    }
+    envp.reserve(env_store.size() + 1);
+    for (auto& item : env_store) {
+        envp.push_back(item.data());
+    }
+    envp.push_back(nullptr);
+
+    pid_t pid = 0;
+    const int spawn_status =
+        posix_spawn(&pid, executable_path.c_str(), &actions, nullptr, argv.data(), envp.data());
+    posix_spawn_file_actions_destroy(&actions);
+    close(stdout_pipe[1]);
+    if (stdin_text.has_value()) {
+        close(stdin_pipe[0]);
+    }
+    if (spawn_status != 0) {
+        close(stdout_pipe[0]);
+        if (stdin_text.has_value()) {
+            close(stdin_pipe[1]);
+        }
         error = "could not execute `" + executable_path + "`";
         return 1;
     }
 
-    char buffer[512];
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        output += buffer;
+    if (stdin_text.has_value()) {
+        const std::string& text = *stdin_text;
+        size_t written = 0;
+        while (written < text.size()) {
+            const ssize_t n = write(stdin_pipe[1], text.data() + written, text.size() - written);
+            if (n < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                break;
+            }
+            written += static_cast<size_t>(n);
+        }
+        close(stdin_pipe[1]);
     }
-    const int status = pclose(pipe);
-    if (status == -1) {
+
+    char buffer[512];
+    while (true) {
+        const ssize_t n = read(stdout_pipe[0], buffer, sizeof(buffer));
+        if (n > 0) {
+            output.append(buffer, static_cast<size_t>(n));
+            continue;
+        }
+        if (n < 0 && errno == EINTR) {
+            continue;
+        }
+        break;
+    }
+    close(stdout_pipe[0]);
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) == -1) {
         error = "failed to finish `" + executable_path + "`";
         return 1;
     }
