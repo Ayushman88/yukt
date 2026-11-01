@@ -187,6 +187,7 @@ private:
     std::vector<std::unordered_map<std::string, int>> aliases_;
     std::unordered_map<const FunctionDecl*, std::string> function_ir_names_;
     std::unordered_map<const CallExpr*, std::string> call_ir_names_;
+    std::unordered_map<const CallExpr*, std::string> http_handlers_;
     std::unordered_map<const StartExpr*, std::string> start_ir_names_;
     int current_module_ = 0;
     bool single_file_ = true;
@@ -268,6 +269,7 @@ SemanticInfo Analyzer::run() {
     SemanticInfo info;
     info.function_ir_names = function_ir_names_;
     info.call_ir_names = call_ir_names_;
+    info.http_handlers = http_handlers_;
     info.start_ir_names = start_ir_names_;
     info.record_constructors = record_constructors_;
     info.records = records_;
@@ -1166,22 +1168,33 @@ void Analyzer::check_constraints() {
 }
 
 void Analyzer::finalize_functions() {
+    // Bind no-give functions to void before checking give-returns. `functions_`
+    // is unordered, so `main` that `give`s `start run(...)` may be visited
+    // before `run`. Binding `run` first resolves `task[void]` without a new
+    // type rule.
     for (auto& [name, function] : functions_) {
         if (function == nullptr || is_stdlib_runtime_ir(name)) {
             continue;
         }
-        if (!types_.is_resolved(function->return_type)) {
-            if (function->saw_give) {
-                error(function->decl != nullptr ? function->decl->name_location : SourceLocation{},
-                      "Cannot infer type",
-                      "The return type of `" + name + "` could not be inferred from its `give` statements.",
-                      "Give a value with a known type, such as an integer or string.");
-            } else if (!types_.unify(function->return_type, void_type())) {
+        if (!types_.is_resolved(function->return_type) && !function->saw_give) {
+            if (!types_.unify(function->return_type, void_type())) {
                 error(function->decl != nullptr ? function->decl->name_location : SourceLocation{},
                       "Type mismatch",
                       "Function `" + name + "` has no `give` statement, so it must return void.",
                       "Remove `give` or return a value from every path you intend to use.");
             }
+        }
+    }
+
+    for (auto& [name, function] : functions_) {
+        if (function == nullptr || is_stdlib_runtime_ir(name)) {
+            continue;
+        }
+        if (!types_.is_resolved(function->return_type) && function->saw_give) {
+            error(function->decl != nullptr ? function->decl->name_location : SourceLocation{},
+                  "Cannot infer type",
+                  "The return type of `" + name + "` could not be inferred from its `give` statements.",
+                  "Give a value with a known type, such as an integer or string.");
         }
     }
 
@@ -3430,6 +3443,135 @@ Type Analyzer::analyze_stdlib_call(FunctionSymbol& function, const CallExpr& exp
                   "Pass a TCP value.");
         }
         borrow_tcp(0, "net.close(c)");
+        return finish(void_type());
+    }
+    if (ir == "std$http$get_status") {
+        require_arity(1);
+        expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a string URL.", "Pass a string.");
+        return finish(integer_type());
+    }
+    if (ir == "std$http$get_code") {
+        require_arity(0);
+        return finish(integer_type());
+    }
+    if (ir == "std$http$get_headers") {
+        require_arity(0);
+        return finish(map_type(string_type()));
+    }
+    if (ir == "std$http$get_body") {
+        require_arity(0);
+        return finish(string_type());
+    }
+    if (ir == "std$http$serve" || ir == "std$http$serve_on") {
+        if (!require_arity(2)) {
+            return finish(void_type());
+        }
+        const bool serve_on = ir == "std$http$serve_on";
+        if (serve_on) {
+            expect_type(analyze_arg(0), listener_type(), arg_location(0), "Type mismatch",
+                        "`" + display + "` expects a listener.", "Pass a `listener` from `net.listen`.");
+            consume_heap_expr(expr.arguments[0].get());
+        } else {
+            expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                        "`" + display + "` expects a string address.", "Pass a host:port string.");
+        }
+
+        FunctionSymbol* handler = nullptr;
+        SourceLocation handler_loc = arg_location(1);
+        std::string handler_display;
+        if (const auto* id = dynamic_cast<const IdentifierExpr*>(expr.arguments[1].get())) {
+            handler_display = id->name;
+            handler_loc = id->span.start;
+            handler = lookup_function(id->name);
+        } else if (const auto* field = dynamic_cast<const FieldExpr*>(expr.arguments[1].get())) {
+            handler_loc = field->field_location.line != 0 ? field->field_location : field->span.start;
+            const auto* object = dynamic_cast<const IdentifierExpr*>(field->object.get());
+            if (object == nullptr) {
+                error(handler_loc, "Invalid http handler", "Handler must be a function name.",
+                      "Pass an unqualified function name or `alias.name`.");
+                return finish(void_type());
+            }
+            handler_display = object->name + "." + field->field;
+            if (current_module_ >= 0 && static_cast<std::size_t>(current_module_) < aliases_.size()) {
+                const auto alias = aliases_[static_cast<std::size_t>(current_module_)].find(object->name);
+                if (alias != aliases_[static_cast<std::size_t>(current_module_)].end()) {
+                    handler = lookup_shared(alias->second, field->field);
+                }
+            }
+        } else {
+            error(handler_loc, "Invalid http handler", "Handler must be a function name.",
+                  "Pass an unqualified function name or `alias.name`.");
+            return finish(void_type());
+        }
+
+        if (handler == nullptr) {
+            error(handler_loc, "Unknown function",
+                  "There is no function named `" + handler_display + "`.",
+                  "Define it with `create " + handler_display + "(...):` or fix the name.");
+            return finish(void_type());
+        }
+
+        const bool is_main = handler->decl != nullptr && handler->decl->name == "main";
+        const bool bad_arity = handler->parameters.size() != 1;
+        const bool is_ref = !handler->param_is_ref.empty() && handler->param_is_ref[0];
+        if (handler->foreign || is_main || bad_arity || is_ref) {
+            const std::string name = handler->decl != nullptr ? handler->decl->name : handler_display;
+            if (handler->foreign) {
+                error(handler_loc, "Invalid http handler",
+                      "`" + name + "` is `foreign`, so it cannot be an HTTP handler.",
+                      "Pass an ordinary `create` function with one `http.Request` parameter.");
+            } else if (is_main) {
+                error(handler_loc, "Invalid http handler", "`main` cannot be an HTTP handler.",
+                      "Pass an ordinary `create` function with one `http.Request` parameter.");
+            } else if (bad_arity) {
+                error(handler_loc, "Invalid http handler",
+                      "An HTTP handler must take exactly one parameter, but `" + name + "` takes " +
+                          std::to_string(handler->parameters.size()) + ".",
+                      "Write `create " + name + "(req):` and give `http.Response`.");
+            } else {
+                error(handler_loc, "Invalid http handler", "An HTTP handler parameter cannot be `ref`.",
+                      "Take `http.Request` by value.");
+            }
+            return finish(void_type());
+        }
+
+        int http_module = -1;
+        if (graph_ != nullptr) {
+            for (int i = 0; i < static_cast<int>(graph_->modules.size()); ++i) {
+                if (graph_->modules[static_cast<std::size_t>(i)].mangle_prefix == "std$http") {
+                    http_module = i;
+                    break;
+                }
+            }
+            if (http_module < 0) {
+                for (int i = 0; i < static_cast<int>(graph_->modules.size()); ++i) {
+                    const std::string& path = graph_->modules[static_cast<std::size_t>(i)].canonical_path;
+                    if (path.size() >= 9 && path.compare(path.size() - 9, 9, "http.yukt") == 0) {
+                        http_module = i;
+                        break;
+                    }
+                }
+            }
+        }
+        if (http_module >= 0) {
+            if (RecordInfo* request = lookup_shared_record(http_module, "Request")) {
+                if (!types_.unify(handler->parameters[0], record_type(request->id, "Request"))) {
+                    error(handler_loc, "Invalid http handler", "An HTTP handler must take `http.Request`.",
+                          "Write `create name(req):` and use `req` as a Request.");
+                    return finish(void_type());
+                }
+            }
+            if (RecordInfo* response = lookup_shared_record(http_module, "Response")) {
+                if (!types_.unify(handler->return_type, record_type(response->id, "Response"))) {
+                    error(handler_loc, "Invalid http handler", "An HTTP handler must give `http.Response`.",
+                          "Give `http.Response(status, headers, body)`.");
+                    return finish(void_type());
+                }
+            }
+        }
+
+        http_handlers_[&expr] = handler->ir_name;
         return finish(void_type());
     }
 

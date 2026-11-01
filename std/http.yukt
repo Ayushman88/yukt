@@ -1,0 +1,38 @@
+use std/map
+
+share record Request:
+    method: string
+    path: string
+    query: string
+    headers: map
+    body: string
+
+share record Response:
+    status: integer
+    headers: map
+    body: string
+
+share create get_status(url):
+    give 0
+
+share create get_code():
+    give 0
+
+share create get_headers():
+    give map.new()
+
+share create get_body():
+    give ""
+
+share create get(url):
+    s = get_status(url)
+    if s == 0:
+        give ok(Response(get_code(), get_headers(), get_body()))
+    otherwise:
+        give fail("io")
+
+share create serve(addr, handler):
+    n = 0
+
+share create serve_on(ln, handler):
+    n = 0

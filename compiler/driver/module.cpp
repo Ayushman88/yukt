@@ -244,7 +244,9 @@ bool is_stdlib_runtime_ir(const std::string& ir_name) {
            ir_name == "std$net$connect_status" || ir_name == "std$net$connect_unchecked" ||
            ir_name == "std$net$accept_status" || ir_name == "std$net$accept_unchecked" || ir_name == "std$net$addr" ||
            ir_name == "std$net$port" || ir_name == "std$net$read_status" || ir_name == "std$net$read_unchecked" ||
-           ir_name == "std$net$write_status" || ir_name == "std$net$write_unchecked" || ir_name == "std$net$close";
+           ir_name == "std$net$write_status" || ir_name == "std$net$write_unchecked" || ir_name == "std$net$close" ||
+           ir_name == "std$http$get_status" || ir_name == "std$http$get_code" || ir_name == "std$http$get_headers" ||
+           ir_name == "std$http$get_body" || ir_name == "std$http$serve" || ir_name == "std$http$serve_on";
 }
 
 std::string mangle_function(const std::string& prefix, const std::string& name, bool entry_main, bool single_file) {

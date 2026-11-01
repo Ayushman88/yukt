@@ -147,6 +147,7 @@ struct IrInst {
     int field_index = -1;
     std::string reduce_local;
     IrBinOp reduce_bin = IrBinOp::Add;
+    std::string extra;
 };
 
 enum class IrTermKind {

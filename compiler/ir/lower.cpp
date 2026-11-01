@@ -143,8 +143,10 @@ bool call_name_allocates(const std::string& qualifier, const std::string& callee
         callee == "std$file$read_unchecked" || callee == "std$io$program" || callee == "std$io$args" ||
         callee == "std$io$read_line_unchecked" || callee == "std$io$read_all_unchecked" ||
         callee == "std$env$get_unchecked" || callee == "std$sync$channel" || callee == "std$sync$receiver" ||
-        callee == "std$sync$send" || callee == "std$net$listen_unchecked" || callee == "std$net$connect_unchecked" ||
-        callee == "std$net$accept_unchecked" || callee == "std$net$addr" || callee == "std$net$read_unchecked") {
+        callee == "std$sync$send" ||         callee == "std$net$listen_unchecked" || callee == "std$net$connect_unchecked" ||
+        callee == "std$net$accept_unchecked" || callee == "std$net$addr" || callee == "std$net$read_unchecked" ||
+        callee == "std$http$get_status" || callee == "std$http$get_headers" || callee == "std$http$get_body" ||
+        callee == "std$http$get" || callee == "std$http$serve" || callee == "std$http$serve_on") {
         return true;
     }
     const std::string qualified = qualifier.empty() ? callee : qualifier + "." + callee;
@@ -159,7 +161,8 @@ bool call_name_allocates(const std::string& qualifier, const std::string& callee
            qualified == "env.get" || qualified == "env.get_or" || qualified == "sync.channel" ||
            qualified == "sync.receiver" || qualified == "sync.send" || qualified == "sync.recv" ||
            qualified == "net.listen" || qualified == "net.connect" || qualified == "net.accept" ||
-           qualified == "net.addr" || qualified == "net.read";
+           qualified == "net.addr" || qualified == "net.read" || qualified == "http.get" ||
+           qualified == "http.serve" || qualified == "http.serve_on";
 }
 
 void collect_reads(const Expr* expr, std::set<std::string>& names) {
@@ -2292,6 +2295,23 @@ IrValue Lowerer::lower_call(const CallExpr& expr) {
         inst.args.push_back(src);
         inst.args.push_back(start);
         inst.args.push_back(end);
+        inst.dest = make_temp(type_of(&expr));
+        emit(inst);
+        return inst.dest;
+    }
+
+    if (ir_name == "std$http$serve" || ir_name == "std$http$serve_on") {
+        IrInst inst;
+        inst.op = IrOp::Call;
+        inst.name = ir_name;
+        const auto handler = semantic_.http_handlers.find(&expr);
+        inst.extra = handler != semantic_.http_handlers.end() ? handler->second : "";
+        if (!expr.arguments.empty()) {
+            inst.args.push_back(lower_expression(expr.arguments[0].get()));
+            if (ir_name == "std$http$serve_on") {
+                consume_heap_expr(expr.arguments[0].get());
+            }
+        }
         inst.dest = make_temp(type_of(&expr));
         emit(inst);
         return inst.dest;
