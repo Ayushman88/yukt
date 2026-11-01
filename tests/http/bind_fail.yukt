@@ -1,0 +1,8 @@
+use std/http
+use std/map
+
+create handle(req):
+    give http.Response(200, map.new(), "ok")
+
+create main:
+    http.serve("256.256.256.256:80", handle)

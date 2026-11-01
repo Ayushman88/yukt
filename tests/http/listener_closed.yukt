@@ -1,0 +1,13 @@
+use std/http
+use std/net
+use std/map
+
+create handle(req):
+    give http.Response(200, map.new(), "ok")
+
+create main:
+    bound = net.listen("127.0.0.1:0")
+    if bound.ok:
+        ln = bound.value
+        net.close(ln)
+        http.serve_on(ln, handle)

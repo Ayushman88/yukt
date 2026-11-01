@@ -1,0 +1,21 @@
+use std/http
+use std/net
+use std/map
+
+create handle(req):
+    headers = map.new()
+    give http.Response(200, headers, req.path + ":" + req.query)
+
+create run(ln):
+    http.serve_on(ln, handle)
+
+create main:
+    bound = net.listen("127.0.0.1:0")
+    if bound.ok:
+        ln = bound.value
+        url = "http://" + net.addr(ln) + "/hi?x=1"
+        t = start run(ln)
+        r = http.get(url)
+        if r.ok:
+            say r.value.body
+        give t

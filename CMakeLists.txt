@@ -81,7 +81,8 @@ yukt_set_warnings(yukt_compiler)
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
-add_library(yukt_runtime STATIC runtime/yukt_runtime.c runtime/yukt_013.c runtime/yukt_sync.c runtime/yukt_net.c)
+add_library(yukt_runtime STATIC runtime/yukt_runtime.c runtime/yukt_013.c runtime/yukt_sync.c runtime/yukt_net.c
+            runtime/yukt_http.c)
 target_include_directories(yukt_runtime PUBLIC ${CMAKE_SOURCE_DIR}/runtime)
 target_link_libraries(yukt_runtime PUBLIC m Threads::Threads)
 
@@ -247,6 +248,28 @@ endif()
 yukt_set_warnings(yukt_net_tests)
 add_test(NAME yukt_net_tests COMMAND yukt_net_tests)
 add_dependencies(yukt_net_tests yukt)
+
+add_executable(yukt_http_tests tests/http/http_tests.cpp)
+target_link_libraries(yukt_http_tests PRIVATE yukt_backend yukt_runtime)
+target_include_directories(yukt_http_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_compile_definitions(yukt_http_tests PRIVATE
+    YUKT_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    YUKT_EXECUTABLE="$<TARGET_FILE:yukt>"
+    YUKT_RUNTIME_LIB="$<TARGET_FILE:yukt_runtime>"
+)
+if(NOT LLVM_ENABLE_RTTI)
+    target_compile_options(yukt_http_tests PRIVATE -fno-rtti)
+endif()
+if(APPLE AND DEFINED LLVM_LIBRARY_DIR)
+    target_link_options(yukt_http_tests PRIVATE "-Wl,-rpath,${LLVM_LIBRARY_DIR}")
+endif()
+yukt_set_warnings(yukt_http_tests)
+add_test(NAME yukt_http_tests COMMAND yukt_http_tests)
+add_dependencies(yukt_http_tests yukt)
+
+add_executable(yukt_http_malformed tests/http/runtime_malformed.c)
+target_link_libraries(yukt_http_malformed PRIVATE yukt_runtime)
+add_test(NAME yukt_http_malformed COMMAND yukt_http_malformed)
 
 add_executable(yukt_net_runtime_tests tests/net/runtime_net_tests.c)
 target_link_libraries(yukt_net_runtime_tests PRIVATE yukt_runtime)

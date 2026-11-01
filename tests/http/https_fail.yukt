@@ -1,0 +1,8 @@
+use std/http
+
+create main:
+    r = http.get("https://127.0.0.1/")
+    if r.ok:
+        say r.value.status
+    otherwise:
+        say r.error.code

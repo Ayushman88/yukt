@@ -1,0 +1,7 @@
+use std/http
+
+create handle(req):
+    give 1
+
+create main:
+    http.serve_on(1, handle)

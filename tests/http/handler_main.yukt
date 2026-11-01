@@ -1,0 +1,4 @@
+use std/http
+
+create main:
+    http.serve("127.0.0.1:0", main)

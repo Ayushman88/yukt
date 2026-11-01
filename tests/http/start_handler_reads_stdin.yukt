@@ -1,0 +1,13 @@
+use std/http
+use std/io
+use std/map
+
+create handle(req):
+    r = io.read_line()
+    if r.ok:
+        n = r.value
+    give http.Response(200, map.new(), "ok")
+
+create main:
+    t = start handle(http.Request("GET", "/", "", map.new(), ""))
+    wait t
