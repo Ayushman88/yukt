@@ -1,0 +1,40 @@
+create work(n):
+    acc = n + 1
+    repeat i in 1..500000:
+        acc = (acc * 17 + i) % 1000003
+    give acc
+
+create main:
+    a0 = start work(0)
+    a1 = start work(1)
+    a2 = start work(2)
+    a3 = start work(3)
+    a4 = start work(4)
+    a5 = start work(5)
+    a6 = start work(6)
+    a7 = start work(7)
+    a8 = start work(8)
+    a9 = start work(9)
+    a10 = start work(10)
+    a11 = start work(11)
+    a12 = start work(12)
+    a13 = start work(13)
+    a14 = start work(14)
+    a15 = start work(15)
+    total = wait a15
+    total = total + wait a14
+    total = total + wait a13
+    total = total + wait a12
+    total = total + wait a11
+    total = total + wait a10
+    total = total + wait a9
+    total = total + wait a8
+    total = total + wait a7
+    total = total + wait a6
+    total = total + wait a5
+    total = total + wait a4
+    total = total + wait a3
+    total = total + wait a2
+    total = total + wait a1
+    total = total + wait a0
+    say total

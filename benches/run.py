@@ -659,4 +659,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    if "--suite=0.15" in sys.argv or os.environ.get("YUKT_BENCH_SUITE") == "0.15":
+        import run_015
+
+        sys.exit(run_015.main())
     sys.exit(main())

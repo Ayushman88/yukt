@@ -1,0 +1,11 @@
+create work(n):
+    acc = n + 1
+    repeat i in 1..500000:
+        acc = (acc * 17 + i) % 1000003
+    give acc
+
+create main:
+    total = 0
+    repeat i in 0..15:
+        total = total + work(i)
+    say total

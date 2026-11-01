@@ -1,0 +1,12 @@
+#ifndef YUKT_BENCH_TASK_SIZES_H
+#define YUKT_BENCH_TASK_SIZES_H
+
+#define YUKT_BENCH_TASK_N 16
+#define YUKT_BENCH_TASK_INNER 500000
+#define YUKT_BENCH_NEST_DEPTH 8
+#define YUKT_BENCH_NEST_INNER 500000
+#define YUKT_BENCH_POOL_CAP 32
+#define YUKT_BENCH_MIX_MOD 1000003
+/* Locked checksums: forkjoin 7875016, nested 80431. */
+
+#endif

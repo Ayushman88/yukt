@@ -1,0 +1,10 @@
+create nest(n):
+    if n < 1:
+        acc = 1
+        repeat i in 1..500000:
+            acc = (acc * 17 + i) % 1000003
+        give acc
+    give wait start nest(n - 1) + 1
+
+create main:
+    say wait start nest(8)

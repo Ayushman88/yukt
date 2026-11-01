@@ -1,0 +1,12 @@
+use std/json as json
+
+create add1(n):
+    give n + 1
+
+create main:
+    parsed = json.parse("{\"n\":3}")
+    if parsed.ok:
+        t = start add1(3)
+        say wait t
+    otherwise:
+        say 0

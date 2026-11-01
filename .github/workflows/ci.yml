@@ -11,13 +11,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
-        run: brew install cmake ninja llvm
+        run: brew install cmake ninja llvm rust go
       - name: Configure
         run: cmake -G Ninja -S . -B build -DLLVM_DIR="$(brew --prefix llvm)/lib/cmake/llvm"
       - name: Build
         run: cmake --build build
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - name: 0.15 bench checksums
+        env:
+          BENCH_RUNS: "3"
+          YUKT_BENCH_PUBLICATION: "false"
+          YUKT_BENCH_SUITE: "0.15"
+        run: python3 benches/run.py --suite=0.15 --publication=false
 
   linux:
     name: Ubuntu x86-64
@@ -27,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build clang llvm-dev zlib1g-dev
+          sudo apt-get install -y cmake ninja-build clang llvm-dev zlib1g-dev golang-go rustc
       - name: Configure
         run: |
           LLVM_CMAKE="$(llvm-config --cmakedir 2>/dev/null || true)"
@@ -39,3 +45,9 @@ jobs:
         run: cmake --build build
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - name: 0.15 bench checksums
+        env:
+          BENCH_RUNS: "3"
+          YUKT_BENCH_PUBLICATION: "false"
+          YUKT_BENCH_SUITE: "0.15"
+        run: python3 benches/run.py --suite=0.15 --publication=false
