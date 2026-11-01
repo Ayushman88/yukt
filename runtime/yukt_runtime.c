@@ -216,6 +216,9 @@ void yukt_runtime_release(void) {
         } else if (node->kind == YUKT_ALLOC_SEND || node->kind == YUKT_ALLOC_RECV) {
             yukt_sync_destroy_end(node->ptr);
             free(node->ptr);
+        } else if (node->kind == YUKT_ALLOC_CONN || node->kind == YUKT_ALLOC_LISTENER) {
+            yukt_net_close(node->ptr);
+            free(node->ptr);
         } else if (!yukt_cache_put(yukt_str_bins, node->ptr, node->bytes)) {
             free(node->ptr);
         }
@@ -310,6 +313,9 @@ void yukt_release(void* ptr) {
         free(node->ptr);
     } else if (node->kind == YUKT_ALLOC_SEND || node->kind == YUKT_ALLOC_RECV) {
         yukt_sync_destroy_end(node->ptr);
+        free(node->ptr);
+    } else if (node->kind == YUKT_ALLOC_CONN || node->kind == YUKT_ALLOC_LISTENER) {
+        yukt_net_close(node->ptr);
         free(node->ptr);
     } else if (!yukt_cache_put(yukt_str_bins, node->ptr, node->bytes)) {
         free(node->ptr);
@@ -2396,36 +2402,49 @@ void yukt_task_wait(void* task_ptr, void* result_out) {
 }
 
 void yukt_task_shutdown(void) {
-    /* Wake blocked sync.recv waiters before joining the pool. Snapshot
-     * under the heap lock, then close without holding it: recv-close may
-     * yukt_release payloads (heap_mu), and destroy_end must not run while
-     * a waiter is still in cond_wait. */
+    /* Wake blocked sync.recv and net.accept waiters before joining the pool.
+     * Snapshot under the heap lock, then close without holding it: recv-close
+     * may yukt_release payloads (heap_mu), and destroy_end must not run while
+     * a waiter is still in cond_wait. Do not hold heap_mu across accept. */
     yukt_heap_lock();
     int n = 0;
     for (YuktAlloc* node = yukt_allocs; node != NULL; node = node->next) {
-        if (node->kind == YUKT_ALLOC_SEND || node->kind == YUKT_ALLOC_RECV) {
+        if (node->kind == YUKT_ALLOC_SEND || node->kind == YUKT_ALLOC_RECV ||
+            node->kind == YUKT_ALLOC_CONN || node->kind == YUKT_ALLOC_LISTENER) {
             n++;
         }
     }
     void** ends = NULL;
+    int* kinds = NULL;
     if (n > 0) {
         ends = (void**)malloc((size_t)n * sizeof(void*));
-        if (ends == NULL) {
+        kinds = (int*)malloc((size_t)n * sizeof(int));
+        if (ends == NULL || kinds == NULL) {
+            free(ends);
+            free(kinds);
             yukt_heap_unlock();
             die("out of memory");
         }
         int i = 0;
         for (YuktAlloc* node = yukt_allocs; node != NULL; node = node->next) {
-            if (node->kind == YUKT_ALLOC_SEND || node->kind == YUKT_ALLOC_RECV) {
-                ends[i++] = node->ptr;
+            if (node->kind == YUKT_ALLOC_SEND || node->kind == YUKT_ALLOC_RECV ||
+                node->kind == YUKT_ALLOC_CONN || node->kind == YUKT_ALLOC_LISTENER) {
+                ends[i] = node->ptr;
+                kinds[i] = node->kind;
+                i++;
             }
         }
     }
     yukt_heap_unlock();
     for (int i = 0; i < n; ++i) {
-        yukt_sync_close(ends[i]);
+        if (kinds[i] == YUKT_ALLOC_CONN || kinds[i] == YUKT_ALLOC_LISTENER) {
+            yukt_net_close(ends[i]);
+        } else {
+            yukt_sync_close(ends[i]);
+        }
     }
     free(ends);
+    free(kinds);
     pthread_mutex_lock(&yukt_task_life_mu);
     while (yukt_task_busy > 0 || yukt_task_ops > 0) {
         pthread_cond_wait(&yukt_task_life_cv, &yukt_task_life_mu);

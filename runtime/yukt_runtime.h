@@ -232,6 +232,20 @@ void yukt_sync_recv_unchecked(void* out, int64_t nbytes);
 void yukt_sync_close(void* end);
 void yukt_sync_drop_ptr(void* payload);
 
+int64_t yukt_net_listen_status(const char* addr);
+void* yukt_net_listen_unchecked(void);
+int64_t yukt_net_connect_status(const char* addr);
+void* yukt_net_connect_unchecked(void);
+int64_t yukt_net_accept_status(void* listener);
+void* yukt_net_accept_unchecked(void);
+char* yukt_net_addr(void* listener);
+int64_t yukt_net_port(void* listener);
+int64_t yukt_net_read_status(void* conn, int64_t max);
+char* yukt_net_read_unchecked(void);
+int64_t yukt_net_write_status(void* conn, const char* data);
+int64_t yukt_net_write_unchecked(void);
+void yukt_net_close(void* end);
+
 enum {
     YUKT_ALLOC_LIST = 1,
     YUKT_ALLOC_STR = 2,

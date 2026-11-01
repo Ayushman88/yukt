@@ -1,0 +1,9 @@
+use std/net
+
+create main:
+    r = net.listen("[::1]:0")
+    if r.ok:
+        a = net.addr(r.value)
+        say a
+    otherwise:
+        say r.error.code

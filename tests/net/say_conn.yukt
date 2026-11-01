@@ -1,0 +1,6 @@
+use std/net
+
+create main:
+    r = net.listen("127.0.0.1:0")
+    if r.ok:
+        say r.value

@@ -81,7 +81,7 @@ yukt_set_warnings(yukt_compiler)
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
-add_library(yukt_runtime STATIC runtime/yukt_runtime.c runtime/yukt_013.c runtime/yukt_sync.c)
+add_library(yukt_runtime STATIC runtime/yukt_runtime.c runtime/yukt_013.c runtime/yukt_sync.c runtime/yukt_net.c)
 target_include_directories(yukt_runtime PUBLIC ${CMAKE_SOURCE_DIR}/runtime)
 target_link_libraries(yukt_runtime PUBLIC m Threads::Threads)
 
@@ -229,6 +229,31 @@ endif()
 yukt_set_warnings(yukt_sync_tests)
 add_test(NAME yukt_sync_tests COMMAND yukt_sync_tests)
 add_dependencies(yukt_sync_tests yukt)
+
+add_executable(yukt_net_tests tests/net/net_tests.cpp)
+target_link_libraries(yukt_net_tests PRIVATE yukt_backend yukt_runtime)
+target_include_directories(yukt_net_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_compile_definitions(yukt_net_tests PRIVATE
+    YUKT_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    YUKT_EXECUTABLE="$<TARGET_FILE:yukt>"
+    YUKT_RUNTIME_LIB="$<TARGET_FILE:yukt_runtime>"
+)
+if(NOT LLVM_ENABLE_RTTI)
+    target_compile_options(yukt_net_tests PRIVATE -fno-rtti)
+endif()
+if(APPLE AND DEFINED LLVM_LIBRARY_DIR)
+    target_link_options(yukt_net_tests PRIVATE "-Wl,-rpath,${LLVM_LIBRARY_DIR}")
+endif()
+yukt_set_warnings(yukt_net_tests)
+add_test(NAME yukt_net_tests COMMAND yukt_net_tests)
+add_dependencies(yukt_net_tests yukt)
+
+add_executable(yukt_net_runtime_tests tests/net/runtime_net_tests.c)
+target_link_libraries(yukt_net_runtime_tests PRIVATE yukt_runtime)
+add_test(NAME yukt_net_runtime_tests COMMAND yukt_net_runtime_tests)
+add_test(NAME yukt_net_bad_max COMMAND yukt_net_runtime_tests bad-max)
+set_tests_properties(yukt_net_bad_max PROPERTIES
+    PASS_REGULAR_EXPRESSION "YUKT runtime error: invalid read size")
 
 yukt_add_test(yukt_ownership_tests tests/ownership/ownership_tests.cpp)
 

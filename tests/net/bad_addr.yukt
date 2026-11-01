@@ -1,0 +1,8 @@
+use std/net
+
+create main:
+    r = net.listen("nope")
+    if r.ok:
+        say "ok"
+    otherwise:
+        say r.error.code

@@ -1,0 +1,16 @@
+use std/net
+
+create main:
+    bound = net.listen("127.0.0.1:0")
+    if bound.ok:
+        ln = bound.value
+        a = net.addr(ln)
+        c = net.connect(a)
+        if c.ok:
+            conn = c.value
+            net.close(conn)
+            r = net.read(conn, 8)
+            if r.ok:
+                say r.value
+            otherwise:
+                say r.error.code

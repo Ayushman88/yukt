@@ -1,0 +1,33 @@
+use std/net
+use std/sync
+
+create serve(ln, done):
+    c = net.accept(ln)
+    if c.ok:
+        conn = c.value
+        w = net.write(conn, "hello")
+        if w.ok:
+            n = w.value
+        net.close(conn)
+    sync.send(done, 1)
+    sync.close(done)
+
+create main:
+    bound = net.listen("127.0.0.1:0")
+    if bound.ok:
+        ln = bound.value
+        a = net.addr(ln)
+        done = sync.channel()
+        rx = sync.receiver(done)
+        t = start serve(ln, done)
+        c = net.connect(a)
+        if c.ok:
+            conn = c.value
+            r = net.read(conn, 16)
+            if r.ok:
+                say r.value
+            net.close(conn)
+        wait t
+        d = sync.recv(rx)
+        if d.ok:
+            say d.value

@@ -1,0 +1,11 @@
+use std/net
+
+create main:
+    r = net.listen("127.0.0.1:0")
+    if r.ok:
+        a = net.accept(r.value)
+        b = net.accept(r.value)
+        if a.ok:
+            say a.ok
+        if b.ok:
+            say b.ok
