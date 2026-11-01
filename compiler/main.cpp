@@ -1,6 +1,7 @@
 #include "ast/ast.hpp"
 #include "backend/pipeline.hpp"
 #include "driver/driver.hpp"
+#include "driver/project.hpp"
 #include "ir/ir.hpp"
 #include "semantic/analyzer.hpp"
 
@@ -25,8 +26,10 @@ void print_usage(std::ostream& out) {
         << "  yukt --emit-ir <file.yukt>    Print YUKT IR\n"
         << "  yukt --emit-llvm <file.yukt>  Print LLVM IR\n"
         << "  yukt --explain <file.yukt>    Explain loop execution decisions\n"
-        << "  yukt build <file.yukt> [-o <exe>]  Emit a native executable\n"
-        << "  yukt run <file.yukt> [args]   Compile and run; extra args become program argv\n"
+        << "  yukt new <name> --type cli|server  Create a project\n"
+        << "  yukt build [file.yukt] [-o <exe>]  Build a file or the project entry\n"
+        << "  yukt run [file.yukt] [args]        Run a file or the project entry\n"
+        << "  yukt test                          Run tests/**/*.yukt\n"
         << "  yukt <file.yukt>              Parse and type-check\n"
         << "  yukt --help                   Show this help\n"
         << "  yukt --version                Show the compiler version\n";
@@ -139,6 +142,57 @@ int main(int argc, char** argv) {
         return EXIT_SUCCESS;
     }
 
+    if (args[0] == "test") {
+        if (args.size() > 1) {
+            std::cerr << "Unexpected extra argument: " << args[1] << '\n';
+            return EXIT_FAILURE;
+        }
+        yukt::DiagnosticEngine diagnostics("<cli>", "");
+        const auto project = yukt::require_project(diagnostics);
+        if (!project.has_value()) {
+            diagnostics.emit(std::cerr);
+            return EXIT_FAILURE;
+        }
+        return yukt::run_project_tests(*project, std::cout, std::cerr, diagnostics);
+    }
+
+    if (args[0] == "new") {
+        std::string name;
+        std::string type;
+        bool saw_type = false;
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--type") {
+                if (i + 1 >= args.size()) {
+                    yukt::DiagnosticEngine diagnostics("<cli>", "");
+                    diagnostics.error(yukt::SourceLocation{1, 1}, "Invalid project type", "Missing --type value.",
+                                      "Pass --type cli or --type server.");
+                    diagnostics.emit(std::cerr);
+                    return EXIT_FAILURE;
+                }
+                type = args[++i];
+                saw_type = true;
+            } else if (!args[i].empty() && args[i][0] == '-') {
+                std::cerr << "Unknown option: " << args[i] << '\n';
+                return EXIT_FAILURE;
+            } else if (name.empty()) {
+                name = args[i];
+            } else {
+                std::cerr << "Unexpected extra argument: " << args[i] << '\n';
+                return EXIT_FAILURE;
+            }
+        }
+        yukt::DiagnosticEngine diagnostics("<cli>", "");
+        if (!saw_type) {
+            type.clear();
+        }
+        const auto dest = std::filesystem::current_path() / name;
+        if (!yukt::create_project(dest, name, type, diagnostics)) {
+            diagnostics.emit(std::cerr);
+            return EXIT_FAILURE;
+        }
+        return EXIT_SUCCESS;
+    }
+
     if (args[0] == "build" || args[0] == "run" || args[0] == "--emit-ir" || args[0] == "--emit-llvm" ||
         args[0] == "--explain") {
         yukt::CompileRequest request;
@@ -174,9 +228,21 @@ int main(int argc, char** argv) {
             }
         }
         if (request.input_path.empty()) {
-            std::cerr << "Missing input file.\n";
-            print_usage(std::cerr);
-            return EXIT_FAILURE;
+            if (request.action != yukt::CompileAction::Build && request.action != yukt::CompileAction::Run) {
+                std::cerr << "Missing input file.\n";
+                print_usage(std::cerr);
+                return EXIT_FAILURE;
+            }
+            yukt::DiagnosticEngine diagnostics("<cli>", "");
+            const auto project = yukt::require_project(diagnostics);
+            if (!project.has_value()) {
+                diagnostics.emit(std::cerr);
+                return EXIT_FAILURE;
+            }
+            request.input_path = project->entry.string();
+            if (request.output_path.empty()) {
+                request.output_path = (project->root / "build" / project->name).string();
+            }
         }
         return compile(request);
     }

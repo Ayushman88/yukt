@@ -1,0 +1,7 @@
+use std/io
+
+create main:
+    say io.program()
+    args = io.args()
+    if count(args) > 0:
+        say args[0]

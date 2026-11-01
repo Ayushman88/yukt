@@ -1,0 +1,10 @@
+use std/http
+use std/map
+
+create handle(req):
+    headers = map.new()
+    map.set(headers, "content-type", "text/plain")
+    give http.Response(200, headers, "ok")
+
+create main:
+    http.serve("127.0.0.1:0", handle)

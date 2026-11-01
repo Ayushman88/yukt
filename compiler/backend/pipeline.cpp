@@ -2,6 +2,7 @@
 
 #include "backend/explain.hpp"
 #include "backend/llvm_backend.hpp"
+#include "driver/paths.hpp"
 #include "ir/lower.hpp"
 
 #include <filesystem>
@@ -24,11 +25,7 @@ std::string default_output_path(const std::string& input) {
 }
 
 std::string runtime_path() {
-    const std::string configured = YUKT_RUNTIME_LIB;
-    if (!configured.empty() && std::filesystem::exists(configured)) {
-        return configured;
-    }
-    return {};
+    return runtime_archive().string();
 }
 
 void report(DiagnosticEngine& diagnostics, const std::string& title, const std::string& detail,
@@ -95,6 +92,12 @@ CompileOutput compile_program(FrontendResult& frontend, const CompileRequest& re
     const std::string exe_path = request.output_path.empty()
                                      ? (is_run ? (temp_dir / "program").string() : default_output_path(request.input_path))
                                      : request.output_path;
+    {
+        const auto parent = std::filesystem::path(exe_path).parent_path();
+        if (!parent.empty()) {
+            std::filesystem::create_directories(parent, ec);
+        }
+    }
 
     if (!emit_object_file(output.ir, object_path, error)) {
         report(diagnostics, "Object emission failed", error,
@@ -102,6 +105,12 @@ CompileOutput compile_program(FrontendResult& frontend, const CompileRequest& re
         return output;
     }
     if (!link_executable(object_path, exe_path, runtime, error)) {
+        if (error == "NO_LINKER") {
+            report(diagnostics, "Cannot find linker",
+                   "YUKT links user programs with the host C compiler `clang`.",
+                   "Install Command Line Tools (macOS) or a clang package (Linux).");
+            return output;
+        }
         report(diagnostics, "Link failed", error, "Check that `clang` can link the YUKT runtime.");
         return output;
     }

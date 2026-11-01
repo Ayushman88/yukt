@@ -90,6 +90,33 @@ bool path_executable(const std::string& path) {
     return !path.empty() && access(path.c_str(), X_OK) == 0;
 }
 
+bool linker_available(const std::string& clang) {
+    if (path_executable(clang)) {
+        return true;
+    }
+    if (clang.find('/') != std::string::npos) {
+        return false;
+    }
+    const char* path = std::getenv("PATH");
+    if (path == nullptr) {
+        return false;
+    }
+    std::string rest = path;
+    std::size_t start = 0;
+    while (start <= rest.size()) {
+        const auto pos = rest.find(':', start);
+        const std::string dir = rest.substr(start, pos == std::string::npos ? std::string::npos : pos - start);
+        if (!dir.empty() && path_executable(dir + "/" + clang)) {
+            return true;
+        }
+        if (pos == std::string::npos) {
+            break;
+        }
+        start = pos + 1;
+    }
+    return false;
+}
+
 std::string find_clang() {
     if (const char* env = std::getenv("YUKT_CLANG")) {
         if (env[0] != '\0') {
@@ -2093,6 +2120,10 @@ bool emit_object_file(const IrModule& module, const std::string& object_path, st
 bool link_executable(const std::string& object_path, const std::string& output_path, const std::string& runtime_path,
                      std::string& error) {
     const std::string clang = find_clang();
+    if (!linker_available(clang)) {
+        error = "NO_LINKER";
+        return false;
+    }
     std::string command = quote(clang) + " -o " + quote(output_path) + " " + quote(object_path) + " " +
                           quote(runtime_path);
     const std::string sysroot = macos_sysroot();

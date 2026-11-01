@@ -74,6 +74,9 @@ add_library(yukt_compiler
     compiler/ir/lower.cpp
     compiler/driver/driver.cpp
     compiler/driver/module.cpp
+    compiler/driver/paths.cpp
+    compiler/driver/manifest.cpp
+    compiler/driver/project.cpp
 )
 target_include_directories(yukt_compiler PUBLIC ${CMAKE_SOURCE_DIR}/compiler)
 target_compile_definitions(yukt_compiler PUBLIC YUKT_STDLIB_DIR="${CMAKE_SOURCE_DIR}/std")
@@ -85,6 +88,10 @@ add_library(yukt_runtime STATIC runtime/yukt_runtime.c runtime/yukt_013.c runtim
             runtime/yukt_http.c)
 target_include_directories(yukt_runtime PUBLIC ${CMAKE_SOURCE_DIR}/runtime)
 target_link_libraries(yukt_runtime PUBLIC m Threads::Threads)
+target_compile_definitions(yukt_compiler PUBLIC
+    YUKT_RUNTIME_LIB="$<TARGET_FILE:yukt_runtime>"
+    YUKT_TEMPLATES_DIR="${CMAKE_SOURCE_DIR}/share/yukt/templates"
+)
 
 add_library(yukt_backend
     compiler/backend/llvm_backend.cpp
@@ -118,6 +125,11 @@ if(NOT LLVM_ENABLE_RTTI)
 endif()
 if(APPLE AND DEFINED LLVM_LIBRARY_DIR)
     target_link_options(yukt PRIVATE "-Wl,-rpath,${LLVM_LIBRARY_DIR}")
+endif()
+if(APPLE)
+    set_target_properties(yukt PROPERTIES INSTALL_RPATH "@loader_path/../lib")
+else()
+    set_target_properties(yukt PROPERTIES INSTALL_RPATH "\$ORIGIN/../lib")
 endif()
 
 enable_testing()
@@ -212,6 +224,30 @@ endif()
 yukt_set_warnings(yukt_io_tests)
 add_test(NAME yukt_io_tests COMMAND yukt_io_tests)
 add_dependencies(yukt_io_tests yukt)
+
+add_executable(yukt_project_tests tests/project/project_tests.cpp)
+target_link_libraries(yukt_project_tests PRIVATE yukt_backend yukt_runtime)
+target_include_directories(yukt_project_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_compile_definitions(yukt_project_tests PRIVATE
+    YUKT_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    YUKT_EXECUTABLE="$<TARGET_FILE:yukt>"
+    YUKT_RUNTIME_LIB="$<TARGET_FILE:yukt_runtime>"
+    YUKT_TEMPLATES_DIR="${CMAKE_SOURCE_DIR}/share/yukt/templates"
+)
+if(NOT LLVM_ENABLE_RTTI)
+    target_compile_options(yukt_project_tests PRIVATE -fno-rtti)
+endif()
+if(APPLE AND DEFINED LLVM_LIBRARY_DIR)
+    target_link_options(yukt_project_tests PRIVATE "-Wl,-rpath,${LLVM_LIBRARY_DIR}")
+endif()
+yukt_set_warnings(yukt_project_tests)
+add_test(NAME yukt_project_tests COMMAND yukt_project_tests)
+add_dependencies(yukt_project_tests yukt)
+
+add_test(NAME yukt_package_smoke COMMAND bash ${CMAKE_SOURCE_DIR}/tests/project/package_smoke.sh)
+set_tests_properties(yukt_package_smoke PROPERTIES
+    ENVIRONMENT "YUKT_BUILD_DIR=${CMAKE_BINARY_DIR};YUKT_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+)
 
 add_executable(yukt_sync_tests tests/sync/sync_tests.cpp)
 target_link_libraries(yukt_sync_tests PRIVATE yukt_backend yukt_runtime)
@@ -418,3 +454,8 @@ set_tests_properties(yukt_sync_send_closed PROPERTIES
 add_test(NAME yukt_sync_send_recv_closed COMMAND yukt_sync_runtime_tests send-recv-closed)
 set_tests_properties(yukt_sync_send_recv_closed PROPERTIES
     PASS_REGULAR_EXPRESSION "YUKT runtime error: send on closed channel")
+
+install(TARGETS yukt RUNTIME DESTINATION bin)
+install(TARGETS yukt_runtime ARCHIVE DESTINATION lib)
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/std/ DESTINATION share/yukt/std)
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/share/yukt/templates/ DESTINATION share/yukt/templates)

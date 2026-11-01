@@ -1,5 +1,6 @@
 #include "driver/module.hpp"
 
+#include "driver/paths.hpp"
 #include "lexer/lexer.hpp"
 #include "parser/parser.hpp"
 
@@ -10,10 +11,6 @@
 #include <sstream>
 #include <unordered_map>
 #include <utility>
-
-#if defined(__APPLE__)
-#include <mach-o/dyld.h>
-#endif
 
 namespace yukt {
 namespace {
@@ -183,35 +180,7 @@ bool ModuleGraph::has_uses() const {
 }
 
 std::string default_stdlib_root() {
-    if (const char* env = std::getenv("YUKT_STD")) {
-        if (env[0] != '\0') {
-            return env;
-        }
-    }
-#ifdef YUKT_STDLIB_DIR
-    {
-        const std::string configured = YUKT_STDLIB_DIR;
-        if (!configured.empty()) {
-            return configured;
-        }
-    }
-#endif
-    std::error_code ec;
-    fs::path exe;
-#if defined(__APPLE__)
-    uint32_t size = 0;
-    _NSGetExecutablePath(nullptr, &size);
-    std::string buffer(size, '\0');
-    if (_NSGetExecutablePath(buffer.data(), &size) == 0) {
-        exe = fs::canonical(fs::path(buffer.c_str()), ec);
-    }
-#elif defined(__linux__)
-    exe = fs::canonical("/proc/self/exe", ec);
-#endif
-    if (exe.empty() || ec) {
-        return {};
-    }
-    return (exe.parent_path().parent_path() / "share" / "yukt" / "std").string();
+    return stdlib_root().string();
 }
 
 bool is_stdlib_runtime_ir(const std::string& ir_name) {
