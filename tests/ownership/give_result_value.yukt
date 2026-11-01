@@ -1,0 +1,9 @@
+create take:
+    r = ok("hello")
+    if r.ok:
+        give r.value
+    otherwise:
+        give ""
+
+create main:
+    say take()

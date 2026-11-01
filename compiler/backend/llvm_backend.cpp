@@ -520,6 +520,19 @@ void LlvmEmitter::declare_runtime() {
         module_.getOrInsertFunction("yukt_sync_recv_unchecked", void_ty, ptr, i64);
     runtime_["yukt_sync_close"] = module_.getOrInsertFunction("yukt_sync_close", void_ty, ptr);
     runtime_["yukt_sync_drop_ptr"] = module_.getOrInsertFunction("yukt_sync_drop_ptr", void_ty, ptr);
+    runtime_["yukt_net_listen_status"] = module_.getOrInsertFunction("yukt_net_listen_status", i64, ptr);
+    runtime_["yukt_net_listen_unchecked"] = module_.getOrInsertFunction("yukt_net_listen_unchecked", ptr);
+    runtime_["yukt_net_connect_status"] = module_.getOrInsertFunction("yukt_net_connect_status", i64, ptr);
+    runtime_["yukt_net_connect_unchecked"] = module_.getOrInsertFunction("yukt_net_connect_unchecked", ptr);
+    runtime_["yukt_net_accept_status"] = module_.getOrInsertFunction("yukt_net_accept_status", i64, ptr);
+    runtime_["yukt_net_accept_unchecked"] = module_.getOrInsertFunction("yukt_net_accept_unchecked", ptr);
+    runtime_["yukt_net_addr"] = module_.getOrInsertFunction("yukt_net_addr", ptr, ptr);
+    runtime_["yukt_net_port"] = module_.getOrInsertFunction("yukt_net_port", i64, ptr);
+    runtime_["yukt_net_read_status"] = module_.getOrInsertFunction("yukt_net_read_status", i64, ptr, i64);
+    runtime_["yukt_net_read_unchecked"] = module_.getOrInsertFunction("yukt_net_read_unchecked", ptr);
+    runtime_["yukt_net_write_status"] = module_.getOrInsertFunction("yukt_net_write_status", i64, ptr, ptr);
+    runtime_["yukt_net_write_unchecked"] = module_.getOrInsertFunction("yukt_net_write_unchecked", i64);
+    runtime_["yukt_net_close"] = module_.getOrInsertFunction("yukt_net_close", void_ty, ptr);
     if (auto* zeros = module_.getFunction("yukt_list_zeros")) {
         zeros->addRetAttr(llvm::Attribute::NoAlias);
     }
@@ -1570,6 +1583,45 @@ llvm::Value* LlvmEmitter::emit_stdlib_call(const IrInst& inst) {
     }
     if (name == "std$sync$close") {
         return call_runtime("yukt_sync_close", {args.at(0)});
+    }
+    if (name == "std$net$listen_status") {
+        return call_runtime("yukt_net_listen_status", {args.at(0)});
+    }
+    if (name == "std$net$listen_unchecked") {
+        return call_runtime("yukt_net_listen_unchecked", {});
+    }
+    if (name == "std$net$connect_status") {
+        return call_runtime("yukt_net_connect_status", {args.at(0)});
+    }
+    if (name == "std$net$connect_unchecked") {
+        return call_runtime("yukt_net_connect_unchecked", {});
+    }
+    if (name == "std$net$accept_status") {
+        return call_runtime("yukt_net_accept_status", {args.at(0)});
+    }
+    if (name == "std$net$accept_unchecked") {
+        return call_runtime("yukt_net_accept_unchecked", {});
+    }
+    if (name == "std$net$addr") {
+        return call_runtime("yukt_net_addr", {args.at(0)});
+    }
+    if (name == "std$net$port") {
+        return call_runtime("yukt_net_port", {args.at(0)});
+    }
+    if (name == "std$net$read_status") {
+        return call_runtime("yukt_net_read_status", {args.at(0), args.at(1)});
+    }
+    if (name == "std$net$read_unchecked") {
+        return call_runtime("yukt_net_read_unchecked", {});
+    }
+    if (name == "std$net$write_status") {
+        return call_runtime("yukt_net_write_status", {args.at(0), args.at(1)});
+    }
+    if (name == "std$net$write_unchecked") {
+        return call_runtime("yukt_net_write_unchecked", {});
+    }
+    if (name == "std$net$close") {
+        return call_runtime("yukt_net_close", {args.at(0)});
     }
     return llvm::PoisonValue::get(type_of(inst.dest.type));
 }

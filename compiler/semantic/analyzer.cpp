@@ -2430,15 +2430,21 @@ Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
         for (std::size_t i = 0; i < count; ++i) {
             const Type argument = analyze_expression(expr.arguments[i].get());
             if (!types_.unify(argument, function->parameters[i])) {
-                const std::string param =
-                    function->decl != nullptr && i < function->decl->parameters.size() ? function->decl->parameters[i]
-                                                                                       : "argument";
-                error(expr.arguments[i] != nullptr ? expr.arguments[i]->span.start : expr.callee_location,
-                      "Type mismatch",
-                      "Argument `" + param + "` of `" + expr.callee + "` has type " +
-                          types_.to_string(function->parameters[i]) + ", but this call passes " +
-                          types_.to_string(argument) + ".",
-                      "Pass a value of type " + types_.to_string(function->parameters[i]) + ".");
+                if (function->ir_name == "std$net$read" && i == 1) {
+                    error(expr.arguments[i] != nullptr ? expr.arguments[i]->span.start : expr.callee_location,
+                          "Type mismatch", "`net.read` expects an integer max.", "Pass an integer byte count.");
+                } else {
+                    const std::string param =
+                        function->decl != nullptr && i < function->decl->parameters.size()
+                            ? function->decl->parameters[i]
+                            : "argument";
+                    error(expr.arguments[i] != nullptr ? expr.arguments[i]->span.start : expr.callee_location,
+                          "Type mismatch",
+                          "Argument `" + param + "` of `" + expr.callee + "` has type " +
+                              types_.to_string(function->parameters[i]) + ", but this call passes " +
+                              types_.to_string(argument) + ".",
+                          "Pass a value of type " + types_.to_string(function->parameters[i]) + ".");
+                }
             }
         }
         for (std::size_t i = count; i < expr.arguments.size(); ++i) {
@@ -2524,13 +2530,20 @@ Type Analyzer::analyze_call(const CallExpr& expr, bool result_used) {
     for (std::size_t i = 0; i < count; ++i) {
         const Type argument = analyze_expression(expr.arguments[i].get());
         if (!types_.unify(argument, function->parameters[i])) {
-            const std::string param =
-                function->decl != nullptr && i < function->decl->parameters.size() ? function->decl->parameters[i] : "argument";
-            error(expr.arguments[i] != nullptr ? expr.arguments[i]->span.start : expr.callee_location, "Type mismatch",
-                  "Argument `" + param + "` of `" + expr.callee + "` has type " +
-                      types_.to_string(function->parameters[i]) + ", but this call passes " + types_.to_string(argument) +
-                      ".",
-                  "Pass a value of type " + types_.to_string(function->parameters[i]) + ".");
+            if (function->ir_name == "std$net$read" && i == 1) {
+                error(expr.arguments[i] != nullptr ? expr.arguments[i]->span.start : expr.callee_location,
+                      "Type mismatch", "`net.read` expects an integer max.", "Pass an integer byte count.");
+            } else {
+                const std::string param =
+                    function->decl != nullptr && i < function->decl->parameters.size() ? function->decl->parameters[i]
+                                                                                       : "argument";
+                error(expr.arguments[i] != nullptr ? expr.arguments[i]->span.start : expr.callee_location,
+                      "Type mismatch",
+                      "Argument `" + param + "` of `" + expr.callee + "` has type " +
+                          types_.to_string(function->parameters[i]) + ", but this call passes " +
+                          types_.to_string(argument) + ".",
+                      "Pass a value of type " + types_.to_string(function->parameters[i]) + ".");
+            }
         }
     }
     for (std::size_t i = count; i < expr.arguments.size(); ++i) {
@@ -3308,6 +3321,118 @@ Type Analyzer::analyze_stdlib_call(FunctionSymbol& function, const CallExpr& exp
         return finish(void_type());
     }
 
+    auto borrow_tcp = [&](std::size_t i, const char* example) {
+        if (i >= expr.arguments.size() || expr.arguments[i] == nullptr) {
+            return;
+        }
+        const std::string place = borrow_place_name(expr.arguments[i].get());
+        if (place.empty() || lookup_local(place) == nullptr) {
+            error(arg_location(i), "Cannot borrow a temporary",
+                  "A TCP value must be a local, a parameter, or a record field.",
+                  std::string("Pass a name, for example `") + example + "`.");
+            return;
+        }
+        own_check_read(place, arg_location(i));
+    };
+
+    if (ir == "std$net$listen_status") {
+        require_arity(1);
+        expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a string address.", "Pass a host:port string.");
+        return finish(integer_type());
+    }
+    if (ir == "std$net$listen_unchecked") {
+        require_arity(0);
+        return finish(listener_type());
+    }
+    if (ir == "std$net$connect_status") {
+        require_arity(1);
+        expect_type(analyze_arg(0), string_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a string address.", "Pass a host:port string.");
+        return finish(integer_type());
+    }
+    if (ir == "std$net$connect_unchecked") {
+        require_arity(0);
+        return finish(conn_type());
+    }
+    if (ir == "std$net$accept_status") {
+        if (!require_arity(1)) {
+            return finish(integer_type());
+        }
+        expect_type(analyze_arg(0), listener_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a listener.", "Pass a `listener` from `net.listen`.");
+        borrow_tcp(0, "net.accept(ln)");
+        return finish(integer_type());
+    }
+    if (ir == "std$net$accept_unchecked") {
+        require_arity(0);
+        return finish(conn_type());
+    }
+    if (ir == "std$net$addr") {
+        if (!require_arity(1)) {
+            return finish(string_type());
+        }
+        expect_type(analyze_arg(0), listener_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a listener.", "Pass a `listener` from `net.listen`.");
+        borrow_tcp(0, "net.addr(ln)");
+        return finish(string_type());
+    }
+    if (ir == "std$net$port") {
+        if (!require_arity(1)) {
+            return finish(integer_type());
+        }
+        expect_type(analyze_arg(0), listener_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a listener.", "Pass a `listener` from `net.listen`.");
+        borrow_tcp(0, "net.port(ln)");
+        return finish(integer_type());
+    }
+    if (ir == "std$net$read_status") {
+        if (!require_arity(2)) {
+            return finish(integer_type());
+        }
+        expect_type(analyze_arg(0), conn_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a conn.", "Pass a `conn` from `net.connect` or `net.accept`.");
+        borrow_tcp(0, "net.read(c, 64)");
+        expect_type(analyze_arg(1), integer_type(), arg_location(1), "Type mismatch",
+                    "`net.read` expects an integer max.", "Pass an integer byte count.");
+        return finish(integer_type());
+    }
+    if (ir == "std$net$read_unchecked") {
+        require_arity(0);
+        return finish(string_type());
+    }
+    if (ir == "std$net$write_status") {
+        if (!require_arity(2)) {
+            return finish(integer_type());
+        }
+        expect_type(analyze_arg(0), conn_type(), arg_location(0), "Type mismatch",
+                    "`" + display + "` expects a conn.", "Pass a `conn` from `net.connect` or `net.accept`.");
+        borrow_tcp(0, "net.write(c, data)");
+        expect_type(analyze_arg(1), string_type(), arg_location(1), "Type mismatch",
+                    "`" + display + "` expects a string.", "Pass the bytes as a string.");
+        return finish(integer_type());
+    }
+    if (ir == "std$net$write_unchecked") {
+        require_arity(0);
+        return finish(integer_type());
+    }
+    if (ir == "std$net$close") {
+        if (!require_arity(1)) {
+            return finish(void_type());
+        }
+        const Type end = analyze_arg(0);
+        Type pruned = types_.prune(end);
+        if (pruned.kind == TypeKind::Variable) {
+            error(arg_location(0), "Type mismatch", "`" + display + "` expects a conn or listener.",
+                  "Pass a TCP value.");
+        } else if (pruned.kind != TypeKind::Conn && pruned.kind != TypeKind::Listener) {
+            error(arg_location(0), "Type mismatch", "`" + display + "` expects a conn or listener.",
+                  "Pass a TCP value.");
+        }
+        borrow_tcp(0, "net.close(c)");
+        return finish(void_type());
+    }
+
     for (const auto& argument : expr.arguments) {
         analyze_expression(argument.get());
     }
@@ -3556,15 +3681,21 @@ void Analyzer::own_call_args(const CallExpr& expr, FunctionSymbol* callee) {
     for (std::size_t i = 0; i < count; ++i) {
         const bool recv_end =
             callee != nullptr && callee->ir_name == "std$sync$recv" && i == 0;
-        if (recv_end) {
+        const bool net_borrow =
+            callee != nullptr && i == 0 &&
+            (callee->ir_name == "std$net$accept" || callee->ir_name == "std$net$read" ||
+             callee->ir_name == "std$net$write");
+        if (recv_end || net_borrow) {
             if (expr.arguments[i] == nullptr) {
                 continue;
             }
             const std::string place = borrow_place_name(expr.arguments[i].get());
             if (place.empty() || lookup_local(place) == nullptr) {
                 error(expr.arguments[i]->span.start, "Cannot borrow a temporary",
-                      "A channel end must be a local, a parameter, or a record field.",
-                      "Pass a name, for example `sync.recv(rx)`.");
+                      recv_end ? "A channel end must be a local, a parameter, or a record field."
+                               : "A TCP value must be a local, a parameter, or a record field.",
+                      recv_end ? "Pass a name, for example `sync.recv(rx)`."
+                               : "Pass a name, for example `net.read(c, 64)`.");
             } else {
                 own_check_read(place, expr.arguments[i]->span.start);
                 borrowed.insert(place);
@@ -3835,6 +3966,14 @@ void Analyzer::reject_field_move(const Expr* expr, SourceLocation location) {
     }
     if (!type_owns_heap(types_, type, &records_)) {
         return;
+    }
+    // `r.value` on an `ok` path is the 0.13.5 payload take, not a user-record
+    // field steal. Conn/listener (and other heap T) must leave `result[T]`.
+    if (field->field == "value" && field->object != nullptr) {
+        const auto object = expr_types_.find(field->object.get());
+        if (object != expr_types_.end() && types_.prune(object->second).kind == TypeKind::Result) {
+            return;
+        }
     }
     error(location, "Cannot move out of record field",
           "Field `" + field->field + "` cannot be moved out of a record.",

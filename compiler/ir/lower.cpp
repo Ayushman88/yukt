@@ -143,7 +143,8 @@ bool call_name_allocates(const std::string& qualifier, const std::string& callee
         callee == "std$file$read_unchecked" || callee == "std$io$program" || callee == "std$io$args" ||
         callee == "std$io$read_line_unchecked" || callee == "std$io$read_all_unchecked" ||
         callee == "std$env$get_unchecked" || callee == "std$sync$channel" || callee == "std$sync$receiver" ||
-        callee == "std$sync$send") {
+        callee == "std$sync$send" || callee == "std$net$listen_unchecked" || callee == "std$net$connect_unchecked" ||
+        callee == "std$net$accept_unchecked" || callee == "std$net$addr" || callee == "std$net$read_unchecked") {
         return true;
     }
     const std::string qualified = qualifier.empty() ? callee : qualifier + "." + callee;
@@ -156,7 +157,9 @@ bool call_name_allocates(const std::string& qualifier, const std::string& callee
            qualified == "json.parse" || qualified == "file.read" || qualified == "io.program" ||
            qualified == "io.args" || qualified == "io.read_line" || qualified == "io.read_all" ||
            qualified == "env.get" || qualified == "env.get_or" || qualified == "sync.channel" ||
-           qualified == "sync.receiver" || qualified == "sync.send" || qualified == "sync.recv";
+           qualified == "sync.receiver" || qualified == "sync.send" || qualified == "sync.recv" ||
+           qualified == "net.listen" || qualified == "net.connect" || qualified == "net.accept" ||
+           qualified == "net.addr" || qualified == "net.read";
 }
 
 void collect_reads(const Expr* expr, std::set<std::string>& names) {
@@ -995,7 +998,9 @@ void Lowerer::lower_function(const FunctionDecl& function) {
     for (std::size_t i = 0; i < function_->params.size(); ++i) {
         const bool is_ref = i < function_->param_is_ref.size() && function_->param_is_ref[i];
         const bool recv_borrow = ir_name == "std$sync$recv" && i == 0;
-        if (!is_ref && !recv_borrow && owns_heap(function_->params[i].second)) {
+        const bool net_borrow =
+            i == 0 && (ir_name == "std$net$accept" || ir_name == "std$net$read" || ir_name == "std$net$write");
+        if (!is_ref && !recv_borrow && !net_borrow && owns_heap(function_->params[i].second)) {
             owned_.insert(function_->params[i].first);
         }
     }
@@ -1085,6 +1090,8 @@ void Lowerer::lower_assignment(const AssignStmt& stmt) {
     if (owns_heap(value.type)) {
         if (id != nullptr && id->name != stmt.name) {
             owned_.erase(id->name);
+        } else if (id == nullptr) {
+            consume_heap_expr(stmt.value.get());
         }
         owned_.insert(stmt.name);
     }
@@ -1380,9 +1387,7 @@ void Lowerer::lower_say(const SayStmt& stmt) {
 
 void Lowerer::lower_give(const GiveStmt& stmt) {
     const IrValue value = lower_expression(stmt.value.get());
-    if (const auto* id = dynamic_cast<const IdentifierExpr*>(stmt.value.get())) {
-        owned_.erase(id->name);
-    }
+    consume_heap_expr(stmt.value.get());
     emit_owned_drops();
     finish_return(value);
 }
@@ -2525,7 +2530,18 @@ void Lowerer::emit_drop(const IrValue& value) {
 void Lowerer::consume_heap_expr(const Expr* expr) {
     if (const auto* id = dynamic_cast<const IdentifierExpr*>(expr)) {
         owned_.erase(id->name);
+        return;
     }
+    const auto* field = dynamic_cast<const FieldExpr*>(expr);
+    if (field == nullptr || field->field != "value" || field->object == nullptr) {
+        return;
+    }
+    const auto found = semantic_.expression_types.find(field->object.get());
+    if (found == semantic_.expression_types.end() || found->second.kind != TypeKind::Result) {
+        return;
+    }
+    const IrValue object = lower_expression(field->object.get());
+    write_place(field->object.get(), emit_field_set(object, field->field, emit_zero(type_of(expr))));
 }
 
 bool Lowerer::owns_heap(const IrType& type) const {
@@ -2624,12 +2640,12 @@ void Lowerer::note_user_call_moves(const CallExpr& expr) {
         const bool is_ref =
             refs_found != semantic_.parameter_refs.end() && i < refs_found->second.size() && refs_found->second[i];
         const bool recv_borrow = found->second == "std$sync$recv" && i == 0;
-        if (is_ref || recv_borrow) {
+        const bool net_borrow = i == 0 && (found->second == "std$net$accept" || found->second == "std$net$read" ||
+                                           found->second == "std$net$write");
+        if (is_ref || recv_borrow || net_borrow) {
             continue;
         }
-        if (const auto* id = dynamic_cast<const IdentifierExpr*>(expr.arguments[i].get())) {
-            owned_.erase(id->name);
-        }
+        consume_heap_expr(expr.arguments[i].get());
     }
 }
 

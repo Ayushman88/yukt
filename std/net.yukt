@@ -1,0 +1,84 @@
+# POSIX TCP. Bodies of runtime names are not executed.
+
+share create listen_status(address):
+    give 0
+
+share create listen_unchecked():
+    give 0
+
+share create listen(address):
+    s = listen_status(address)
+    if s == 0:
+        give ok(listen_unchecked())
+    otherwise:
+        give fail("io")
+
+share create connect_status(address):
+    give 0
+
+share create connect_unchecked():
+    give 0
+
+share create connect(address):
+    s = connect_status(address)
+    if s == 0:
+        give ok(connect_unchecked())
+    otherwise:
+        give fail("io")
+
+share create accept_status(ln):
+    give 0
+
+share create accept_unchecked():
+    give 0
+
+share create accept(ln):
+    s = accept_status(ln)
+    if s == 0:
+        give ok(accept_unchecked())
+    otherwise:
+        if s == 1:
+            give fail("closed")
+        otherwise:
+            give fail("io")
+
+share create addr(ln):
+    give ""
+
+share create port(ln):
+    give 0
+
+share create read_status(c, max):
+    give 0
+
+share create read_unchecked():
+    give ""
+
+share create read(c, max):
+    s = read_status(c, max)
+    if s == 0:
+        give ok(read_unchecked())
+    otherwise:
+        if s == 1:
+            give fail("closed")
+        otherwise:
+            give fail("io")
+
+share create write_status(c, data):
+    give 0
+
+share create write_unchecked():
+    give 0
+
+share create write(c, data):
+    s = write_status(c, data)
+    if s == 0:
+        give ok(write_unchecked())
+    otherwise:
+        if s == 1:
+            give fail("closed")
+        otherwise:
+            give fail("io")
+
+share create close(x):
+    n = 0

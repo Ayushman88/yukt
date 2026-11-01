@@ -240,7 +240,11 @@ bool is_stdlib_runtime_ir(const std::string& ir_name) {
            ir_name == "std$env$get_unchecked" || ir_name == "std$env$has" || ir_name == "std$env$set" ||
            ir_name == "std$sync$channel" || ir_name == "std$sync$receiver" || ir_name == "std$sync$send" ||
            ir_name == "std$sync$recv_status" || ir_name == "std$sync$recv_unchecked" ||
-           ir_name == "std$sync$close";
+           ir_name == "std$sync$close" || ir_name == "std$net$listen_status" || ir_name == "std$net$listen_unchecked" ||
+           ir_name == "std$net$connect_status" || ir_name == "std$net$connect_unchecked" ||
+           ir_name == "std$net$accept_status" || ir_name == "std$net$accept_unchecked" || ir_name == "std$net$addr" ||
+           ir_name == "std$net$port" || ir_name == "std$net$read_status" || ir_name == "std$net$read_unchecked" ||
+           ir_name == "std$net$write_status" || ir_name == "std$net$write_unchecked" || ir_name == "std$net$close";
 }
 
 std::string mangle_function(const std::string& prefix, const std::string& name, bool entry_main, bool single_file) {

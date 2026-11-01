@@ -1,0 +1,8 @@
+create make:
+    give ok("hello")
+
+create main:
+    r = make()
+    if r.ok:
+        s = r.value
+        say s

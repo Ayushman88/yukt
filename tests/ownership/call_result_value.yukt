@@ -1,0 +1,7 @@
+create sink(s):
+    say s
+
+create main:
+    r = ok("hello")
+    if r.ok:
+        sink(r.value)

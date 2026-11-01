@@ -713,5 +713,25 @@ int main() {
         REQUIRE(!result.diagnostics->has_errors());
     }
 
+    // 0.13.5 heap payload take on assignment / give / user-call. User-record
+    // field move-out stays rejected (profile_steal).
+    {
+        const auto result = check_file("tests/ownership/result_value_take.yukt");
+        REQUIRE(!result.diagnostics->has_errors());
+    }
+    {
+        const auto result = check_file("tests/ownership/give_result_value.yukt");
+        REQUIRE(!result.diagnostics->has_errors());
+    }
+    {
+        const auto result = check_file("tests/ownership/call_result_value.yukt");
+        REQUIRE(!result.diagnostics->has_errors());
+    }
+    {
+        const auto result = check_file("tests/ownership/profile_steal.yukt");
+        REQUIRE(has_title(result, "Cannot move out of record field"));
+        REQUIRE(has_diagnostic(result, "Cannot move out of record field", "scores", field_move_suggestion));
+    }
+
     return yukt::test::summary("ownership");
 }
